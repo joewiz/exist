@@ -140,6 +140,7 @@ public abstract class AbstractFieldConfig {
     protected CompiledXQuery compile(DBBroker broker, String code) {
         final XQuery xquery = broker.getBrokerPool().getXQueryService();
         final XQueryContext context = new XQueryContext(broker.getBrokerPool());
+        context.setOptimizationsEnabled(false);
         try {
             return xquery.compile(broker, context, code);
         } catch (XPathException | PermissionDeniedException e) {

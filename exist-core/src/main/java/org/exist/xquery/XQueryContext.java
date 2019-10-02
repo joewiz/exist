@@ -2649,6 +2649,10 @@ public class XQueryContext implements BinaryValueManager, Context {
     public boolean optimizationsEnabled() {
         return enableOptimizer;
     }
+    
+    public void setOptimizationsEnabled(final boolean enabled) {
+        this.enableOptimizer = enabled;
+    }
 
     @Override
     public void addOption(final String name, final String value) throws XPathException {
