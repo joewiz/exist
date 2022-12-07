@@ -63,7 +63,7 @@ public class RegistryFunctions extends BasicFunction {
     private final static QName qnMissingDependencies = new QName("missing-dependencies", ExistRestXqModule.NAMESPACE_URI, ExistRestXqModule.PREFIX);
     private final static QName qnDependencies = new QName("dependencies", ExistRestXqModule.NAMESPACE_URI, ExistRestXqModule.PREFIX);
     
-    private final static SequenceType PARAM_MODULE = new FunctionParameterSequenceType("module", Type.ANY_URI, Cardinality.EXACTLY_ONE, "A URI pointing to an XQuery module.");
+    private final static SequenceType PARAM_MODULE = new FunctionParameterSequenceType("module-uri", Type.STRING, Cardinality.EXACTLY_ONE, "A URI pointing to an XQuery module.");
     private final static SequenceType PARAM_RESOURCE_FUNCTION = new FunctionParameterSequenceType("function-signature", Type.STRING, Cardinality.EXACTLY_ONE, "A signature identifying a resource function. Takes the format {namespace}local-name#arity e.g. {http://somenamespace}some-function#2");
         
     public final static FunctionSignature FNS_REGISTER_MODULE = new FunctionSignature(

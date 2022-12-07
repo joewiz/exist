@@ -75,7 +75,7 @@ public class XMLDBURIFunctions extends BasicFunction {
 				new QName("decode-uri", XMLDBModule.NAMESPACE_URI, XMLDBModule.PREFIX),
 				"Decodes the URI $uri such that any percent encoded octets will be translated to their decoded UTF-8 representation.",
 				new SequenceType[] {
-					new FunctionParameterSequenceType("uri", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The URI"),
+					new FunctionParameterSequenceType("uri", Type.STRING, Cardinality.EXACTLY_ONE, "The URI"),
 				},
 				new FunctionReturnSequenceType(Type.STRING, Cardinality.EXACTLY_ONE, "the decoded $uri as xs:string")
 		)

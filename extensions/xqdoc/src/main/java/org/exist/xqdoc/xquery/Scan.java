@@ -55,7 +55,7 @@ public class Scan extends BasicFunction {
             "searched in the same way as if it were loaded through an \"import module\" statement. Static " +
             "mappings defined in conf.xml are searched first.",
             new SequenceType[] {
-                new FunctionParameterSequenceType("uri", Type.ANY_URI, Cardinality.EXACTLY_ONE,
+                new FunctionParameterSequenceType("uri", Type.STRING, Cardinality.EXACTLY_ONE,
                     "The URI from which to load the function module")
             },
             new FunctionReturnSequenceType(Type.NODE, Cardinality.ZERO_OR_MORE,

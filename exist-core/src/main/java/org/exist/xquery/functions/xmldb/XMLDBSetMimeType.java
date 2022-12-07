@@ -55,7 +55,7 @@ public class XMLDBSetMimeType extends BasicFunction {
 			"Set the MIME type of the resource $resource-uri." +
             XMLDBModule.ANY_URI,
 			new SequenceType[] {
-                new FunctionParameterSequenceType("resource-uri", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The resource URI"),
+                new FunctionParameterSequenceType("resource-uri", Type.STRING, Cardinality.EXACTLY_ONE, "The resource URI"),
                 new FunctionParameterSequenceType("mime-type", Type.STRING, Cardinality.ZERO_OR_ONE, "The new mime-type, use empty sequence to set default value.")
 			},
 			new SequenceType(Type.EMPTY_SEQUENCE, Cardinality.EMPTY_SEQUENCE)

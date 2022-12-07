@@ -56,7 +56,7 @@ public class ModuleFunctions extends BasicFunction {
             arities(
                     arity(),
                     arity(
-                            param("location", Type.ANY_URI,
+                            param("location-uri", Type.STRING,
                                     "The location URI of the module to be inspected.")
                     )
             )
@@ -67,7 +67,7 @@ public class ModuleFunctions extends BasicFunction {
             "Returns a sequence of function items pointing to each public function in the specified module.",
             returnsOptMany(Type.FUNCTION, "Sequence of function items containing all public functions in the module, "
                     + "or the empty sequence if the module is not known in the current context."),
-            param("uri", Type.ANY_URI, "The URI of the module to be loaded.")
+            param("namespace-uri", Type.STRING, "The namespace URI of the module to be inspected.")
     );     
 
     public ModuleFunctions(final XQueryContext context, final FunctionSignature signature) {
