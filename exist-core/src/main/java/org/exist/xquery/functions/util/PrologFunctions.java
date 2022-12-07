@@ -38,9 +38,9 @@ public class PrologFunctions extends BasicFunction {
 			"Dynamically imports an XQuery module into the current context. The parameters have the same " +
 			"meaning as in an 'import module ...' expression in the query prolog.",
 			new SequenceType[] {
-				new FunctionParameterSequenceType("module-uri", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The namespace URI of the module"),
+				new FunctionParameterSequenceType("module-uri", Type.STRING, Cardinality.EXACTLY_ONE, "The namespace URI of the module"),
 				new FunctionParameterSequenceType("prefix", Type.STRING, Cardinality.EXACTLY_ONE, "The prefix to be assigned to the namespace"),
-				new FunctionParameterSequenceType("location", Type.ANY_URI, Cardinality.ZERO_OR_MORE, "The location of the module")
+				new FunctionParameterSequenceType("location-uri", Type.STRING, Cardinality.ZERO_OR_MORE, "The location URI of the module")
 			},
 			new SequenceType(Type.ITEM, Cardinality.EMPTY_SEQUENCE),
 				"Use fn:load-module#2 instead!"),
@@ -49,7 +49,7 @@ public class PrologFunctions extends BasicFunction {
 			"Dynamically declares a namespace/prefix mapping for the current context.",
 			new SequenceType[] {
 				new FunctionParameterSequenceType("prefix", Type.STRING, Cardinality.EXACTLY_ONE, "The prefix to be assigned to the namespace"),
-				new FunctionParameterSequenceType("namespace-uri", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The namespace URI")
+				new FunctionParameterSequenceType("namespace-uri", Type.STRING, Cardinality.EXACTLY_ONE, "The namespace URI")
 			},
 			new SequenceType(Type.ITEM, Cardinality.EMPTY_SEQUENCE)),
 		new FunctionSignature(

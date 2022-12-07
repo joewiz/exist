@@ -52,7 +52,7 @@ public class XMLDBGetMimeType extends BasicFunction {
 			"Returns the MIME type if available of the resource $resource-uri, otherwise the empty sequence. " +
             XMLDBModule.ANY_URI,
 			new SequenceType[] {
-                new FunctionParameterSequenceType("resource-uri", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The resource URI")
+                new FunctionParameterSequenceType("resource-uri", Type.STRING, Cardinality.EXACTLY_ONE, "The resource URI")
 			},
 			new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_ONE, "the mime-type if available, otherwise the empty sequence")
 		);

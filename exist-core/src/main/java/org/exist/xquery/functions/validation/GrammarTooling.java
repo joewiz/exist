@@ -109,8 +109,8 @@ public class GrammarTooling extends BasicFunction  {
             "Pre parse grammars and add to grammar cache. Only XML schemas (.xsd)" +
             " are supported.",
             new SequenceType[]{
-                new FunctionParameterSequenceType("grammar", Type.ANY_URI, Cardinality.ZERO_OR_MORE,
-                        "Reference to grammar.")
+                new FunctionParameterSequenceType("location-uri", Type.STRING, Cardinality.ZERO_OR_MORE,
+                        "The location URI of the resource containing the grammar.")
             },
             new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_MORE,
              "sequence of namespaces of preparsed grammars.")

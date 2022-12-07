@@ -45,7 +45,7 @@ public class InspectModule extends BasicFunction {
             "Compiles a library module from source (without importing it) and returns an XML fragment describing the " +
                     "module and the functions/variables contained in it.",
             RETURN_FRAGMENT,
-            param("location", Type.ANY_URI, "The location URI of the module to inspect")
+            param("location-uri", Type.STRING, "The location URI of the module to inspect")
     );
 
     private static final String FN_INSPECT_MODULE_URI_NAME = "inspect-module-uri";
@@ -54,7 +54,7 @@ public class InspectModule extends BasicFunction {
             "Returns an XML fragment describing the " +
                     "library module identified by the given namespace URI and the functions/variables contained in it.",
             RETURN_FRAGMENT,
-            param("uri", Type.ANY_URI, "The namespace URI of the module to inspect")
+            param("namespace-uri", Type.STRING, "The namespace URI of the module to inspect")
     );
 
 

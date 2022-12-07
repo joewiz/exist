@@ -45,7 +45,7 @@ public class EncodeURL extends StrictResponseFunction {
                     new QName("encode-url", SessionModule.NAMESPACE_URI, SessionModule.PREFIX),
                     "Encodes the specified URL with the current HTTP session-id.",
                     new SequenceType[]{
-                            new FunctionParameterSequenceType("url", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The URL to encode")
+                            new FunctionParameterSequenceType("url", Type.STRING, Cardinality.EXACTLY_ONE, "The URL to encode")
                     },
                     new FunctionReturnSequenceType(Type.ANY_URI, Cardinality.EXACTLY_ONE, "the encoded URL"));
 

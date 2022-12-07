@@ -93,8 +93,8 @@ public class GetThumbnailsFunction extends BasicFunction {
 					ImageModule.PREFIX),
 			"Generate thumbnails from the given database collection",
 			new SequenceType[] {
-					new FunctionParameterSequenceType("collection", Type.ANY_URI, Cardinality.EXACTLY_ONE, "The URI to the collection"),
-					new FunctionParameterSequenceType("thumbnail-location", Type.ANY_URI, Cardinality.ZERO_OR_ONE, "The location in the database where the thumbnails should be created, this can be a local path, with the prefix 'xmldb:' a absolute path within the database or with 'rel:' path relative to the given $collection.  You can leave this empty then the default is 'rel:/thumbs'. "),
+					new FunctionParameterSequenceType("source-uri", Type.STRING, Cardinality.EXACTLY_ONE, "The URI to the source collection"),
+					new FunctionParameterSequenceType("destination-uri", Type.STRING, Cardinality.ZERO_OR_ONE, "The location in the database where the thumbnails should be created, this can be a local path, with the prefix 'xmldb:' a absolute path within the database or with 'rel:' path relative to the given $collection.  You can leave this empty then the default is 'rel:/thumbs'. "),
 					new FunctionParameterSequenceType("dimension", Type.INTEGER, Cardinality.ZERO_OR_MORE, "The dimension of the thumbnails, if empty then the default values are 'maxheight = 100' and 'maxwidth = 100', the first value is 'maxheight' and the second 'maxwidth'. "),
 					new FunctionParameterSequenceType("prefix", Type.STRING, Cardinality.ZERO_OR_ONE, "The prefix to append to the thumbnail filenames") },
 
