@@ -865,3 +865,19 @@ function ser:serialize-xml-134() {
     }
     return serialize((1 to 4)!text{.}, $params)
 };
+
+declare
+    %test:pending
+    %test:assertEquals('<!DOCTYPE html> <head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head>')
+function ser:serialize-html-5-include-content-type() {
+    let $params := map {
+        "method" : "html",
+        "html-version": 5.0,
+        "media-type": "text/html",
+        "include-content-type": true()
+    }
+    return
+        <head/>
+        => serialize($params)
+        => normalize-space()
+};
