@@ -78,3 +78,10 @@ declare
 function rt:invalid-flag($flag as xs:string) {
     replace("",".+","", $flag)
 };
+
+(: https://github.com/eXist-db/exist/issues/4072 :)
+declare
+    %test:assertEquals("aXb")
+function rt:hyphen-in-character-class() {
+    replace("a-b", "[-]", "X")
+};

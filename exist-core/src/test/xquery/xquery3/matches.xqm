@@ -71,3 +71,17 @@ declare
 function mt:invalid-flag($flag as xs:string) {
     matches("","", $flag)
 };
+
+(: https://github.com/eXist-db/exist/issues/4072 :)
+declare
+    %test:assertTrue
+function mt:hyphen-trailing-in-character-class() {
+    matches("aww he--", "[l-]")
+};
+
+(: https://github.com/eXist-db/exist/issues/4072 :)
+declare
+    %test:assertTrue
+function mt:hyphen-leading-in-character-class() {
+    matches("aww he--", "[-l]")
+};
