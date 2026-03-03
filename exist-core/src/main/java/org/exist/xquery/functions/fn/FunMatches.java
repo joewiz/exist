@@ -228,7 +228,7 @@ public final class FunMatches extends Function implements Optimizable, IndexUseR
         } else {
             final boolean ignoreWhitespace = hasIgnoreWhitespace(flags);
             final boolean caseBlind = !caseSensitive;
-            pattern = translateRegexp(this, getArgument(1).eval(contextSequence, null).getStringValue(), ignoreWhitespace, caseBlind);
+            pattern = translateRegexp(this, getArgument(1).eval(contextSequence, null).getStringValue(), ignoreWhitespace, caseBlind, context.getBroker().getBrokerPool().getSaxonConfiguration());
         }
 
         try {
@@ -403,7 +403,7 @@ public final class FunMatches extends Function implements Optimizable, IndexUseR
             } else {
                 final boolean ignoreWhitespace = hasIgnoreWhitespace(flags);
                 final boolean caseBlind = !caseSensitive;
-                pattern = translateRegexp(this, getArgument(1).eval(contextSequence, contextItem).getStringValue(), ignoreWhitespace, caseBlind);
+                pattern = translateRegexp(this, getArgument(1).eval(contextSequence, contextItem).getStringValue(), ignoreWhitespace, caseBlind, context.getBroker().getBrokerPool().getSaxonConfiguration());
             }
         }
 

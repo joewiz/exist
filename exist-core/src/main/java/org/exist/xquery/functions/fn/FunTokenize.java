@@ -100,7 +100,7 @@ public class FunTokenize extends BasicFunction {
                     } else {
                         final boolean ignoreWhitespace = hasIgnoreWhitespace(flags);
                         final boolean caseBlind = hasCaseInsensitive(flags);
-                        pattern = translateRegexp(this, args[1].itemAt(0).getStringValue(), ignoreWhitespace, caseBlind);
+                        pattern = translateRegexp(this, args[1].itemAt(0).getStringValue(), ignoreWhitespace, caseBlind, context.getBroker().getBrokerPool().getSaxonConfiguration());
                     }
                 }
 
