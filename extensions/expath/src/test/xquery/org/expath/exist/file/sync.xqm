@@ -305,15 +305,15 @@ function sync:prune-with-after-and-excludes() {
     let $_ := helper:setup-fs-extra($directory)
     let $_ := (
         file:write-binary(
-            $directory || "/excluded.xq",
+            helper:glue-path(($directory, "excluded.xq")),
             util:string-to-binary("1")
         ),
         file:write-binary(
-            $directory || "/pruned.xql",
+            helper:glue-path(($directory, "pruned.xql")),
             util:string-to-binary("1")
         ),
         file:write-binary(
-            $directory || "/readme.md",
+            helper:glue-path(($directory, "readme.md")),
             util:string-to-binary("oh oh")
         )
     )

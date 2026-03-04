@@ -137,7 +137,7 @@ function ft:is-file-on-dir() {
 declare
     %test:assertTrue
 function ft:is-absolute-absolute-path() {
-    file:is-absolute("/tmp")
+    file:is-absolute(file:temp-dir())
 };
 
 declare
