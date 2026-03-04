@@ -58,11 +58,10 @@ jobs:
       - name: Extract Previous XQTS Logs Artifact JSON
         id: extract_artifact_url
         if: steps.get_artifacts_json.outcome == 'success'
-        continue-on-error: true
         run: |
           url=$(cat /tmp/previous-xqts-logs-artifacts.json | jq -r "[.artifacts[] | select(.workflow_run.head_branch == \"develop\")][1].archive_download_url")
           if [ "$url" = "null" ] || [ -z "$url" ]; then
-            echo "No previous XQTS logs artifact found"
+            echo "::error::No previous XQTS artifact found for the develop branch"
             exit 1
           fi
           echo "$url" > /tmp/previous-xqts-logs-artifact.json
