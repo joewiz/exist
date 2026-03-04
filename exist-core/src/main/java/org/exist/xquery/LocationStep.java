@@ -95,15 +95,9 @@ public class LocationStep extends Step {
     public int getDependencies() {
         int deps = Dependency.CONTEXT_SET;
 
-        // The context item expression "." is parsed as self::node() but genuinely
-        // depends on the context item, even inside predicates. Without this,
-        // Predicate.recomputeExecutionMode() may pre-evaluate expressions like
-        // not(.) against the full context sequence instead of item-by-item,
-        // causing FORG0006 errors on atomic sequences (GitHub #2308).
-        if (this.axis == Constants.SELF_AXIS && this.test.getType() == Type.NODE) {
-            // This is "." (context item expression) — always depends on context item
-            deps = deps | Dependency.CONTEXT_ITEM;
-        } else if (!this.inPredicate &&
+        // self axis has an obvious dependency on the context item
+        // likewise we depend on the context item if this is a single path step (outside a predicate)
+        if (!this.inPredicate &&
                 (this.axis == Constants.SELF_AXIS ||
                         (parent != null && parent.getSubExpressionCount() > 0 && parent.getSubExpression(0) == this))) {
             deps = deps | Dependency.CONTEXT_ITEM;

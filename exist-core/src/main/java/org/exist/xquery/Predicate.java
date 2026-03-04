@@ -239,11 +239,17 @@ public class Predicate extends PathExpr {
                     // computation should now be better
                     !((inner instanceof GeneralComparison) &&
                             ((GeneralComparison) inner).invalidNodeEvaluation)) {
-                innerSeq = inner.eval(contextSequence, null);
-                // Only if we have an actual *singleton* of numeric items
-                if (innerSeq.hasOne()
-                        && Type.subTypeOfUnion(innerSeq.getItemType(), Type.NUMERIC)) {
-                    recomputedExecutionMode = POSITIONAL;
+                try {
+                    innerSeq = inner.eval(contextSequence, null);
+                    // Only if we have an actual *singleton* of numeric items
+                    if (innerSeq.hasOne()
+                            && Type.subTypeOfUnion(innerSeq.getItemType(), Type.NUMERIC)) {
+                        recomputedExecutionMode = POSITIONAL;
+                    }
+                } catch (final XPathException e) {
+                    // Pre-evaluation failed (e.g. EBV undefined for multi-item
+                    // atomic sequence as in (true(), false())[not(.)], GitHub #2308).
+                    // Fall back to safe item-by-item BOOLEAN evaluation.
                 }
             }
         } else if (executionMode == NODE && !contextSequence.isPersistentSet()) {
@@ -255,17 +261,23 @@ public class Predicate extends PathExpr {
                  * WARNING : this sequence will be evaluated with
                  * preloadable nodesets !
                  */
-                innerSeq = inner.eval(contextSequence, null);
-                // Try to promote a boolean evaluation to a nodeset one
-                // We are now sure of the inner sequence return type
-                if (Type.subTypeOf(innerSeq.getItemType(), Type.NODE)
-                        && innerSeq.isPersistentSet()) {
-                    recomputedExecutionMode = NODE;
-                    // Try to promote a boolean evaluation to a positional one
-                    // Only if we have an actual *singleton* of numeric items
-                } else if (innerSeq.hasOne()
-                        && Type.subTypeOfUnion(innerSeq.getItemType(), Type.NUMERIC)) {
-                    recomputedExecutionMode = POSITIONAL;
+                try {
+                    innerSeq = inner.eval(contextSequence, null);
+                    // Try to promote a boolean evaluation to a nodeset one
+                    // We are now sure of the inner sequence return type
+                    if (Type.subTypeOf(innerSeq.getItemType(), Type.NODE)
+                            && innerSeq.isPersistentSet()) {
+                        recomputedExecutionMode = NODE;
+                        // Try to promote a boolean evaluation to a positional one
+                        // Only if we have an actual *singleton* of numeric items
+                    } else if (innerSeq.hasOne()
+                            && Type.subTypeOfUnion(innerSeq.getItemType(), Type.NUMERIC)) {
+                        recomputedExecutionMode = POSITIONAL;
+                    }
+                } catch (final XPathException e) {
+                    // Pre-evaluation failed (e.g. type conversion error for
+                    // simple map expressions in predicates, GitHub #3289).
+                    // Fall back to safe item-by-item BOOLEAN evaluation.
                 }
             }
         }
