@@ -70,10 +70,13 @@ public class FunNot extends Function {
     }
     
 	public int returnsType() {
-		// fn:not() always returns xs:boolean per the XPath/XQuery specification.
-		// The set-difference optimization for node-set predicates is handled
-		// internally in eval() and preserved via Predicate.recomputeExecutionMode().
-		return Type.BOOLEAN;
+		// When the argument is a node-returning expression (e.g. a location step),
+		// report NODE so that Predicate.analyze() selects the efficient NODE
+		// execution mode for the set-difference optimization.
+		// Otherwise return BOOLEAN (the spec return type for fn:not).
+		return Type.subTypeOf(getArgument(0).returnsType(), Type.NODE)
+			? Type.NODE
+			: Type.BOOLEAN;
 	}
 
 	/* (non-Javadoc)
