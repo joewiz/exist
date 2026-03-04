@@ -64,14 +64,22 @@ jobs:
             exit 1
           fi
       - name: Extract Previous XQTS Logs Artifact URL
+        id: extract_previous_xqts
         run: |
-          url=$(cat /tmp/previous-xqts-logs-artifacts.json | jq -r "[.artifacts[] | select(.workflow_run.head_branch == \"develop\")][1].archive_download_url")
+          total_count=$(jq -r '.total_count' /tmp/previous-xqts-logs-artifacts.json)
+          echo "Total xqts-logs artifacts found: $total_count"
+          develop_count=$(jq '[.artifacts[] | select(.workflow_run.head_branch == "develop")] | length' /tmp/previous-xqts-logs-artifacts.json)
+          echo "Artifacts from develop branch: $develop_count"
+          url=$(jq -r "[.artifacts[] | select(.workflow_run.head_branch == \"develop\")][1].archive_download_url" /tmp/previous-xqts-logs-artifacts.json)
           if [ "$url" = "null" ] || [ -z "$url" ]; then
-            echo "::error::No previous XQTS artifact found for the develop branch"
-            exit 1
+            echo "::warning::No previous XQTS artifact found for the develop branch (need at least 2 artifacts from develop, found $develop_count). Skipping comparison."
+            echo "has_previous=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "$url" > /tmp/previous-xqts-logs-artifact.json
+          echo "has_previous=true" >> "$GITHUB_OUTPUT"
       - name: Download Previous XQTS Logs Artifact
+        if: steps.extract_previous_xqts.outputs.has_previous == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -84,8 +92,11 @@ jobs:
             exit 1
           fi
       - name: Extract Previous XQTS Logs Artifact
+        if: steps.extract_previous_xqts.outputs.has_previous == 'true'
         run: mkdir /tmp/previous-xqts-output && unzip /tmp/previous-xqts-output.zip -d /tmp/previous-xqts-output
       - name: Compare Previous and Current XQTS Logs
+        if: steps.extract_previous_xqts.outputs.has_previous == 'true'
         run: java -jar ~/.m2/repository/net/sf/saxon/Saxon-HE/9.9.1-8/Saxon-HE-9.9.1-8.jar -xsl:exist-xqts/src/main/xslt/compare-results.xslt -it:compare-results -o:/tmp/comparison-results.xml xqts.previous.junit-data-path=/tmp/previous-xqts-output/junit/data xqts.current.junit-data-path=/tmp/xqts-output/junit/data
       - name: Show Comparison Results
+        if: steps.extract_previous_xqts.outputs.has_previous == 'true'
         run: cat /tmp/comparison-results.xml
