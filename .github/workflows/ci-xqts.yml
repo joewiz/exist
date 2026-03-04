@@ -50,16 +50,37 @@ jobs:
           retention-days: 14
           path: /tmp/xqts-output
       - name: Get Previous XQTS Logs Artifacts JSON
-        run: 'curl -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/exist-db/exist/actions/artifacts?name=xqts-logs > /tmp/previous-xqts-logs-artifacts.json'
-      - name: Extract Previous XQTS Logs Artifact JSON
-        run: cat /tmp/previous-xqts-logs-artifacts.json | jq -r "[.artifacts[] | select(.workflow_run.head_branch == \"develop\")][1].archive_download_url" > /tmp/previous-xqts-logs-artifact.json
-      - name: Get Previous XQTS Logs Artifact
+        id: get_artifacts_json
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: 'cat /tmp/previous-xqts-logs-artifact.json | xargs curl -H "Authorization: Bearer ${GITHUB_TOKEN}" --location --output /tmp/previous-xqts-output.zip'
+        run: 'curl -f -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/exist-db/exist/actions/artifacts?name=xqts-logs > /tmp/previous-xqts-logs-artifacts.json'
+      - name: Extract Previous XQTS Logs Artifact JSON
+        id: extract_artifact_url
+        if: steps.get_artifacts_json.outcome == 'success'
+        continue-on-error: true
+        run: |
+          url=$(cat /tmp/previous-xqts-logs-artifacts.json | jq -r "[.artifacts[] | select(.workflow_run.head_branch == \"develop\")][1].archive_download_url")
+          if [ "$url" = "null" ] || [ -z "$url" ]; then
+            echo "No previous XQTS logs artifact found"
+            exit 1
+          fi
+          echo "$url" > /tmp/previous-xqts-logs-artifact.json
+      - name: Get Previous XQTS Logs Artifact
+        if: steps.extract_artifact_url.outcome == 'success'
+        id: download_artifact
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: 'cat /tmp/previous-xqts-logs-artifact.json | xargs curl -f -H "Authorization: Bearer ${GITHUB_TOKEN}" --location --output /tmp/previous-xqts-output.zip'
       - name: Extract Previous XQTS Logs Artifact
+        if: steps.download_artifact.outcome == 'success'
+        id: extract_artifact
+        continue-on-error: true
         run: mkdir /tmp/previous-xqts-output && unzip /tmp/previous-xqts-output.zip -d /tmp/previous-xqts-output
       - name: Compare Previous and Current XQTS Logs
+        if: steps.extract_artifact.outcome == 'success'
         run: java -jar ~/.m2/repository/net/sf/saxon/Saxon-HE/9.9.1-8/Saxon-HE-9.9.1-8.jar -xsl:exist-xqts/src/main/xslt/compare-results.xslt -it:compare-results -o:/tmp/comparison-results.xml xqts.previous.junit-data-path=/tmp/previous-xqts-output/junit/data xqts.current.junit-data-path=/tmp/xqts-output/junit/data
       - name: Show Comparison Results
+        if: steps.extract_artifact.outcome == 'success'
         run: cat /tmp/comparison-results.xml
