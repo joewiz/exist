@@ -1,135 +1,123 @@
-# Lucene 10 Migration Plan: TEI & Highlighting Features
+# Lucene 10 Migration Plan: Highlighting Features
 
 ## Overview
 
-This document outlines the plan for migrating eXist-db's Lucene integration from
-Lucene 4.x to Lucene 10.x, focusing on the TEI/KWIC highlighting pipeline and
-full-text search features.
+This document tracks the plan for leveraging Lucene 10's highlighting
+capabilities in eXist-db's full-text search infrastructure.
 
-## Current Architecture Issues
+## Phase Status
 
-### Highlighting Pipeline (`LuceneMatchListener`)
-- `scanMatches()` manually reconstructs query matching logic using a `QueryVisitor`
-  pattern, handling `TermQuery`, `PhraseQuery`, `BooleanQuery`, etc. case-by-case
-- Proximity/span queries are not handled, causing missing `exist:match` markers (#833)
-- Uses character-offset arithmetic to wrap matches in `exist:match` elements
-- Fixed-character-count windowing with no passage ranking
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Core Lucene 10 API Migration | **COMPLETE** (duncdrum) |
+| Phase 2 | Match Highlighting via Matches API | **COMPLETE** |
+| Phase 3 | KWIC Module Modernization | Planned |
+| Phase 4 | `collection.xconf` Configuration | Planned |
+| Phase 5 | Testing & Compatibility | In Progress |
 
-### TEI Integration
-- `TEIMatchListener` extends `LuceneMatchListener` with TEI namespace handling
-- Same underlying match-detection bugs apply
+## Phase 1: Core Lucene 10 API Migration (COMPLETE)
 
-### KWIC Module (`KWICModule`)
-- `ft:highlight()` and `kwic:summarize()` use string manipulation on serialized XML
-- No passage relevance scoring — returns first N characters, not best passage
+Completed by duncdrum in 96 commits on the `lucene-update` branch.
+Lucene upgraded from 4.x to **10.3.0**. Key changes:
+- `BooleanQuery.Builder` pattern (immutable queries)
+- `SearcherTaxonomyManager` / `ReaderManager` for index access
+- `NumericUtils.intToSortableBytes()` for document ID encoding
+- Analyzer API changes (no Version parameter)
+- Bug fixes: #4584 (spans across inline elements), #4835 (multiple match highlighting)
+- 30+ new regression tests
 
-## Migration Plan
+## Phase 2: Match Highlighting via Matches API (COMPLETE)
 
-### Phase 1: Core Lucene 10 API Migration
+Replaced the manual token-by-token match detection with Lucene 10's
+`Matches` API via `MemoryIndex`. This was the highest-value change.
 
-1. **Update Lucene dependencies** to 10.x in `pom.xml`
-2. **Fix compilation breaks** from removed/changed APIs:
-   - `IndexWriterConfig` changes
-   - `Analyzer` API changes
-   - `Query` subclass changes (e.g., `BooleanQuery` is immutable since Lucene 5)
-   - `IndexReader` / `DirectoryReader` API changes
-   - Codec/postings format changes
-3. **Update `LuceneIndex`** — index creation, opening, segment merging
-4. **Update `LuceneUtil`** — query parsing, field analysis
+### What Changed
 
-### Phase 2: UnifiedHighlighter Integration
+**`LuceneMatchListener.scanMatches()`** — The old approach tokenized the
+concatenated text content and checked each token against extracted query
+terms, only handling `TermQuery` and `PhraseQuery`. The new approach:
 
-This is the highest-value change. Replace the manual match-detection in
-`LuceneMatchListener.scanMatches()` with Lucene 10's `UnifiedHighlighter`.
+1. Extracts text content from XML nodes (unchanged)
+2. Creates a `MemoryIndex` with the text and the correct field name/analyzer
+3. Uses `Weight.matches()` to get character-level match offsets
+4. Maps offsets back to XML text nodes via `OffsetList` (unchanged)
 
-#### Key Design Decisions
+This correctly handles **all** query types:
+- Term queries
+- Phrase queries
+- Proximity/span queries (fixes #833)
+- Wildcard queries
+- Fuzzy queries
+- Regex queries
+- Complex boolean combinations
 
-**Offset Strategy:** Configure fields with
-`IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS` to enable the fastest
-postings-based offset source (~1.1 bytes/position overhead, sequential I/O).
+**`Field.highlightMatches()`** — Same MemoryIndex approach applied to
+`ft:highlight-field-matches` for consistent highlighting across APIs.
 
-**WEIGHT_MATCHES Mode (default in Lucene 9+):** Delegates match detection to
-`Weight.matches(LeafReaderContext, int)` — the query itself reports where it
-matches. This fixes:
-- Missing `exist:match` for proximity/span queries (#833)
-- Incorrect phrase highlighting
-- All edge cases with complex boolean combinations
+**`extractContentQuery()`** — New utility that strips non-content-field
+clauses from queries (e.g. `_idx` FILTER, `pub-year` range queries) so
+the query can be used against a single-field MemoryIndex.
 
-**Passage Breaking:** Use `BreakIterator.getSentenceInstance()` for sentence-aligned
-passages instead of fixed character windows. This produces more readable KWIC output.
+**Index Options** — Changed from `DOCS_AND_FREQS_AND_POSITIONS` to
+`DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS` to enable future optimization
+via postings-based offset retrieval on the persistent index.
 
-**Passage Scoring:** BM25-based scoring (`k1=1.2, b=0.75, pivot=87`) with position
-normalization biasing toward earlier passages. Replaces the current "first N chars"
-approach with "best N chars."
+### Dependencies Added
 
-#### Implementation Steps
+- `lucene-memory` 10.3.0 — provides `MemoryIndex`
 
-1. **Create `ExistPassageFormatter`** — custom `PassageFormatter` that produces
-   `exist:match` elements instead of `<b>` tags
-2. **Create `ExistHighlighter`** — wrapper around `UnifiedHighlighter.Builder` that:
-   - Configures the formatter, scorer, and break iterator
-   - Handles eXist's XML-aware field storage
-   - Maps Lucene passages back to XML node positions
-3. **Replace `LuceneMatchListener.scanMatches()`** with calls to `ExistHighlighter`
-4. **Update `TEIMatchListener`** to use the new highlighter with TEI namespace mapping
-5. **Rewrite `ft:highlight()`** to use `UnifiedHighlighter` directly, returning
-   ranked passages with `exist:match` markers
+### Test Results
 
-### Phase 3: KWIC Module Modernization
+649 tests pass (648 existing + 1 new proximity/wildcard/fuzzy test).
 
-1. **`kwic:summarize()`** — use UnifiedHighlighter's passage selection and scoring
-   instead of string-based character counting
-2. **`kwic:display()`** — format passages using the highlighter's output
-3. **Add passage ranking** — return the highest-scoring passages, not just the first
-4. **Support configurable context** — sentence-based or paragraph-based via
+## Phase 3: KWIC Module Modernization (Planned)
+
+The `kwic.xql` module uses character-counting to extract context around
+`exist:match` elements. This could be improved with passage scoring:
+
+1. **`kwic:summarize()`** — Consider using UnifiedHighlighter's BM25-based
+   passage scoring to return the *best* passage, not just the *first*
+2. **Passage ranking** — Return highest-scoring passages
+3. **Configurable context** — Sentence-based or paragraph-based via
    `BreakIterator` selection
 
-### Phase 4: `collection.xconf` Configuration
+This phase requires adding `lucene-highlighter` dependency for
+`UnifiedHighlighter`, `PassageFormatter`, and `PassageScorer`.
+
+## Phase 4: `collection.xconf` Configuration (Planned)
 
 Update the Lucene index configuration schema to support:
 
 ```xml
-<text qname="tei:p"
-      highlight-offsets="postings|term-vectors|analysis"
+<text qname="p"
       passage-break="sentence|paragraph|whole"
       passage-scorer-k1="1.2"
       passage-scorer-b="0.75">
 ```
 
-Defaults should work well out of the box (postings offsets, sentence breaks, BM25
-scoring with standard parameters).
+Defaults should work well out of the box.
 
-### Phase 5: Testing & Compatibility
+## Phase 5: Testing & Compatibility (In Progress)
 
-1. **Unit tests** for `ExistHighlighter` with various query types:
-   - Simple term queries
-   - Phrase queries
-   - Proximity queries (the #833 fix)
-   - Wildcard/regex queries
-   - Boolean combinations
-   - Fuzzy queries
-2. **Integration tests** for `ft:highlight()` and `kwic:summarize()`
-3. **TEI-specific tests** with TEI namespace handling
-4. **Index migration** — document re-indexing requirements for existing databases
-5. **Performance benchmarks** — compare highlighting speed old vs. new
+- [x] Unit tests for proximity, wildcard, fuzzy query highlighting
+- [x] Regression tests for #4584, #4835
+- [x] Field-highlight tests with mixed content/field queries
+- [ ] Performance benchmarks — compare highlighting speed old vs. new
+- [ ] Index migration documentation — reindexing requirements
 
-## Key Files to Modify
+## Key Files Modified
 
 | File | Changes |
 |------|---------|
-| `extensions/indexes/lucene/pom.xml` | Update Lucene version |
-| `LuceneIndex.java` | Index creation/opening API changes |
-| `LuceneMatchListener.java` | Replace `scanMatches()` with UnifiedHighlighter |
-| `TEIMatchListener.java` | Update for new highlighter |
-| `LuceneUtil.java` | Query parsing API changes |
-| `KWICModule.java` | Passage-based KWIC with scoring |
-| `Highlight.java` (`ft:highlight`) | UnifiedHighlighter integration |
-| `collection.xconf` schema | New highlighting configuration options |
+| `pom.xml` | Added `lucene-memory` dependency |
+| `LuceneIndexWorker.java` | IndexOptions → include offsets |
+| `LuceneMatchListener.java` | Replaced `scanMatches()` with MemoryIndex + Matches API |
+| `Field.java` | Replaced `highlightMatches()` with MemoryIndex + Matches API |
+| `LuceneMatchListenerTest.java` | Added proximity/wildcard/fuzzy highlighting test |
 
 ## References
 
-- [UnifiedHighlighter API (Lucene 10.1.0)](https://lucene.apache.org/core/10_1_0/highlighter/org/apache/lucene/search/uhighlight/UnifiedHighlighter.html)
-- [LUCENE-7438 — UnifiedHighlighter proposal](https://github.com/apache/lucene/issues/8490)
-- [LUCENE-8286 — WEIGHT_MATCHES support](https://issues.apache.org/jira/browse/LUCENE-8286)
+- [Lucene Matches API](https://lucene.apache.org/core/10_1_0/core/org/apache/lucene/search/Matches.html)
+- [MemoryIndex](https://lucene.apache.org/core/10_1_0/memory/org/apache/lucene/index/memory/MemoryIndex.html)
+- [UnifiedHighlighter API](https://lucene.apache.org/core/10_1_0/highlighter/org/apache/lucene/search/uhighlight/UnifiedHighlighter.html)
 - [eXist-db Issue #833 — Missing exist:match for proximity queries](https://github.com/eXist-db/exist/issues/833)
-- [PassageScorer API](https://lucene.apache.org/core/10_1_0/highlighter/org/apache/lucene/search/uhighlight/PassageScorer.html)
