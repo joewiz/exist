@@ -93,41 +93,57 @@ The jump from Lucene 4.10.4 to Lucene 10 is massive (~6 major versions). **Lucen
 
 ### 2.1 Core Language Constructs
 
-The W3C XQuery and XPath Full Text 3.0 Recommendation (W3C, 2015) defines a declarative full-text search language embedded in XQuery/XPath expressions.
+The W3C XQuery and XPath Full Text 3.0 Recommendation (W3C, 24 November 2015) defines a declarative full-text search language embedded in XQuery/XPath expressions. Note: XQFT 3.0 is functionally identical to 1.0 — the 3.0 version aligns the grammar with XQuery 3.0 and XPath 3.0, with no changes to the full-text language itself.
 
 **FTContains Expression:**
 ```
-Expr FTContainsExpr ::= RangeExpr ( "contains" "text" FTSelection FTIgnoreOption? )?
+FTContainsExpr ::= StringConcatExpr ( "contains" "text" FTSelection FTIgnoreOption? )?
 ```
 
-**FTSelection** — the query tree:
+The `contains text` operator has **higher precedence** than other comparison operators. It evaluates whether any item in the left-hand expression, after tokenization, matches the FTSelection. The resulting `AllMatches` is converted to boolean: **true** if at least one Match contains only StringIncludes; **false** otherwise.
+
+**FTSelection** — the query tree (grammar hierarchy: FTOr → FTAnd → FTMildNot → FTUnaryNot → FTPrimary):
 
 | Construct | Syntax | Semantics |
 |-----------|--------|-----------|
 | **FTWords** | `'word'`, `'phrase' all words`, `'a' any word` | Terminal: match words/phrases |
 | **FTOr** | `A ftor B` | Union of matches |
 | **FTAnd** | `A ftand B` | Intersection of matches |
-| **FTMildNot** | `A not in B` | A's matches minus those containing B |
-| **FTUnaryNot** | `ftnot A` | Negation (only in FTAnd) |
+| **FTMildNot** | `A not in B` | Milder negation — A's matches minus those also matching B (cannot produce purely negative result) |
+| **FTUnaryNot** | `ftnot A` | Converts StringIncludes to StringExcludes and vice versa |
 | **FTOrder** | `ordered` | Matches must appear in query order |
-| **FTWindow** | `window N words` | All matches within N tokens |
-| **FTDistance** | `distance N words` | Between-match distance constraint |
-| **FTScope** | `same sentence` / `same paragraph` | Structural scope constraint |
+| **FTWindow** | `window N words/sentences/paragraphs` | All matches within N units |
+| **FTDistance** | `distance exactly/at least/at most/from..to N words/sentences/paragraphs` | Between-match distance constraint |
+| **FTScope** | `same/different sentence/paragraph` | Structural scope constraint |
 | **FTContent** | `at start` / `at end` / `entire content` | Anchoring constraints |
-| **FTTimes** | `occurs N times` | Cardinality constraint |
+| **FTTimes** | `occurs exactly/at least/at most/from..to N times` | Cardinality constraint |
+
+**FTAnyallOption modes** (for FTWords):
+
+| Mode | Meaning |
+|------|---------|
+| `any` (default) | Match any one of the search tokens |
+| `any word` | Tokenize the string, match any resulting word |
+| `all` | Match all search tokens |
+| `all words` | Tokenize the string, match all resulting words |
+| `phrase` | Match the entire string as a contiguous phrase |
+
+Note: `ftor`/`ftand`/`ftnot` use the `ft` prefix to avoid syntactic ambiguity with XQuery's boolean `or`/`and`/`not` operators.
 
 ### 2.2 Match Options
 
+Match options are **propagated through the static context**. A locally specified option overrides the inherited default. Conflicting options in the same FTMatchOptions (e.g., both `case sensitive` and `case insensitive`) raise a static error.
+
 | Option | Syntax | Default | Description |
 |--------|--------|---------|-------------|
-| Case | `case sensitive/insensitive` | implementation-defined | Case folding |
-| Diacritics | `diacritics sensitive/insensitive` | implementation-defined | Accent folding |
-| Stemming | `with stemming` | no stemming | Morphological normalization |
-| Thesaurus | `with thesaurus at URI` | no thesaurus | Synonym expansion |
-| Stop Words | `with stop words at URI` | no stop words | Stop word filtering |
-| Language | `language "en"` | implementation-defined | Language for analysis |
-| Wildcards | `with wildcards` | no wildcards | `.` and `.*` in search terms |
-| Extension | `with FTExtensionOption` | — | Implementation-defined extensions |
+| Case | `using case sensitive/insensitive/lowercase/uppercase` | implementation-defined | Case folding; `lowercase`/`uppercase` normalize case |
+| Diacritics | `using diacritics sensitive/insensitive` | implementation-defined | Accent folding |
+| Stemming | `using stemming / using no stemming` | no stemming | Morphological normalization (what constitutes a stem is **implementation-defined**) |
+| Thesaurus | `using thesaurus at URI relationship "RT" levels N` | no thesaurus | Synonym expansion; URI, relationships, and levels are **implementation-defined** |
+| Stop Words | `using stop words at URI / using stop words ("a", "the")` | no stop words | Stop word filtering; stop words retain position numbers for distance/window calculations |
+| Language | `using language "en"` | implementation-defined | Language for analysis (BCP 47 tag); affects tokenization, stemming, stop words |
+| Wildcards | `using wildcards / using no wildcards` | no wildcards | `.` = any char, `.{n,m}` = n-to-m chars, `\` escapes |
+| Extension | pragma-based | — | Implementation-specific extensions |
 
 ### 2.3 FTIgnoreOption
 
@@ -153,12 +169,53 @@ Scoring semantics are implementation-defined; the spec only requires that scores
 
 ### 2.5 Data Model: AllMatches
 
-The XQFT formal semantics define a complex match model:
-- **AllMatches**: set of possible Match alternatives
-- **Match**: a set of StringInclude and StringExclude pairs
-- **StringInclude/StringExclude**: token position ranges (queryPos, startPos, endPos)
+The XQFT formal semantics define a match model analogous to **Disjunctive Normal Form (DNF)** in logic:
 
-This positional model is central to how positional filters (FTOrder, FTWindow, FTDistance, FTScope, FTContent) operate. Every XQFT operation must track and propagate position information.
+- **AllMatches**: A set (disjunction) of `Match` instances — all possible solutions for an FT query against a search context. This is the intermediate data type passed between FTSelection operators.
+- **Match**: A single solution — a conjunction of positive atoms (`StringInclude`) and negative atoms (`StringExclude`).
+- **StringInclude**: Tokens that **must be present**. Contains a query token position and `TokenInfo` (matched document token positions, sentence numbers, paragraph numbers).
+- **StringExclude**: Tokens that **must not be present**. Same structure as StringInclude.
+
+**Boolean conversion rule:** AllMatches → `true` if at least one Match has only StringIncludes (no StringExcludes). AllMatches → `false` if every Match has at least one StringExclude.
+
+All FTSelection operators (except terminal FTWords) are **closed under AllMatches** — input and output are both AllMatches, making all operators **fully composable**.
+
+This positional model is central to how positional filters operate:
+- **FTOrder**: StringInclude positions must be monotonically increasing
+- **FTWindow**: All StringInclude positions must fall within N units
+- **FTDistance**: Distance between consecutive StringIncludes within specified range
+- **FTScope**: All StringIncludes share the same (or different) sentence/paragraph number
+- **FTContent**: StringIncludes anchored to start/end of the token sequence
+
+Stop words retain their position numbers even though excluded from matching, ensuring positional filters account for them correctly.
+
+### 2.6 Conformance Requirements
+
+The spec defines **minimal conformance** plus **optional features**:
+
+**Minimal conformance** (MUST implement):
+- `FTContainsExpr` (`contains text`)
+- All logical operators: `ftor`, `ftand`, `not in`, `ftnot`
+- `FTWords` with all `FTAnyallOption` modes
+- `FTTimes` (cardinality)
+- All positional filters: `ordered`, `window`, `distance`, `scope`, `content`
+- Basic match options: `case sensitive/insensitive`, `diacritics sensitive/insensitive`
+- Score variables in FLWOR expressions
+- Weights
+
+**Optional features** (may raise error `FTST0009` if unsupported):
+
+| Feature | Notes |
+|---------|-------|
+| Stemming | What constitutes a stem is implementation-defined |
+| Thesaurus | URI, relationships, levels are implementation-defined |
+| Stop Words | Lists from URIs or inline |
+| Wildcards | Simple pattern matching (`.`, `.{n,m}`) |
+| Language Option | Affects tokenization/stemming in implementation-defined ways |
+| FTIgnoreOption | `without content` clause |
+| Extension Options | Implementation-specific pragmas |
+
+**Implementation-defined aspects:** tokenization algorithm, stemming approach (algorithmic/dictionary/hybrid), supported thesaurus relationships, language effects, scoring computation, weight effects, markup's effect on token boundaries.
 
 ---
 
