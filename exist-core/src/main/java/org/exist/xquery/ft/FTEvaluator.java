@@ -237,12 +237,17 @@ public class FTEvaluator {
                                final boolean useWildcards) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
-            final List<String> searchTokens = tokenize(searchStr);
-            if (searchTokens.isEmpty()) {
-                result.addMatch(new Match());
-                continue;
+            if (useWildcards) {
+                // With wildcards, match the raw pattern against each source token
+                findWordMatches(searchStr, caseInsensitive, true, result);
+            } else {
+                final List<String> searchTokens = tokenize(searchStr);
+                if (searchTokens.isEmpty()) {
+                    result.addMatch(new Match());
+                    continue;
+                }
+                findPhraseMatches(searchTokens, caseInsensitive, false, result);
             }
-            findPhraseMatches(searchTokens, caseInsensitive, useWildcards, result);
         }
         return result;
     }
@@ -255,8 +260,13 @@ public class FTEvaluator {
                                    final boolean useWildcards) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
-            for (final String word : tokenize(searchStr)) {
-                findWordMatches(word, caseInsensitive, useWildcards, result);
+            if (useWildcards) {
+                // With wildcards, match the raw pattern against each source token
+                findWordMatches(searchStr, caseInsensitive, true, result);
+            } else {
+                for (final String word : tokenize(searchStr)) {
+                    findWordMatches(word, caseInsensitive, false, result);
+                }
             }
         }
         return result;
