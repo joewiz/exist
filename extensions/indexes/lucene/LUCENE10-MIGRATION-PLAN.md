@@ -13,7 +13,7 @@ capabilities in eXist-db's full-text search infrastructure.
 | Phase 2 | Match Highlighting via Matches API | **COMPLETE** |
 | Phase 3 | KWIC Module Modernization | Planned |
 | Phase 4 | `collection.xconf` Configuration | Planned |
-| Phase 5 | Testing & Compatibility | In Progress |
+| Phase 5 | Testing & Compatibility | **COMPLETE** |
 
 ## Phase 1: Core Lucene 10 API Migration (COMPLETE)
 
@@ -44,19 +44,32 @@ terms, only handling `TermQuery` and `PhraseQuery`. The new approach:
 
 This correctly handles **all** query types:
 - Term queries
-- Phrase queries
+- Phrase queries (highlighted as single spans)
 - Proximity/span queries (fixes #833)
 - Wildcard queries
 - Fuzzy queries
 - Regex queries
+- Prefix queries
 - Complex boolean combinations
+- Boosted queries
 
 **`Field.highlightMatches()`** — Same MemoryIndex approach applied to
 `ft:highlight-field-matches` for consistent highlighting across APIs.
 
+**`PlainTextHighlighter`** — Rewritten for `ft:search` path.
+
 **`extractContentQuery()`** — New utility that strips non-content-field
-clauses from queries (e.g. `_idx` FILTER, `pub-year` range queries) so
-the query can be used against a single-field MemoryIndex.
+clauses from queries (e.g. `_idx` FILTER, `pub-year` range queries,
+`BoostQuery` wrappers) so the query can be used against a single-field
+MemoryIndex.
+
+**Overlap merging** — Match spans are inserted in sorted order and
+merged during emission, so overlapping spans from different query clauses
+(e.g. term + phrase containing that term) produce clean, non-nested
+`exist:match` output.
+
+**Dead code removal** — `MarkableTokenFilter` (entire class) and
+`LuceneIndexWorker.getTerms()` removed — no longer needed after migration.
 
 **Index Options** — Changed from `DOCS_AND_FREQS_AND_POSITIONS` to
 `DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS` to enable future optimization
@@ -68,7 +81,7 @@ via postings-based offset retrieval on the persistent index.
 
 ### Test Results
 
-649 tests pass (648 existing + 1 new proximity/wildcard/fuzzy test).
+655 tests pass, 0 failures.
 
 ## Phase 3: KWIC Module Modernization (Planned)
 
@@ -97,11 +110,17 @@ Update the Lucene index configuration schema to support:
 
 Defaults should work well out of the box.
 
-## Phase 5: Testing & Compatibility (In Progress)
+## Phase 5: Testing & Compatibility (COMPLETE)
 
 - [x] Unit tests for proximity, wildcard, fuzzy query highlighting
+- [x] Phrase query highlighting (single-span assertion)
+- [x] Regex, prefix query highlighting
+- [x] Boolean combination highlighting
+- [x] Overlapping match span merging
 - [x] Regression tests for #4584, #4835
 - [x] Field-highlight tests with mixed content/field queries
+- [x] XQuery proximity test un-pended (was pending for #833)
+- [x] BoostQuery handling in extractContentQuery
 - [ ] Performance benchmarks — compare highlighting speed old vs. new
 - [ ] Index migration documentation — reindexing requirements
 
@@ -110,10 +129,13 @@ Defaults should work well out of the box.
 | File | Changes |
 |------|---------|
 | `pom.xml` | Added `lucene-memory` dependency |
-| `LuceneIndexWorker.java` | IndexOptions → include offsets |
-| `LuceneMatchListener.java` | Replaced `scanMatches()` with MemoryIndex + Matches API |
+| `LuceneIndexWorker.java` | IndexOptions → include offsets; removed dead `getTerms()` |
+| `LuceneMatchListener.java` | Replaced `scanMatches()` with MemoryIndex + Matches API; overlap merging; BoostQuery support |
 | `Field.java` | Replaced `highlightMatches()` with MemoryIndex + Matches API |
-| `LuceneMatchListenerTest.java` | Added proximity/wildcard/fuzzy highlighting test |
+| `PlainTextHighlighter.java` | Rewritten to use MemoryIndex + Matches API |
+| `MarkableTokenFilter.java` | **Deleted** — dead code |
+| `LuceneMatchListenerTest.java` | Added phrase, regex, prefix, boolean, proximity, fuzzy, overlap tests |
+| `ft-match.xql` | Un-pended proximity/slop test |
 
 ## References
 
