@@ -736,7 +736,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 fields = fieldsToGet;
             }
 
-            final PlainTextHighlighter highlighter = new PlainTextHighlighter(query, searcher.searcher().getIndexReader());
+            final PlainTextHighlighter highlighter = new PlainTextHighlighter(query);
 
             context.pushDocumentContext();
             try {
@@ -835,7 +835,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                             attribs.clear();
                             attribs.addAttribute("", "name", "name", "CDATA", field);
                             for (String content : fieldContent) {
-                                List<Offset> offsets = highlighter.getOffsets(content, searchAnalyzer);
+                                List<Offset> offsets = highlighter.getOffsets(content, searchAnalyzer, field);
                                 builder.startElement("", "field", "field", attribs);
                                 if (offsets != null) {
                                     highlighter.highlight(content, offsets, builder);
