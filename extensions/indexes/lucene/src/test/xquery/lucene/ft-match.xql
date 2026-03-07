@@ -187,6 +187,28 @@ function ftt:slop-string-vs-xml-equality() {
 };
 
 (:~
+ : ft:highlight returns the full element with exist:match markers.
+ :)
+declare
+    %test:assertTrue
+function ftt:highlight-basic() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "Nixon")]
+    let $highlighted := ft:highlight($hits)
+    return exists($highlighted//exist:match)
+};
+
+(:~
+ : ft:highlight preserves full element structure.
+ :)
+declare
+    %test:assertEquals(2)
+function ftt:highlight-preserves-structure() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "Nixon")]
+    let $highlighted := ft:highlight($hits)
+    return count($highlighted//exist:match)
+};
+
+(:~
  : ft:get-passages returns exist:passage elements with exist:match children.
  : Query for "text" in the nested div should produce at least one passage.
  :)
