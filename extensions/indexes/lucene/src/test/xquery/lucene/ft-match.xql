@@ -185,3 +185,36 @@ function ftt:slop-string-vs-xml-equality() {
         return $match-count
     return ($results[1], $results[2])
 };
+
+(:~
+ : ft:get-passages returns exist:passage elements with exist:match children.
+ : Query for "text" in the nested div should produce at least one passage.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-basic() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "text")]
+    let $passages := ft:get-passages($hits, 3)
+    return exists($passages//exist:match)
+};
+
+(:~
+ : ft:get-passages with max-passages=1 returns at most 1 passage per hit.
+ :)
+declare
+    %test:assertEquals(1)
+function ftt:get-passages-max-one() {
+    let $hit := collection($ftt:COLLECTION)//div[ft:query(., "text")][1]
+    return count(ft:get-passages($hit, 1))
+};
+
+(:~
+ : ft:get-passages passage elements have a score attribute.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-has-score() {
+    let $hit := collection($ftt:COLLECTION)//div[ft:query(., "text")][1]
+    let $passages := ft:get-passages($hit, 1)
+    return every $p in $passages satisfies $p/@score castable as xs:double
+};
