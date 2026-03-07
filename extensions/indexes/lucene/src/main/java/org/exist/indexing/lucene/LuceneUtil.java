@@ -137,8 +137,8 @@ public class LuceneUtil {
      * The terms are put into a map with the term as key and the
      * corresponding query object as value.
      *
-     * This method is used by {@link LuceneMatchListener}
-     * to highlight matches in the search results.
+     * This method is used by {@link #extractFields(Query, IndexReader)}
+     * to determine which fields a query targets.
      *
      * @param query the query
      * @param terms the terms

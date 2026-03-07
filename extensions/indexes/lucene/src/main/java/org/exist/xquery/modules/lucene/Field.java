@@ -272,18 +272,34 @@ public class Field extends BasicFunction {
                     }
                 }
 
-                // Sort offsets and emit text with exist:match wrappers
+                // Sort offsets, merge overlapping spans, and emit with exist:match wrappers
                 matchOffsets.sort(Comparator.comparingInt(a -> a[0]));
                 int currentPos = 0;
-                for (final int[] offsets : matchOffsets) {
-                    if (offsets[0] > currentPos) {
-                        builder.characters(content.substring(currentPos, offsets[0]));
+                int i = 0;
+                while (i < matchOffsets.size()) {
+                    int matchStart = matchOffsets.get(i)[0];
+                    int matchEnd = matchOffsets.get(i)[1];
+                    // Merge overlapping/adjacent spans
+                    while (i + 1 < matchOffsets.size() && matchOffsets.get(i + 1)[0] <= matchEnd) {
+                        i++;
+                        matchEnd = Math.max(matchEnd, matchOffsets.get(i)[1]);
                     }
-                    final int end = Math.min(offsets[1], content.length());
+                    if (matchStart < currentPos) {
+                        matchStart = currentPos;
+                    }
+                    if (matchStart >= matchEnd || matchStart >= content.length()) {
+                        i++;
+                        continue;
+                    }
+                    if (matchStart > currentPos) {
+                        builder.characters(content.substring(currentPos, matchStart));
+                    }
+                    final int end = Math.min(matchEnd, content.length());
                     builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
-                    builder.characters(content.substring(offsets[0], end));
+                    builder.characters(content.substring(matchStart, end));
                     builder.endElement();
                     currentPos = end;
+                    i++;
                 }
                 if (currentPos < content.length()) {
                     builder.characters(content.substring(currentPos));

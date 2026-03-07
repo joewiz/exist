@@ -51,14 +51,31 @@ public class PlainTextHighlighter {
             builder.characters(content);
         } else {
             int lastOffset = 0;
-            for (final Offset offset : offsets) {
-                if (offset.startOffset() > lastOffset) {
-                    builder.characters(content.substring(lastOffset, offset.startOffset()));
+            int i = 0;
+            while (i < offsets.size()) {
+                int matchStart = offsets.get(i).startOffset();
+                int matchEnd = offsets.get(i).endOffset();
+                // Merge overlapping/adjacent spans
+                while (i + 1 < offsets.size() && offsets.get(i + 1).startOffset() <= matchEnd) {
+                    i++;
+                    matchEnd = Math.max(matchEnd, offsets.get(i).endOffset());
                 }
+                if (matchStart < lastOffset) {
+                    matchStart = lastOffset;
+                }
+                if (matchStart >= matchEnd || matchStart >= content.length()) {
+                    i++;
+                    continue;
+                }
+                if (matchStart > lastOffset) {
+                    builder.characters(content.substring(lastOffset, matchStart));
+                }
+                final int end = Math.min(matchEnd, content.length());
                 builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
-                builder.characters(content.substring(offset.startOffset(), Math.min(offset.endOffset(), content.length())));
+                builder.characters(content.substring(matchStart, end));
                 builder.endElement();
-                lastOffset = offset.endOffset();
+                lastOffset = end;
+                i++;
             }
             if (lastOffset < content.length()) {
                 builder.characters(content.substring(lastOffset));
