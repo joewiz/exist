@@ -35,6 +35,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.memory.MemoryIndex;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Matches;
 import org.apache.lucene.search.MatchesIterator;
@@ -332,6 +333,12 @@ public class LuceneMatchListener extends AbstractMatchListener {
      * @return a query containing only clauses for the content field, or null if none found
      */
     public static @Nullable Query extractContentQuery(final Query query, final String contentField) {
+        // Unwrap BoostQuery, preserving boost on the filtered result
+        if (query instanceof BoostQuery boost) {
+            final Query inner = extractContentQuery(boost.getQuery(), contentField);
+            return inner != null ? new BoostQuery(inner, boost.getBoost()) : null;
+        }
+
         if (!(query instanceof BooleanQuery bq)) {
             // Leaf query: check what field it targets
             final String field = getQueryField(query);
@@ -371,6 +378,9 @@ public class LuceneMatchListener extends AbstractMatchListener {
      * Get the field name that a query targets, or null if it can't be determined.
      */
     private static @Nullable String getQueryField(final Query query) {
+        if (query instanceof BoostQuery boost) {
+            return getQueryField(boost.getQuery());
+        }
         if (query instanceof TermQuery tq) {
             return tq.getTerm().field();
         }
