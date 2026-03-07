@@ -137,7 +137,20 @@ BaseX cleanly separates two concepts:
 
 - **WebDAV**: Similar transparent decoding.
 
-### 4.3 Known Tradeoffs
+### 4.3 Explicit Character Rules
+
+BaseX defines precise character rules for database names:
+
+- **Allowed**: Letters, numbers, and `` !#$%&'()+-=@[]^_{}~ `` and backticks
+- **Disallowed**: `,` `?` `*` (reserved for glob syntax); `;` (command separator);
+  `\` `/` (path separators); `:` `"` `<` `>` `|` (invalid on Windows)
+- Names must **not** start or end with `.` (hidden folder convention)
+- As of BaseX 8.5, dots are allowed within names but not at boundaries
+
+This explicit allowlist/denylist approach avoids ambiguity -- users know exactly what is
+permitted.
+
+### 4.4 Known Tradeoffs and Bugs
 
 BaseX explicitly acknowledges that its "extensions for handling databases don't go 100%
 hand in hand with standard XQuery functions" (see [BaseX issue #1172](https://github.com/BaseXdb/basex/issues/1172)). When database
@@ -145,13 +158,28 @@ names contain characters like `^` that are invalid in URIs, `fn:base-uri()` fail
 BaseX chose backward compatibility over full XQuery compliance, recommending
 vendor-specific functions (`db:name`, `db:path`) for path manipulation.
 
-### 4.4 Key Lesson for eXist-db
+Additional known issues illustrate the broader difficulty of this problem space:
+
+- [BaseX #1473](https://github.com/BaseXdb/basex/issues/1473): WebDAV `PROPFIND` fails
+  on resources with **spaces** in their names, due to a bug in the Milton WebDAV library's
+  percent-encoding handling -- not in BaseX itself.
+- [BaseX #1706](https://github.com/BaseXdb/basex/issues/1706): A migration failed because
+  a **semicolon** in a resource path was interpreted as a command separator.
+- [BaseX #1344](https://github.com/BaseXdb/basex/issues/1344): Forward slashes in JSON
+  string values were incorrectly escaped during serialization.
+
+These demonstrate that even BaseX's more conservative approach does not eliminate
+encoding-related edge cases entirely.
+
+### 4.5 Key Lesson for eXist-db
 
 BaseX's design validates the core insight of issue #3795: **resource names and URIs are
 fundamentally different things and should be treated separately.** BaseX sidesteps many
 problems by restricting database names to ASCII and treating resource paths as opaque
 strings. eXist-db could adopt a similar strategy while being more permissive with Unicode
-in names.
+in names. However, BaseX's experience also shows that any approach involving multiple
+transport layers (REST, WebDAV) will encounter encoding edge cases, so explicit
+documentation and well-defined character rules are essential.
 
 ---
 
