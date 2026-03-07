@@ -171,7 +171,6 @@ function ftt:highlight($query as xs:string) {
  : @return xs:integer+ (match-count for string query, match-count for XML query)
  :)
 declare
-    %test:pending("Proximity/slop string vs XML match-count equality, see #833")
     %test:assertEquals(1, 1)
 function ftt:slop-string-vs-xml-equality() {
     let $queries := (

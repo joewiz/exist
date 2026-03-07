@@ -521,6 +521,102 @@ public class LuceneMatchListenerTest {
         }
     }
 
+    /**
+     * Test that phrase queries highlight the entire phrase as one match span.
+     */
+    @Test
+    public void phraseQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., '\"quick brown fox\"')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Phrase should highlight as single span: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that regex queries produce correct highlights.
+     */
+    @Test
+    public void regexQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Regex query via XML syntax: /qu.*k/ should match "quick"
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><regex>qu.*k</regex></query>)]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Regex 'qu.*k' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that prefix queries produce correct highlights.
+     */
+    @Test
+    public void prefixQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Prefix query: "bro*" should match "brown"
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., 'bro*')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Prefix 'bro*' should highlight 'brown': " + result,
+                    result.contains(MATCH_START + "brown" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test boolean combinations with multiple match spans.
+     */
+    @Test
+    public void booleanQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Boolean: "quick AND lazy" should highlight both terms
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., '+quick +lazy')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Boolean should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+            assertTrue("Boolean should highlight 'lazy': " + result,
+                    result.contains(MATCH_START + "lazy" + MATCH_END));
+            // "brown" should NOT be highlighted
+            assertFalse("'brown' should not be highlighted: " + result,
+                    result.contains(MATCH_START + "brown" + MATCH_END));
+        }
+    }
+
     @ClassRule
     public static final ExistEmbeddedServer existEmbeddedServer = new ExistEmbeddedServer(true, true);
 
