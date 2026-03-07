@@ -364,3 +364,168 @@ internal consistency (especially the `fn:doc`/`fn:document-uri` round-trip invar
 This is a significant undertaking that touches every layer of eXist-db, but the current
 state produces real user-facing bugs and will continue to generate edge cases until
 addressed systematically.
+
+---
+
+## 9. Lowest Common Denominator: Resource Naming Restrictions
+
+If eXist-db were to enforce resource naming restrictions that guarantee all interfaces
+work correctly **without any fixes to the encoding infrastructure**, the "safe" character
+set would be quite limited. This section analyzes what each interface can handle today and
+identifies the intersection.
+
+### 9.1 Per-Interface Constraints
+
+| Character / Category | REST API | WebDAV (Milton) | XML-RPC | XQuery (`xmldb:*`) | Java XML:DB | `XmldbURI` / `java.net.URI` |
+|---------------------|----------|-----------------|---------|-------------------|-------------|---------------------------|
+| ASCII alphanumeric `A-Za-z0-9` | OK | OK | OK | OK | OK | OK |
+| Hyphen `-` | OK | OK | OK | OK | OK | OK (unreserved) |
+| Underscore `_` | OK | OK | OK | OK | OK | OK (unreserved) |
+| Period `.` | OK | OK | OK | OK | OK | OK (unreserved) |
+| Tilde `~` | OK | OK | OK | OK | OK | OK (unreserved) |
+| Space ` ` | Needs `%20` in URL | Milton bugs ([BaseX #1473]) | OK (plain string) | **Fails** in `XmldbURI.create()` | **Fails** in `XmldbURI.create()` | **Rejected** by `java.net.URI` |
+| Unicode (é, ä, CJK) | Needs `%`-encoding in URL | Encoding-dependent | OK (XML string) | **Fails** unless pre-encoded | **Fails** unless pre-encoded | **Rejected** by `java.net.URI` |
+| Square brackets `[]` | Needs `%5B/%5D` | OK | OK | **Fails** in `java.net.URI` | **Fails** in `java.net.URI` | **Rejected** (IPv6 syntax) |
+| Hash `#` | **Interpreted as fragment** | OK | OK | **Fails** (URI fragment) | **Fails** (URI fragment) | **Rejected** (fragment delimiter) |
+| Question mark `?` | **Interpreted as query** | OK | OK | **Fails** (query delimiter) | **Fails** (query delimiter) | **Rejected** (query delimiter) |
+| Plus `+` | **Decoded as space** by `URLDecoder` | OK | OK | OK (not a URI special) | OK (sub-delim, allowed in path) | OK in `java.net.URI`, but **mangled** by `getCollectionPath()` |
+| Colon `:` | OK (pchar) | OK | OK | OK (pchar) | OK (pchar) | OK (pchar) |
+| At `@` | OK (pchar) | OK | OK | OK (pchar) | OK (pchar) | OK (pchar) |
+| Sub-delims `!$&'()*+,;=` | OK (pchar) | Varies | OK | Most OK in `java.net.URI` | Most OK | Allowed in URI path |
+| Curly braces `{}` | Needs encoding | OK | OK | **Fails** in `java.net.URI` | **Fails** | **Rejected** ("not legal URI characters") |
+| Pipe `\|` | Needs encoding | OK | OK | **Fails** in `java.net.URI` | **Fails** | **Rejected** |
+| Backslash `\` | Needs `%5C` | OK | OK | **Fails** in `java.net.URI` | **Fails** | **Rejected** |
+| Caret `^` | Needs encoding | OK | OK | **Fails** in `java.net.URI` | **Fails** | **Rejected** |
+| Backtick `` ` `` | Needs encoding | OK | OK | **Fails** in `java.net.URI` | **Fails** | **Rejected** |
+| Percent `%` | Must be `%25` | Must be `%25` | OK (literal) | Ambiguous | Ambiguous | OK only as `%XX` escape |
+| Forward slash `/` | **Path separator** | **Path separator** | **Path separator** | **Path separator** | **Path separator** | **Path separator** |
+| Null `\0` | **Invalid** | **Invalid** | **Invalid** (XML) | **Invalid** (XML) | **Invalid** | **Invalid** |
+| Control chars (`\x01-\x1F`) | **Invalid** | **Invalid** | **Invalid** (XML) | **Invalid** (XML) | **Invalid** | **Invalid** |
+
+### 9.2 The Current "Safe" Set (No Changes Required)
+
+Characters that work across **all** eXist-db interfaces today without any encoding:
+
+```
+A-Z  a-z  0-9  -  .  _  ~
+```
+
+Plus the "pchar" characters that `java.net.URI` allows unescaped in path segments:
+
+```
+!  $  &  '  (  )  *  ,  ;  =  :  @
+```
+
+**But** `+` must be excluded due to the `URLDecoder` bug (decoded as space in
+`XmldbURI.getCollectionPath()`), and `:` may cause issues on Windows filesystems
+if data is exported.
+
+So the practical safe set is:
+
+```
+Safe:     A-Z a-z 0-9 - . _ ~ ! $ & ' ( ) * , ; = @
+Avoid:    + (URLDecoder bug), : (Windows), % (ambiguity)
+Reject:   / (path separator), # ? (URI delimiters), [ ] { } | \ ^ ` (java.net.URI),
+          space, Unicode, null, control chars
+```
+
+### 9.3 What Could Be Made Safe With Targeted Fixes
+
+If eXist-db applies the Phase 2 fixes from Section 6 (fixing the encoding infrastructure),
+the safe set expands dramatically:
+
+| Fix | Characters Unlocked |
+|-----|-------------------|
+| Build `XmldbURI` from individually-encoded segments instead of parsing whole string as URI | Space, Unicode, `[]`, `{}`, `\|`, `\`, `^`, `` ` `` |
+| Replace `URLDecoder` with RFC 3986 decoder | `+` (no longer mangled to space) |
+| Store decoded names, encode at boundaries | `%` (literal percent in names) |
+
+After these fixes, the only characters that should remain **permanently forbidden** are:
+
+```
+Permanently forbidden:
+  /     Path separator — fundamental to the collection hierarchy
+  \0    Null byte — invalid in XML, Java strings, and most transports
+  \x01-\x1F  Control characters — invalid in XML
+
+Permanently problematic (recommend avoiding):
+  #     Fragment delimiter in URIs — causes issues in REST API URLs
+  ?     Query delimiter in URIs — causes issues in REST API URLs
+```
+
+### 9.4 Recommended Naming Policy
+
+Taking all interfaces into account, here is a practical naming policy that eXist-db could
+adopt and enforce:
+
+#### Tier 1: Always Safe (recommended)
+```
+A-Z  a-z  0-9  -  _  .  ~
+```
+These characters require no encoding in any context.
+
+#### Tier 2: Safe with Proper Encoding (supported)
+```
+Space, Unicode (accented Latin, CJK, Arabic, etc.),
+! $ & ' ( ) * + , ; = : @
+[ ] { } | \ ^ `
+%  (as a literal character in the name, distinct from percent-encoding)
+```
+These work when the encoding infrastructure correctly encodes/decodes at API boundaries.
+They require the Phase 2 fixes.
+
+#### Tier 3: Forbidden (never allowed in resource names)
+```
+/     Forward slash (path separator)
+\0    Null byte
+\x01-\x1F  Control characters (except \x09 tab, \x0A newline, \x0D carriage return,
+            which could theoretically appear but are strongly discouraged)
+```
+
+#### Tier 4: Discouraged (technically possible but problematic)
+```
+#     Fragment delimiter — breaks REST API URL construction
+?     Query delimiter — breaks REST API URL construction
+```
+If these are allowed, the REST API must always percent-encode them in URLs, and users
+must be aware they cannot type these literally in browser address bars.
+
+### 9.5 Comparison with BaseX
+
+| Aspect | BaseX | Proposed eXist-db |
+|--------|-------|-------------------|
+| Unicode in names | **Not allowed** in database names | **Allowed** (with encoding at boundaries) |
+| Spaces in names | **Not allowed** in database names | **Allowed** (with encoding at boundaries) |
+| Forbidden chars | `, ? * ; \ / : " < > \|` | `/ \0 \x01-\x1F` (and discourage `# ?`) |
+| Approach | Restrict names to avoid encoding | Accept any name, encode at API boundaries |
+
+eXist-db's approach is more permissive, which is appropriate for an XML database that
+stores documents with arbitrary filenames (e.g., `[Content_Types].xml` from OOXML). But
+it requires the encoding infrastructure to be correct — which is exactly what issues
+#3795, #3943, #1824, and #4469 demonstrate is not yet the case.
+
+---
+
+## 10. Test Coverage Map
+
+The following test classes provide systematic coverage of resource naming across
+eXist-db's interfaces:
+
+| Test Class | Location | What It Tests |
+|-----------|----------|---------------|
+| `ResourceNamingTest` | `exist-core/.../xmldb/ResourceNamingTest.java` | Unit tests for URI encoding/decoding of special characters via `URIUtils` and `XmldbURI` |
+| `URIUtilsEncodingTest` | `exist-core/.../xquery/util/URIUtilsEncodingTest.java` | Unit tests for `URIUtils.encodeForURI()`, round-trip fidelity, idempotency |
+| `ResourceNamingIntegrationTest` | `exist-core/.../xmldb/ResourceNamingIntegrationTest.java` | Integration tests: Java XML:DB API store/retrieve/copy/move/rename/remove with special names; XQuery `fn:doc()`/`fn:collection()` access |
+| `RESTResourceNamingTest` | `exist-core/.../http/RESTResourceNamingTest.java` | REST API PUT/GET/DELETE with special character names via percent-encoded URLs |
+| `CrossApiResourceNamingTest` | `exist-core/.../http/CrossApiResourceNamingTest.java` | Cross-API consistency: store via REST → retrieve via XML-RPC, and vice versa |
+| `XQueryResourceNamingTest` | `exist-core/.../xquery/functions/xmldb/XQueryResourceNamingTest.java` | XQuery `xmldb:store/rename/copy/move/remove`, `fn:doc-available`, `fn:collection`, `xmldb:create-collection` with special names |
+
+### Coverage Gaps
+
+| Gap | Priority | Notes |
+|-----|----------|-------|
+| WebDAV with special character names | Medium | Requires Milton client library in test classpath; existing tests use only ASCII names |
+| XML-RPC standalone (without REST cross-reference) | Low | Partially covered by `CrossApiResourceNamingTest` |
+| `+` sign round-trip via `XmldbURI.getCollectionPath()` | High | Known bug (#1824); needs explicit regression test |
+| `hello%20world` as a **literal name** (not encoding of space) | High | Tests the conceptual model: `%20` in a name ≠ space |
+| Concurrent access to special-named resources | Low | Edge case; existing concurrency tests use simple names |
