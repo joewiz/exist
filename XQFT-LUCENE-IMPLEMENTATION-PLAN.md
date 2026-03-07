@@ -336,27 +336,37 @@ Lucene analyzers are typically configured per-field at index time. Supporting pe
 
 ### 5.1 BaseX XQFT Architecture
 
-BaseX implements XQFT using a **custom full-text index** — it does **not** use Lucene. Key architectural decisions:
+BaseX implements XQFT using a **fully custom full-text index engine** — it does **not** use Lucene. The only Lucene dependency is a `lucene-stemmers-3.4.0.jar` for Snowball stemmers extending language support beyond the built-in English and German to 20+ languages.
 
-1. **Custom token-based index**: BaseX builds its own inverted index storing token positions, with support for:
-   - Fuzzy matching (Levenshtein distance)
-   - Wildcard matching
-   - Stemming (via Snowball)
-   - Case/diacritics sensitivity
-   - Positional information for all tokens
+**Key architectural decisions:**
 
-2. **Dual-mode execution**:
-   - **Indexed mode**: Uses the full-text index for stored database documents
-   - **Sequential (non-indexed) mode**: Tokenizes and evaluates in-memory, supporting XQFT on any XDM value including constructed/in-memory nodes
+1. **Custom dual index structures**: BaseX provides two selectable index types:
+   - **Default index**: Sorts keys alphabetically by character length; optimized for **fuzzy searches** (Levenshtein-based)
+   - **Compressed trie**: Double-array trie structure; optimized for **wildcard searches**
 
-3. **FTTokenizer**: BaseX implements its own tokenizer (`FTLexer`/`FTTokenizer`) that handles:
+   Each index entry maps normalized tokens to pre-values (BaseX's internal node IDs), positional information, and pre-computed scoring data.
+
+2. **Three evaluation strategies** (automatically selected by the optimizer):
+   - **Index-based** (bottom-up): Access the FT index first, then traverse paths back from leaf nodes. Used when a full-text index exists and the query can be fully resolved via the index.
+   - **Sequential scan** (top-down): Iterate through candidate nodes, tokenize on-the-fly using `FTLexer` with configured `FTOpt` options, and evaluate directly. Used for in-memory data or when no FT index exists.
+   - **Hybrid**: Combines index access with sequential node traversal. Used when the index can only partially resolve the query.
+
+   The optimizer's strategy choice can be inspected via `SET VERBOSE ON` or the Query Info panel in the BaseX GUI.
+
+3. **FTTokenizer** (`FTLexer`/`FTOpt`): BaseX implements its own tokenizer that handles:
    - Unicode-aware word boundary detection
    - Sentence and paragraph boundary detection (enabling `FTScope`)
    - Configurable case/diacritics/stemming options per tokenization pass
+   - The same tokenization options used at index creation time are automatically applied to queries at search time
+
+**Source code organization** (GitHub: `BaseXdb/basex`):
+- `org.basex.index.ft` — Index structures: `FTBuilder`, `FTIndex`, `FTIndexTree`
+- `org.basex.util.ft` — Utilities: `FTLexer` (tokenizer), `FTOpt` (options), `Scoring`
+- `org.basex.query.ft` — Query expressions: `FTContains`, `FTExpr`, `FTWords`, `FTAnd`, `FTOr`, etc.
 
 ### 5.2 BaseX Conformance
 
-BaseX provides one of the most complete XQFT implementations:
+BaseX was **the first query processor to support all features** of the W3C XQuery and XPath Full Text 1.0 Recommendation (see Grün et al., 2009). However, it has one notable gap:
 
 | Feature | BaseX Support | Notes |
 |---------|---------------|-------|
@@ -372,13 +382,25 @@ BaseX provides one of the most complete XQFT implementations:
 | Case option | **Full** | |
 | Diacritics option | **Full** | |
 | Stemming option | **Full** | Via Snowball, 20+ languages |
-| Thesaurus option | **Partial** | Supports loading thesaurus files, but limited relationship traversal |
+| Thesaurus option | **Partial** | Supports loading thesaurus files (XQFTTS XSD schema format), but no default thesaurus provided |
 | Stop words option | **Full** | |
 | Language option | **Full** | |
 | Wildcards option | **Full** | `.` and `.*` patterns |
-| FTIgnoreOption | **Full** | Sequential evaluation strips ignored nodes |
-| Scoring | **Full** | Custom scoring model |
+| FTIgnoreOption | **Not supported** | The `without content` clause is BaseX's single known XQFT omission |
+| Scoring | **Full** | Custom model (not TF-IDF): considers term count, frequency, and text length; pre-computed at index creation time |
 | In-memory FT search | **Full** | Sequential tokenization-based evaluation |
+
+**BaseX-specific extensions** (beyond the XQFT spec):
+- `using fuzzy` — approximate matching via Levenshtein distance (max errors = token length / 4, min 1)
+- `ft:search()` — direct index access bypassing `contains text`
+- `ft:mark()` / `ft:extract()` — result highlighting and snippet extraction
+- `ft:tokenize()` — exposes the tokenizer for standalone use
+- `ft:tokens()` — lists all tokens in the FT index with occurrence counts
+
+**Known limitations:**
+- FT index is **not incrementally updated** — must be rebuilt via `OPTIMIZE` or `db:optimize()` after modifications (`AUTOOPTIMIZE` option available)
+- Text split across multiple child text nodes within an element may not be found by index-based queries (e.g., `//p[text() contains text 'real text']` won't match `<p>real <b>text</b></p>`)
+- `ft:mark()` requires the full-text expression as argument because positional data is lost in subsequent processing steps
 
 ### 5.3 Lessons from BaseX for eXist-db
 
@@ -394,13 +416,19 @@ BaseX provides one of the most complete XQFT implementations:
 
 **Where eXist-db can improve upon BaseX:**
 
-1. **Lucene's mature ranking**: BaseX uses a simple custom scoring model. Lucene's BM25 and extensible scoring framework can provide more sophisticated relevance ranking.
+1. **Lucene's mature ranking**: BaseX uses a simple custom scoring model (term count, frequency, text length). Lucene's BM25 and extensible scoring framework can provide more sophisticated relevance ranking.
 
-2. **Advanced analysis**: Lucene's rich analyzer ecosystem (ICU, language-specific analyzers, phonetic, etc.) exceeds BaseX's built-in analysis capabilities.
+2. **Advanced analysis**: Lucene's rich analyzer ecosystem (ICU, language-specific analyzers, phonetic, CJK, etc.) exceeds BaseX's built-in analysis capabilities (which depend on Snowball stemmers only).
 
 3. **Faceted search integration**: eXist-db can combine XQFT with Lucene faceted search — something BaseX doesn't offer.
 
 4. **Scalability**: Lucene's battle-tested concurrent indexing and searching infrastructure may offer better performance on large collections.
+
+5. **Incremental index updates**: Lucene supports near-real-time incremental indexing, whereas BaseX's FT index must be fully rebuilt after modifications.
+
+6. **FTIgnoreOption**: BaseX does not support `without content`. eXist-db could implement this (via index-time exclusion or query-time pre-processing) and exceed BaseX's conformance level.
+
+**Academic reference:** Grün, C., Gath, S., Holupirek, A., Scholl, M.H. (2009). "XQuery Full Text Implementation in BaseX." In: Database and XML Technologies. XSym 2009. LNCS vol 5679, pp. 114-128. Springer. See also Schuler (2015), "Integration von Lucene für Volltextanfragen und Facettierung in XML-Datenbanken" — a thesis exploring Lucene integration with BaseX that is directly relevant to eXist-db's approach.
 
 ---
 
@@ -817,14 +845,17 @@ Key API changes affecting eXist-db's current Lucene integration:
 
 | Aspect | BaseX | eXist-db (Current) | eXist-db (Proposed) |
 |--------|-------|---------------------|---------------------|
-| XQFT support | Yes (native) | No | Yes |
-| Index engine | Custom inverted index | Lucene 4.10.4 | Lucene 10 |
-| Non-indexed FT | Yes (sequential) | No | Yes (SequentialFTEvaluator) |
+| XQFT support | Yes (native, first conformant impl) | No | Yes |
+| Index engine | Custom inverted index (dual structure) | Lucene 4.10.4 | Lucene 10 |
+| Non-indexed FT | Yes (3 strategies: index/sequential/hybrid) | No | Yes (SequentialFTEvaluator) |
+| FTIgnoreOption | **Not supported** | No | Yes (target) |
 | Sentence/paragraph scope | Yes (custom tokenizer) | No | Yes (payload-based + tokenizer) |
-| Scoring model | Custom (simple) | Lucene TF-IDF | Lucene BM25 |
-| Thesaurus support | Partial | No | Partial → Full |
+| Scoring model | Custom (term count, freq, length) | Lucene TF-IDF | Lucene BM25 |
+| Incremental index updates | No (full rebuild required) | Yes (Lucene NRT) | Yes (Lucene 10 NRT) |
+| Thesaurus support | Partial (user-supplied files) | No | Partial → Full |
 | Faceted search | No | Yes | Yes |
-| Fuzzy search | Yes (built-in) | Yes (Lucene) | Yes (Lucene + extension option) |
-| Proprietary FT API | No | ft:query() | ft:query() (preserved) |
-| Standards compliance | High | None (proprietary) | High (target) |
-| Analysis ecosystem | Limited (Snowball) | Rich (Lucene analyzers) | Rich (Lucene 10 analyzers) |
+| Fuzzy search | Yes (Levenshtein built-in) | Yes (Lucene) | Yes (Lucene + extension option) |
+| Proprietary FT API | ft:search(), ft:mark(), ft:extract() | ft:query() | ft:query() (preserved) |
+| Standards compliance | High (1 gap: FTIgnoreOption) | None (proprietary) | High (target: full) |
+| Analysis ecosystem | Limited (Snowball stemmers only) | Rich (Lucene analyzers) | Rich (Lucene 10 analyzers + ICU) |
+| CJK/Asian language support | Limited | Yes (Lucene CJK) | Yes (Lucene 10 CJK, Kuromoji, Nori) |
