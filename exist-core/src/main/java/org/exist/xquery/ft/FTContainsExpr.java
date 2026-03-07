@@ -87,9 +87,24 @@ public class FTContainsExpr extends AbstractExpression {
     }
 
     @Override
-    public Sequence eval(final Sequence contextSequence, final Item contextItem) throws XPathException {
-        // TODO: implement FT evaluation (Phase 2/3)
-        throw new XPathException(this, "XQFT contains text evaluation is not yet implemented");
+    public Sequence eval(Sequence contextSequence, final Item contextItem) throws XPathException {
+        if (contextItem != null) {
+            contextSequence = contextItem.toSequence();
+        }
+
+        // Evaluate source expression to get the search context
+        final Sequence sourceSeq = source.eval(contextSequence, null);
+
+        // Get the string value of the source for matching
+        final String sourceText = sourceSeq.getStringValue();
+
+        // Create the evaluator with the source text
+        final FTEvaluator evaluator = new FTEvaluator(sourceText);
+
+        // Evaluate the FT selection against the source tokens
+        final boolean matches = evaluator.evaluate(ftSelection, null);
+
+        return matches ? BooleanValue.TRUE : BooleanValue.FALSE;
     }
 
     @Override
