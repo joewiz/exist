@@ -155,9 +155,9 @@ book contains text "important concept"
 
 This filters out content from specified nodes before matching — a feature deeply tied to XML awareness.
 
-### 2.4 Scoring
+### 2.4 Scoring and Weighting
 
-XQFT defines a `score` clause:
+XQFT defines a `score` clause in FLWOR expressions:
 ```xquery
 for $doc score $s in //article
 where $doc contains text "xml database"
@@ -166,6 +166,12 @@ return $doc
 ```
 
 Scoring semantics are implementation-defined; the spec only requires that scores be `xs:double` values between 0 and 1.
+
+**Weights** can be applied to individual FT primaries:
+```xquery
+$doc contains text "xml" weight { 2.0 } ftand "database" weight { 1.0 }
+```
+Weight values must be `xs:double` with absolute value between 0.0 and 1000.0 (error `FTDY0016` otherwise). How weights affect scoring is implementation-defined.
 
 ### 2.5 Data Model: AllMatches
 
@@ -216,6 +222,13 @@ The spec defines **minimal conformance** plus **optional features**:
 | Extension Options | Implementation-specific pragmas |
 
 **Implementation-defined aspects:** tokenization algorithm, stemming approach (algorithmic/dictionary/hybrid), supported thesaurus relationships, language effects, scoring computation, weight effects, markup's effect on token boundaries.
+
+**Other known implementations:**
+- **BaseX**: First and most complete (see Section 5)
+- **Oracle XML DB**: Partial support via Oracle Text; some restrictions (e.g., `ordered` only supported within a `window`)
+- **Saxon**: Does not implement XQFT
+- **GalaTex** (UCSD research): Academic conformant implementation
+- **eXist-db**: Does not currently implement XQFT (proprietary `ft:query` API only)
 
 ---
 
