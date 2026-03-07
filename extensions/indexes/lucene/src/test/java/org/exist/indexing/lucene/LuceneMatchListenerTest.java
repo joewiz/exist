@@ -474,6 +474,53 @@ public class LuceneMatchListenerTest {
         }
     }
 
+    /**
+     * Test that proximity/near queries produce correct exist:match markers.
+     * Previously (issue #833), the manual token-matching approach could not
+     * handle proximity queries, resulting in missing highlights.
+     * The MemoryIndex + Matches API approach fixes this for all query types.
+     */
+    @Test
+    public void proximityQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+            assertNotNull(xquery);
+
+            // Proximity query: "quick" near "fox" within 3 words.
+            // The Matches API correctly highlights the entire matching span.
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><near slop=\"3\">quick fox</near></query>)]", null);
+            assertNotNull(seq);
+            assertEquals("Proximity query should find 1 hit", 1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            // The span "quick brown fox" should be highlighted as one match
+            assertTrue("Proximity match should be highlighted: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+
+            // Wildcard query: "qu*" should highlight "quick"
+            seq = xquery.execute(broker,
+                "//para[ft:query(., 'qu*')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            result = queryResult2String(broker, seq);
+            assertTrue("Wildcard 'qu*' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+
+            // Fuzzy query: "quikc~" should highlight "quick"
+            seq = xquery.execute(broker,
+                "//para[ft:query(., 'quikc~')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            result = queryResult2String(broker, seq);
+            assertTrue("Fuzzy 'quikc~' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+        }
+    }
+
     @ClassRule
     public static final ExistEmbeddedServer existEmbeddedServer = new ExistEmbeddedServer(true, true);
 

@@ -31,10 +31,20 @@ import org.exist.dom.persistent.NodeSet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.Query;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.memory.MemoryIndex;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Matches;
+import org.apache.lucene.search.MatchesIterator;
+import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.PhraseQuery;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.Weight;
+import org.apache.lucene.queries.spans.SpanQuery;
 import org.exist.indexing.AbstractMatchListener;
 import org.exist.numbering.NodeId;
 import org.exist.stax.ExtendedXMLStreamReader;
@@ -50,20 +60,14 @@ import javax.annotation.Nullable;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.util.*;
-
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
-import org.apache.lucene.util.AttributeSource.State;
 
 public class LuceneMatchListener extends AbstractMatchListener {
 
     private static final Logger LOG = LogManager.getLogger(LuceneMatchListener.class);
 
     private Match match;
-    private Map<Object, Query> termMap;
+    private Set<Query> queries;
     private Map<NodeId, Offset> nodesWithMatch;
     private final LuceneIndex index;
     private LuceneConfig config;
@@ -99,7 +103,7 @@ public class LuceneMatchListener extends AbstractMatchListener {
             config = LuceneConfig.DEFAULT_CONFIG;
         }
 
-        getTerms();
+        getQueries();
         nodesWithMatch = new TreeMap<>();
         /* Check if an index is defined on an ancestor of the current node.
         * If yes, scan the ancestor to get the offset of the first character
@@ -197,7 +201,7 @@ public class LuceneMatchListener extends AbstractMatchListener {
     }
 
     private void scanMatches(final NodeProxy p) {
-        // Collect the text content of all descendants of p. 
+        // Collect the text content of all descendants of p.
         // Remember the start offsets of the text nodes for later use.
         final NodePath path = getPath(p);
         @Nullable final LuceneIndexConfig idxConf = config.getConfig(path).next();
@@ -255,12 +259,17 @@ public class LuceneMatchListener extends AbstractMatchListener {
             LOG.warn("Problem found while serializing XML: {}", e.getMessage(), e);
         }
 
+        // Compute the Lucene field name for this index configuration
+        // (same logic as LuceneIndexWorker uses when indexing)
+        final String contentField = idxConf.isNamed()
+                ? idxConf.getName()
+                : LuceneUtil.encodeQName(idxConf.getQName(), index.getBrokerPool().getSymbols());
+
         // Retrieve the Analyzer for the NodeProxy that was used for
         // indexing and querying.
         Analyzer analyzer = idxConf.getAnalyzer();
         if (analyzer == null) {
             // Otherwise use system default Lucene analyzer (from conf.xml)
-            // to tokenize the text and find matching query terms.
             analyzer = index.getDefaultAnalyzer();
         }
 
@@ -269,60 +278,114 @@ public class LuceneMatchListener extends AbstractMatchListener {
         }
 
         final String str = extractor.getText().toString();
-        try (final Reader reader = new StringReader(str);
-                final TokenStream tokenStream = analyzer.tokenStream(null, reader)) {
-            tokenStream.reset();
-            final MarkableTokenFilter stream = new MarkableTokenFilter(tokenStream);
-            while (stream.incrementToken()) {
-                String text = stream.getAttribute(CharTermAttribute.class).toString();
-                final Query query = termMap.get(text);
-                if (query != null) {
-                    // Phrase queries need to be handled differently to filter
-                    // out wrong matches: only the phrase should be marked, not
-                    // single words which may also occur elsewhere in the document
-                    if (query instanceof PhraseQuery phraseQuery) {
-                        final Term[] terms = phraseQuery.getTerms();
-                        if (text.equals(terms[0].text())) {
-                            // Scan the following text and collect tokens to see
-                            // if they are part of the phrase.
-                            stream.mark();
-                            int t = 1;
-                            final List<State> stateList = new ArrayList<>(terms.length);
-                            stateList.add(stream.captureState());
+        if (str.isEmpty()) {
+            return;
+        }
 
-                            while (stream.incrementToken() && t < terms.length) {
-                                text = stream.getAttribute(CharTermAttribute.class).toString();
-                                if (text.equals(terms[t].text())) {
-                                    stateList.add(stream.captureState());
-                                    if (++t == terms.length) {
-                                        break;
-                                    }
-                                } else {
-                                    // Don't reset the token stream since we will
-                                    // miss matches. /ljo
-                                    //stream.reset();
-                                    break;
-                                }
-                            }
+        // Use Lucene's Matches API via MemoryIndex to detect match offsets.
+        // This replaces the old manual token-matching approach and correctly
+        // handles ALL query types: terms, phrases, spans, proximity, fuzzy,
+        // wildcards, regex, and complex boolean combinations.
+        final MemoryIndex memIndex = new MemoryIndex(true, true);
+        memIndex.addField(contentField, str, analyzer);
 
-                            if (stateList.size() == terms.length) {
-                                // Phrase match: add one span from first to last term (may cross text nodes, #4584).
-                                stream.restoreState(stateList.get(0));
-                                final int start = stream.getAttribute(OffsetAttribute.class).startOffset();
-                                stream.restoreState(stateList.get(terms.length - 1));
-                                final int end = stream.getAttribute(OffsetAttribute.class).endOffset();
-                                addMatchSpan(start, end, offsets, str.length());
+        final IndexSearcher memSearcher = memIndex.createSearcher();
+        final LeafReaderContext leafCtx = memSearcher.getTopReaderContext().leaves().get(0);
+
+        for (final Query query : queries) {
+            // Extract only clauses targeting the content field, stripping
+            // filters (_idx) and non-content fields (e.g. pub-year ranges)
+            final Query contentQuery = extractContentQuery(query, contentField);
+            if (contentQuery == null) {
+                continue;
+            }
+            try {
+                final Weight weight = memSearcher.createWeight(
+                        memSearcher.rewrite(contentQuery), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
+                final Matches matches = weight.matches(leafCtx, 0);
+                if (matches != null) {
+                    final MatchesIterator mi = matches.getMatches(contentField);
+                    if (mi != null) {
+                        while (mi.next()) {
+                            final int startOffset = mi.startOffset();
+                            final int endOffset = mi.endOffset();
+                            if (startOffset >= 0 && endOffset > startOffset) {
+                                addMatchSpan(startOffset, endOffset, offsets, str.length());
                             }
-                        } // End of phrase handling
-                    } else {
-                        final OffsetAttribute offsetAttr = stream.getAttribute(OffsetAttribute.class);
-                        addMatchSpan(offsetAttr.startOffset(), offsetAttr.endOffset(), offsets, str.length());
+                        }
                     }
                 }
+            } catch (final IOException e) {
+                LOG.warn("Problem found while highlighting matches: {}", e.getMessage(), e);
             }
-        } catch (final IOException e) {
-            LOG.warn("Problem found while serializing XML: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * Extract the portions of a query that target the given content field,
+     * stripping any clauses that target other fields (e.g. _idx FILTER,
+     * pub-year range queries). This allows the query to be used on a
+     * MemoryIndex that only contains the content field.
+     *
+     * @param query the original query (possibly a BooleanQuery with mixed fields)
+     * @param contentField the name of the content field in the MemoryIndex
+     * @return a query containing only clauses for the content field, or null if none found
+     */
+    public static @Nullable Query extractContentQuery(final Query query, final String contentField) {
+        if (!(query instanceof BooleanQuery bq)) {
+            // Leaf query: check what field it targets
+            final String field = getQueryField(query);
+            if (field == null) {
+                // Unknown field (e.g. MatchAllDocsQuery) — keep it
+                return query;
+            }
+            return field.equals(contentField) ? query : null;
+        }
+
+        // BooleanQuery: recursively filter each clause
+        final List<BooleanClause> kept = new ArrayList<>();
+        for (final BooleanClause clause : bq.clauses()) {
+            if (clause.occur() == BooleanClause.Occur.FILTER) {
+                // Always strip FILTER clauses (e.g. _idx filter)
+                continue;
+            }
+            final Query sub = extractContentQuery(clause.query(), contentField);
+            if (sub != null) {
+                kept.add(new BooleanClause(sub, clause.occur()));
+            }
+        }
+        if (kept.isEmpty()) {
+            return null;
+        }
+        if (kept.size() == 1 && kept.get(0).occur() == BooleanClause.Occur.MUST) {
+            return kept.get(0).query();
+        }
+        final BooleanQuery.Builder builder = new BooleanQuery.Builder();
+        for (final BooleanClause clause : kept) {
+            builder.add(clause);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Get the field name that a query targets, or null if it can't be determined.
+     */
+    private static @Nullable String getQueryField(final Query query) {
+        if (query instanceof TermQuery tq) {
+            return tq.getTerm().field();
+        }
+        if (query instanceof PhraseQuery pq) {
+            final org.apache.lucene.index.Term[] terms = pq.getTerms();
+            return terms.length > 0 ? terms[0].field() : null;
+        }
+        if (query instanceof MultiTermQuery mtq) {
+            return mtq.getField();
+        }
+        if (query instanceof SpanQuery sq) {
+            return sq.getField();
+        }
+        // Unknown query type — can't determine field
+        return null;
     }
 
     public static NodePath getPath(final NodeProxy proxy) {
@@ -342,44 +405,23 @@ public class LuceneMatchListener extends AbstractMatchListener {
     }
 
     /**
-     * Get all query terms from the original queries.
-     * Excludes terms from configured Lucene fields (e.g. pub-year) so that
-     * util:expand does not produce superfluous highlights for field-only matches.
-     * @see <a href="https://github.com/eXist-db/exist/pull/3467">PR #3467</a>
+     * Collect unique queries from all Lucene matches on this proxy.
+     * Excludes queries that only target configured Lucene fields (e.g. pub-year)
+     * so that util:expand does not produce superfluous highlights for field-only matches.
      */
-    private void getTerms() {
-        try {
-            index.withReader(reader -> {
-                final Set<String> excludedFields = (config == null || config == LuceneConfig.DEFAULT_CONFIG)
-                        ? Collections.emptySet()
-                        : config.getConfiguredFieldNames();
-                final Set<Query> queries = new HashSet<>();
-                final Map<Object, Query> rawTerms = new TreeMap<>();
-                Match nextMatch = this.match;
-                while (nextMatch != null) {
-                    if (nextMatch.getIndexId().equals(LuceneIndex.ID)) {
-                        final Query query = ((LuceneMatch) nextMatch).getQuery();
-                        if (!queries.contains(query)) {
-                            queries.add(query);
-                            LuceneUtil.extractTerms(query, rawTerms, reader, true);
-                        }
-                    }
-                    nextMatch = nextMatch.getNextMatch();
-                }
-                termMap = new TreeMap<>();
-                for (final Map.Entry<Object, Query> e : rawTerms.entrySet()) {
-                    if (e.getKey() instanceof Term term && !excludedFields.contains(term.field())) {
-                        termMap.put(term.text(), e.getValue());
-                    }
-                }
-                return null;
-            });
-        } catch (final IOException e) {
-            LOG.warn("Match listener caught IO exception while reading query terms: {}", e.getMessage(), e);
+    private void getQueries() {
+        queries = new LinkedHashSet<>();
+        Match nextMatch = this.match;
+        while (nextMatch != null) {
+            if (nextMatch.getIndexId().equals(LuceneIndex.ID)) {
+                final Query query = ((LuceneMatch) nextMatch).getQuery();
+                queries.add(query);
+            }
+            nextMatch = nextMatch.getNextMatch();
         }
     }
 
-    private static class OffsetList {
+    static class OffsetList {
 
         int[] offsets = new int[16];
         NodeId[] ids = new NodeId[16];

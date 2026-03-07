@@ -93,7 +93,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         TYPE_NODE_ID.setStored(false);
         TYPE_NODE_ID.setOmitNorms(true);
         TYPE_NODE_ID.setStoreTermVectors(false);
-        TYPE_NODE_ID.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
+        TYPE_NODE_ID.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
     }
 
     static final Logger LOG = LogManager.getLogger(LuceneIndexWorker.class);

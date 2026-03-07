@@ -22,13 +22,15 @@
 package org.exist.xquery.modules.lucene;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.index.IndexableField;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.PhraseQuery;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.memory.MemoryIndex;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Matches;
+import org.apache.lucene.search.MatchesIterator;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.exist.Namespaces;
 import org.exist.dom.memtree.InMemoryNodeSet;
@@ -43,12 +45,8 @@ import org.exist.xquery.value.*;
 import javax.annotation.Nullable;
 import javax.xml.datatype.XMLGregorianCalendar;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.nio.ByteBuffer;
-import java.util.Date;
-import java.util.GregorianCalendar;
-import java.util.Map;
+import java.util.*;
 
 import static org.exist.xquery.FunctionDSL.*;
 import static org.exist.xquery.modules.lucene.LuceneModule.functionSignature;
@@ -213,7 +211,9 @@ public class Field extends BasicFunction {
     }
 
     /**
-     * Highlight matches in field content using the analyzer defined for the field.
+     * Highlight matches in field content using Lucene's Matches API via MemoryIndex.
+     * Correctly handles all query types (terms, phrases, spans, proximity, fuzzy,
+     * wildcards, regex, and complex boolean combinations).
      *
      * @param fieldName the name of the field
      * @param proxy node on which the field is defined
@@ -224,83 +224,68 @@ public class Field extends BasicFunction {
      * @throws IOException in case of a lucene error
      */
     private Sequence highlightMatches(final String fieldName, final NodeProxy proxy, final LuceneMatch match, final Sequence text) throws XPathException, IOException {
-        final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
-        final Map<Object, Query> terms = index.getTerms(match.getQuery());
+        final LuceneIndexWorker indexWorker = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
         final NodePath path = LuceneMatchListener.getPath(proxy);
-        final LuceneConfig config = index.getLuceneConfig(context.getBroker(), proxy.getDocumentSet());
+        final LuceneConfig config = indexWorker.getLuceneConfig(context.getBroker(), proxy.getDocumentSet());
         LuceneIndexConfig idxConf = config.getConfig(path).next();
         if (idxConf == null) {
-            // no lucene index: no fields to highlight
             return Sequence.EMPTY_SEQUENCE;
         }
 
         final Analyzer analyzer = idxConf.getAnalyzer();
+        final Query contentQuery = LuceneMatchListener.extractContentQuery(match.getQuery(), fieldName);
+        if (contentQuery == null) {
+            return Sequence.EMPTY_SEQUENCE;
+        }
 
         context.pushDocumentContext();
         try {
             final MemTreeBuilder builder = context.getDocumentBuilder();
             builder.startDocument();
 
-            final InMemoryNodeSet result =  new InMemoryNodeSet(text.getItemCount());
+            final InMemoryNodeSet result = new InMemoryNodeSet(text.getItemCount());
             for (final SequenceIterator si = text.iterate(); si.hasNext(); ) {
                 final int nodeNr = builder.startElement(Namespaces.EXIST_NS, "field", "exist:field", null);
                 final String content = si.nextItem().getStringValue();
-                int currentPos = 0;
-                try (final Reader reader = new StringReader(content);
-                     final TokenStream tokenStream = analyzer.tokenStream(fieldName, reader)) {
-                    tokenStream.reset();
-                    final MarkableTokenFilter stream = new MarkableTokenFilter(tokenStream);
-                    while (stream.incrementToken()) {
-                        String token = stream.getAttribute(CharTermAttribute.class).toString();
-                        final Query query = terms.get(token);
-                        if (query != null) {
-                            if (query instanceof PhraseQuery phraseQuery) {
-                                final Term phraseTerms[] = phraseQuery.getTerms();
-                                if (token.equals(phraseTerms[0].text())) {
-                                    // Scan the following text and collect tokens to see
-                                    // if they are part of the phrase.
-                                    stream.mark();
-                                    int t = 1;
-                                    OffsetAttribute offset = stream.getAttribute(OffsetAttribute.class);
-                                    final int startOffset = offset.startOffset();
-                                    int endOffset = offset.endOffset();
-                                    while (stream.incrementToken() && t < phraseTerms.length) {
-                                        token = stream.getAttribute(CharTermAttribute.class).toString();
-                                        if (token.equals(phraseTerms[t].text())) {
-                                            offset = stream.getAttribute(OffsetAttribute.class);
-                                            endOffset = offset.endOffset();
-                                            t++;
-                                            if (t == phraseTerms.length) {
-                                                break;
-                                            }
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    if (t == phraseTerms.length) {
-                                        if (currentPos < startOffset) {
-                                            builder.characters(content.substring(currentPos, startOffset));
-                                        }
-                                        builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
-                                        builder.characters(content.substring(startOffset, endOffset));
-                                        builder.endElement();
-                                        currentPos = endOffset;
-                                    }
-                                } // End of phrase handling
-                            } else {
-                                final OffsetAttribute offset = stream.getAttribute(OffsetAttribute.class);
-                                if (currentPos < offset.startOffset()) {
-                                    builder.characters(content.substring(currentPos, offset.startOffset()));
+
+                // Collect match offsets using MemoryIndex + Matches API
+                final List<int[]> matchOffsets = new ArrayList<>();
+                if (!content.isEmpty()) {
+                    final MemoryIndex memIndex = new MemoryIndex(true, true);
+                    memIndex.addField(fieldName, content, analyzer);
+                    final IndexSearcher memSearcher = memIndex.createSearcher();
+                    final LeafReaderContext leafCtx = memSearcher.getTopReaderContext().leaves().get(0);
+                    final Weight weight = memSearcher.createWeight(
+                            memSearcher.rewrite(contentQuery), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
+                    final Matches matches = weight.matches(leafCtx, 0);
+                    if (matches != null) {
+                        final MatchesIterator mi = matches.getMatches(fieldName);
+                        if (mi != null) {
+                            while (mi.next()) {
+                                final int start = mi.startOffset();
+                                final int end = mi.endOffset();
+                                if (start >= 0 && end > start) {
+                                    matchOffsets.add(new int[]{start, end});
                                 }
-                                builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
-                                builder.characters(content.substring(offset.startOffset(), offset.endOffset()));
-                                builder.endElement();
-                                currentPos = offset.endOffset();
                             }
                         }
                     }
                 }
-                if (currentPos < content.length() - 1)  {
+
+                // Sort offsets and emit text with exist:match wrappers
+                matchOffsets.sort(Comparator.comparingInt(a -> a[0]));
+                int currentPos = 0;
+                for (final int[] offsets : matchOffsets) {
+                    if (offsets[0] > currentPos) {
+                        builder.characters(content.substring(currentPos, offsets[0]));
+                    }
+                    final int end = Math.min(offsets[1], content.length());
+                    builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
+                    builder.characters(content.substring(offsets[0], end));
+                    builder.endElement();
+                    currentPos = end;
+                }
+                if (currentPos < content.length()) {
                     builder.characters(content.substring(currentPos));
                 }
                 builder.endElement();
