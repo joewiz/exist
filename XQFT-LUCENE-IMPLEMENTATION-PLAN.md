@@ -67,14 +67,25 @@ Indexes are configured via `collection.xconf`:
 
 ### 1.3 What Must Change
 
-The jump from Lucene 4.10.4 to Lucene 10 is massive (~6 major versions). Key breaking changes include:
-- Span queries moved from `o.a.l.search.spans` to `o.a.l.queries.spans` (separate module)
+The jump from Lucene 4.10.4 to Lucene 10 is massive (~6 major versions). **Lucene 10 requires Java 21** (up from Java 7/8). Key breaking changes include:
+- Span queries moved from `o.a.l.search.spans` to `o.a.l.queries.spans` (separate `lucene-queries` module)
 - `Version.LUCENE_4_10_4` constant eliminated; no more version-parameterized analyzers
 - `Analyzer` API changes (no more `ReusableAnalyzerBase`)
 - `Filter` class removed, replaced by query-based filtering
-- Codec and directory API overhauls
-- Taxonomy/faceting API modernized
+- Module renames: `lucene-analyzers-common` → `lucene-analysis-common`, `lucene-analyzers-icu` → `lucene-analysis-icu`
+- `BooleanQuery` now immutable (builder pattern)
+- `Weight`/`Scorer` API rewritten — `Weight#scorerSupplier` is now abstract; `Scorer` no longer holds a reference to `Weight`
+- Query rewrite takes `IndexSearcher` instead of `IndexReader`
+- `TopDocs.totalHits` changed from `int` to `TotalHits` object
+- Codec, directory, and taxonomy/faceting API overhauls
 - `IndexWriter` configuration changes
+- `SpanBoostQuery` removed — use standard `BoostQuery` instead
+
+**New Lucene 10 capabilities** relevant to eXist-db:
+- **Intra-segment concurrency**: search parallelism no longer coupled to index segment geometry
+- **I/O parallelism**: new `IndexInput#prefetch` API for asynchronous I/O on Linux/macOS
+- **SIMD vectorization** (Lucene 10.3+): ~40% speedup on lexical queries
+- **BM25 default scoring**: replaces TF-IDF, providing better relevance ranking out of the box
 
 ---
 
@@ -184,6 +195,10 @@ Lucene 10's analyzer framework supports all XQFT match options:
 | Wildcards | `WildcardQuery`, `SpanMultiTermQueryWrapper` | Direct (wraps wildcards in spans) |
 
 **Critical feature:** `SpanMultiTermQueryWrapper` allows wrapping wildcard, fuzzy, prefix, and regex queries as SpanQueries, enabling positional filters on wildcard matches. This directly supports XQFT wildcard option combined with positional filters.
+
+**Important note on XQFT wildcards:** XQFT uses regex-style wildcard syntax (`.` = any char, `.*` = any string, `.+` = one or more, `.{n,m}` = range), which maps more naturally to Lucene's `RegexpQuery` than to `WildcardQuery` (which uses `?` and `*`). The recommended approach is `SpanMultiTermQueryWrapper(new RegexpQuery(...))`.
+
+**Important caveat:** Wildcard, fuzzy, and regex queries **bypass the analyzer pipeline** — they are not stemmed or case-folded at query time. When indexing with stemming, wildcard queries search against stemmed forms without applying stemming to the wildcard pattern. Workarounds include `AnalyzingQueryParser` or multi-field indexing strategies.
 
 ### 3.3 Position and Offset Tracking
 
@@ -295,10 +310,12 @@ Lucene's `SynonymGraphFilter` provides query-time synonym expansion but doesn't 
 - Relationship types (BT, NT, RT, etc.)
 - Level-limited traversal
 
+Lucene does provide `WordnetSynonymParser` for loading WordNet-format thesauri and `TermAutomatonQuery` for 100% correct multi-token synonym matching at query time — useful building blocks but insufficient on their own.
+
 **Solution:** Custom thesaurus implementation that:
 1. Loads and caches ISO 25964 / SKOS thesaurus files
 2. Expands terms based on relationship type and level constraints
-3. Feeds expanded terms into Lucene queries via `SpanOrQuery`
+3. Feeds expanded terms into Lucene queries via `SpanOrQuery` or `TermAutomatonQuery` (for multi-token synonyms)
 
 ### 4.7 Dynamic Match Options
 
@@ -735,10 +752,22 @@ Both APIs should coexist:
 
 Key API changes affecting eXist-db's current Lucene integration:
 
+**Prerequisites:**
+- [ ] Upgrade to Java 21 (Lucene 10 minimum requirement)
+
+**Package and module renames:**
 - [ ] `org.apache.lucene.search.spans.*` → `org.apache.lucene.queries.spans.*`
 - [ ] Add `lucene-queries` module dependency (for spans)
+- [ ] `lucene-analyzers-common` → `lucene-analysis-common`
+- [ ] `lucene-analyzers-icu` → `lucene-analysis-icu`
+
+**API changes:**
 - [ ] Remove `Version` parameter from analyzer constructors
 - [ ] Replace `Filter` usage with equivalent `Query` + `BooleanQuery`
+- [ ] Migrate `BooleanQuery` to builder pattern (immutable)
+- [ ] Update `Weight`/`Scorer` — `Weight#scorerSupplier` now abstract, `Scorer(Weight)` constructor removed
+- [ ] Update query rewrite — takes `IndexSearcher` instead of `IndexReader`
+- [ ] Replace `SpanBoostQuery` with standard `BoostQuery`
 - [ ] Update `IndexWriterConfig` API (no more `setWriteLockTimeout`, changed merge scheduler)
 - [ ] Update `DirectoryReader.open()` API
 - [ ] Replace `TopDocs.totalHits` (int) with `TopDocs.totalHits` (TotalHits object)
@@ -750,6 +779,8 @@ Key API changes affecting eXist-db's current Lucene integration:
 - [ ] Handle `IOException` changes in `IndexReader` lifecycle
 - [ ] Update `Analyzer.TokenStreamComponents` API
 - [ ] Replace `DocValues` API changes (sorted, numeric, binary)
+- [ ] Replace deprecated `SynonymFilter` with `SynonymGraphFilter` (if used)
+- [ ] Remove `CustomScoreQuery` usage (if any) — removed in Lucene 8
 
 ## Appendix B: XQFT Feature → Implementation Strategy Matrix
 
