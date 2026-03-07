@@ -1949,6 +1949,7 @@ throws PermissionDeniedException, EXistException, XPathException
     #(
         ABSOLUTE_SLASH
         {
+            path.setHasSlash();
             RootNode root= new RootNode(context);
             path.add(root);
         }
@@ -1959,6 +1960,7 @@ throws PermissionDeniedException, EXistException, XPathException
     #(
         ABSOLUTE_DSLASH
         {
+            path.setHasSlash();
             RootNode root= new RootNode(context);
             path.add(root);
         }
@@ -3891,6 +3893,9 @@ throws PermissionDeniedException, EXistException, XPathException
     |
     #(
         SLASH step=expr [path]
+        {
+            path.setHasSlash();
+        }
         (
             rightStep=expr [path]
             {
@@ -3915,6 +3920,9 @@ throws PermissionDeniedException, EXistException, XPathException
     |
     #(
         DSLASH step=expr [path]
+        {
+            path.setHasSlash();
+        }
         (
             rightStep=expr [path]
             {
