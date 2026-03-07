@@ -179,18 +179,27 @@ public class LuceneMatchListener extends AbstractMatchListener {
             final String s = seq.toString();
             int pos = 0;
             while (offset != null) {
-                if (offset.startOffset > pos) {
-                    if (offset.startOffset > seq.length()) {
-                        throw new SAXException("start offset out of bounds");
-                    }
-                    super.characters(s.substring(pos, offset.startOffset));
+                int matchStart = offset.startOffset;
+                int matchEnd = offset.endOffset;
+                // Merge overlapping/adjacent spans
+                while (offset.next != null && offset.next.startOffset <= matchEnd) {
+                    offset = offset.next;
+                    matchEnd = Math.max(matchEnd, offset.endOffset);
                 }
-                int end = offset.endOffset;
-                if (end > s.length()) {
-                    end = s.length();
+                // Skip spans that start before our current position (already emitted)
+                if (matchStart < pos) {
+                    matchStart = pos;
                 }
+                if (matchStart >= matchEnd || matchStart >= s.length()) {
+                    offset = offset.next;
+                    continue;
+                }
+                if (matchStart > pos) {
+                    super.characters(s.substring(pos, matchStart));
+                }
+                int end = Math.min(matchEnd, s.length());
                 super.startElement(MATCH_ELEMENT, null);
-                super.characters(s.substring(offset.startOffset, end));
+                super.characters(s.substring(matchStart, end));
                 super.endElement(MATCH_ELEMENT);
                 pos = end;
                 offset = offset.next;
@@ -508,7 +517,7 @@ public class LuceneMatchListener extends AbstractMatchListener {
     }
 
     private static class Offset {
-        private final int startOffset;
+        private int startOffset;
         private int endOffset;
         private Offset next = null;
 
@@ -518,11 +527,32 @@ public class LuceneMatchListener extends AbstractMatchListener {
         }
 
         void add(final int offset, final int endOffset) {
-            if (startOffset == offset) {
-                // duplicate match starts at same offset. ignore.
+            if (startOffset == offset && this.endOffset == endOffset) {
+                return;  // exact duplicate
+            }
+            // Insert in sorted order by startOffset to ensure characters() can
+            // walk the list sequentially without backwards jumps
+            final Offset newOffset = new Offset(offset, endOffset);
+            if (offset < this.startOffset) {
+                // New offset goes before head — swap contents since head is stored in the map
+                final int tmpStart = this.startOffset;
+                final int tmpEnd = this.endOffset;
+                final Offset tmpNext = this.next;
+                this.startOffset = offset;
+                this.endOffset = endOffset;
+                this.next = new Offset(tmpStart, tmpEnd);
+                this.next.next = tmpNext;
                 return;
             }
-            getLast().next = new Offset(offset, endOffset);
+            Offset prev = this;
+            while (prev.next != null && prev.next.startOffset <= offset) {
+                if (prev.next.startOffset == offset && prev.next.endOffset == endOffset) {
+                    return;  // exact duplicate
+                }
+                prev = prev.next;
+            }
+            newOffset.next = prev.next;
+            prev.next = newOffset;
         }
 
         private Offset getLast() {
@@ -533,8 +563,5 @@ public class LuceneMatchListener extends AbstractMatchListener {
             return next;
         }
 
-        void setEndOffset(final int offset) {
-            getLast().endOffset = offset;
-        }
     }
 }

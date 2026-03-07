@@ -617,6 +617,39 @@ public class LuceneMatchListenerTest {
         }
     }
 
+    /**
+     * Test that overlapping match spans are merged into one exist:match.
+     * For example, a boolean query "quick OR quick brown fox" would produce
+     * two overlapping spans: [quick] and [quick brown fox]. These should merge.
+     */
+    @Test
+    public void overlappingMatchesMerged() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Boolean OR of a term + phrase that includes the term.
+            // This should produce merged highlights, not broken/nested ones.
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><bool>" +
+                "<term>quick</term>" +
+                "<phrase>quick brown fox</phrase>" +
+                "</bool></query>)]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            // Should have "quick brown fox" as one merged match, not nested/duplicated
+            assertTrue("Overlapping matches should merge: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+            // Should NOT have a separate match for just "quick" inside the phrase span
+            assertFalse("Should not have separate match for 'quick' within phrase: " + result,
+                    result.contains(MATCH_END + " " + MATCH_START + "brown"));
+        }
+    }
+
     @ClassRule
     public static final ExistEmbeddedServer existEmbeddedServer = new ExistEmbeddedServer(true, true);
 
