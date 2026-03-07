@@ -56,6 +56,7 @@ header {
     import org.exist.storage.ElementValue;
     import org.exist.xquery.functions.map.MapExpr;
     import org.exist.xquery.functions.array.ArrayConstructor;
+    import org.exist.xquery.ft.*;
 
     import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 }
@@ -2401,6 +2402,8 @@ throws PermissionDeniedException, EXistException, XPathException
     |
     step=nodeComp [path]
     |
+    step=ftContainsExpr [path]
+    |
     step=primaryExpr [path]
     |
     step=pathExpr [path]
@@ -3510,6 +3513,419 @@ throws PermissionDeniedException, EXistException, XPathException
             step.setASTNode(after);
             path.add(step);
         }
+    )
+    ;
+
+// === Full Text (W3C XQuery and XPath Full Text 3.0) ===
+
+ftContainsExpr [PathExpr path]
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    PathExpr source = new PathExpr(context);
+    source.setASTNode(ftContainsExpr_AST_in);
+    FTSelection ftSel = null;
+    Expression ignoreExpr = null;
+}
+:
+    #(
+        ft:FT_CONTAINS
+        step=expr [source]
+        ftSel=ftSelectionExpr
+        ( ignoreExpr=ftIgnoreExpr )?
+        {
+            FTContainsExpr ftContains = new FTContainsExpr(context);
+            ftContains.setASTNode(ft);
+            ftContains.setSearchSource(source);
+            ftContains.setFTSelection(ftSel);
+            ftContains.setIgnoreExpr(ignoreExpr);
+            path.add(ftContains);
+            step = ftContains;
+        }
+    )
+    ;
+
+ftSelectionExpr
+returns [FTSelection ftSel]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    ftSel = new FTSelection(context);
+    ftSel.setASTNode(ftSelectionExpr_AST_in);
+    Expression ftOr = null;
+    Expression posFilter = null;
+}
+:
+    #(
+        FT_SELECTION
+        ftOr=ftOrExpr
+        { ftSel.setFTOr(ftOr); }
+        ( posFilter=ftPosFilterExpr { ftSel.addPosFilter(posFilter); } )*
+    )
+    ;
+
+ftOrExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    Expression operand = null;
+    FTOr ftOr = null;
+}
+:
+    #(
+        FT_OR
+        {
+            ftOr = new FTOr(context);
+            ftOr.setASTNode(ftOrExpr_AST_in);
+        }
+        ( operand=ftAndExpr { ftOr.addOperand(operand); } )+
+        { step = ftOr; }
+    )
+    |
+    step=ftAndExpr
+    ;
+
+ftAndExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    Expression operand = null;
+    FTAnd ftAnd = null;
+}
+:
+    #(
+        FT_AND
+        {
+            ftAnd = new FTAnd(context);
+            ftAnd.setASTNode(ftAndExpr_AST_in);
+        }
+        ( operand=ftMildNotExpr { ftAnd.addOperand(operand); } )+
+        { step = ftAnd; }
+    )
+    |
+    step=ftMildNotExpr
+    ;
+
+ftMildNotExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    Expression operand = null;
+    FTMildNot ftMildNot = null;
+}
+:
+    #(
+        FT_MILD_NOT
+        {
+            ftMildNot = new FTMildNot(context);
+            ftMildNot.setASTNode(ftMildNotExpr_AST_in);
+        }
+        ( operand=ftUnaryNotExpr { ftMildNot.addOperand(operand); } )+
+        { step = ftMildNot; }
+    )
+    |
+    step=ftUnaryNotExpr
+    ;
+
+ftUnaryNotExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    Expression operand = null;
+}
+:
+    #(
+        FT_UNARY_NOT
+        operand=ftPrimaryWithOptionsExpr
+        {
+            FTUnaryNot ftNot = new FTUnaryNot(context);
+            ftNot.setASTNode(ftUnaryNotExpr_AST_in);
+            ftNot.setOperand(operand);
+            step = ftNot;
+        }
+    )
+    |
+    step=ftPrimaryWithOptionsExpr
+    ;
+
+ftPrimaryWithOptionsExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    Expression primary = null;
+    FTMatchOptions matchOpts = null;
+    Expression weightExpr = null;
+}
+:
+    #(
+        FT_PRIMARY_WITH_OPTIONS
+        primary=ftPrimaryExpr
+        ( matchOpts=ftMatchOptionsExpr )?
+        ( weightExpr=ftWeightExpr )?
+        {
+            FTPrimaryWithOptions pwo = new FTPrimaryWithOptions(context);
+            pwo.setASTNode(ftPrimaryWithOptionsExpr_AST_in);
+            pwo.setPrimary(primary);
+            pwo.setMatchOptions(matchOpts);
+            pwo.setWeight(weightExpr);
+            step = pwo;
+        }
+    )
+    |
+    step=ftPrimaryExpr
+    ;
+
+ftPrimaryExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+}
+:
+    step=ftWordsExpr
+    |
+    step=ftSelectionExpr
+    ;
+
+ftWordsExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    PathExpr wordsValue = new PathExpr(context);
+    FTWords.AnyallMode mode = FTWords.AnyallMode.ANY;
+    FTTimes ftTimes = null;
+}
+:
+    #(
+        FT_WORDS
+        step=expr [wordsValue]
+        ( aa:FT_ANYALL_OPTION { mode = FTWords.AnyallMode.fromString(aa.getText()); } )?
+        ( ftTimes=ftTimesExpr )?
+        {
+            FTWords ftWords = new FTWords(context);
+            ftWords.setASTNode(ftWordsExpr_AST_in);
+            ftWords.setWordsValue(wordsValue);
+            ftWords.setMode(mode);
+            // ftTimes is stored on the FTWords for now
+            step = ftWords;
+        }
+    )
+    ;
+
+ftTimesExpr
+returns [FTTimes step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    FTRange range = null;
+}
+:
+    #(
+        FT_TIMES
+        range=ftRangeExpr
+        {
+            step = new FTTimes(context);
+            step.setASTNode(ftTimesExpr_AST_in);
+            step.setRange(range);
+        }
+    )
+    ;
+
+ftRangeExpr
+returns [FTRange step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = new FTRange(context);
+    PathExpr e1 = new PathExpr(context);
+    PathExpr e2 = new PathExpr(context);
+    Expression tmp = null;
+}
+:
+    #(
+        r:FT_RANGE
+        {
+            String rangeMode = r.getText();
+            switch (rangeMode) {
+                case "exactly": step.setMode(FTRange.RangeMode.EXACTLY); break;
+                case "at least": step.setMode(FTRange.RangeMode.AT_LEAST); break;
+                case "at most": step.setMode(FTRange.RangeMode.AT_MOST); break;
+                case "from": step.setMode(FTRange.RangeMode.FROM_TO); break;
+            }
+        }
+        tmp=expr [e1] { step.setExpr1(e1); }
+        ( tmp=expr [e2] { step.setExpr2(e2); } )?
+    )
+    ;
+
+ftPosFilterExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+}
+:
+    o:FT_ORDER
+    {
+        FTOrder order = new FTOrder(context);
+        order.setASTNode(o);
+        step = order;
+    }
+    |
+    step=ftWindowExpr
+    |
+    step=ftDistanceExpr
+    |
+    s:FT_SCOPE
+    {
+        FTScope scope = new FTScope(context);
+        scope.setASTNode(s);
+        String scopeText = s.getText();
+        if (scopeText.startsWith("same")) {
+            scope.setScopeType(FTScope.ScopeType.SAME);
+        } else {
+            scope.setScopeType(FTScope.ScopeType.DIFFERENT);
+        }
+        if (scopeText.endsWith("sentence")) {
+            scope.setBigUnit(FTScope.BigUnit.SENTENCE);
+        } else {
+            scope.setBigUnit(FTScope.BigUnit.PARAGRAPH);
+        }
+        step = scope;
+    }
+    |
+    c:FT_CONTENT
+    {
+        FTContent content = new FTContent(context);
+        content.setASTNode(c);
+        switch (c.getText()) {
+            case "at start": content.setContentType(FTContent.ContentType.AT_START); break;
+            case "at end": content.setContentType(FTContent.ContentType.AT_END); break;
+            case "entire content": content.setContentType(FTContent.ContentType.ENTIRE_CONTENT); break;
+        }
+        step = content;
+    }
+    ;
+
+ftWindowExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    PathExpr winExpr = new PathExpr(context);
+    Expression tmp = null;
+}
+:
+    #(
+        w:FT_WINDOW
+        tmp=expr [winExpr]
+        u1:. // ftUnit token (words|sentences|paragraphs)
+        {
+            FTWindow win = new FTWindow(context);
+            win.setASTNode(w);
+            win.setWindowExpr(winExpr);
+            win.setUnit(FTUnit.fromString(u1.getText()));
+            step = win;
+        }
+    )
+    ;
+
+ftDistanceExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    FTRange range = null;
+}
+:
+    #(
+        d:FT_DISTANCE
+        range=ftRangeExpr
+        u2:. // ftUnit token (words|sentences|paragraphs)
+        {
+            FTDistance dist = new FTDistance(context);
+            dist.setASTNode(d);
+            dist.setRange(range);
+            dist.setUnit(FTUnit.fromString(u2.getText()));
+            step = dist;
+        }
+    )
+    ;
+
+ftMatchOptionsExpr
+returns [FTMatchOptions opts]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    opts = new FTMatchOptions();
+}
+:
+    (
+        co:FT_CASE_OPTION
+        {
+            switch (co.getText()) {
+                case "sensitive": opts.setCaseMode(FTMatchOptions.CaseMode.SENSITIVE); break;
+                case "insensitive": opts.setCaseMode(FTMatchOptions.CaseMode.INSENSITIVE); break;
+                case "lowercase": opts.setCaseMode(FTMatchOptions.CaseMode.LOWERCASE); break;
+                case "uppercase": opts.setCaseMode(FTMatchOptions.CaseMode.UPPERCASE); break;
+            }
+        }
+        |
+        di:FT_DIACRITICS_OPTION
+        {
+            switch (di.getText()) {
+                case "sensitive": opts.setDiacriticsMode(FTMatchOptions.DiacriticsMode.SENSITIVE); break;
+                case "insensitive": opts.setDiacriticsMode(FTMatchOptions.DiacriticsMode.INSENSITIVE); break;
+            }
+        }
+        |
+        st:FT_STEM_OPTION
+        { opts.setStemming("stemming".equals(st.getText())); }
+        |
+        #( FT_LANGUAGE_OPTION lang:STRING_LITERAL { opts.setLanguage(lang.getText()); } )
+        |
+        wc:FT_WILDCARD_OPTION
+        { opts.setWildcards("wildcards".equals(wc.getText())); }
+        |
+        #( FT_THESAURUS_OPTION ( . )* )
+        |
+        #( FT_STOP_WORD_OPTION ( . )* )
+        |
+        #( FT_EXTENSION_OPTION ( . )* )
+    )+
+    ;
+
+ftWeightExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    PathExpr weightPath = new PathExpr(context);
+}
+:
+    #(
+        FT_WEIGHT
+        step=expr [weightPath]
+        { step = weightPath; }
+    )
+    ;
+
+ftIgnoreExpr
+returns [Expression step]
+throws PermissionDeniedException, EXistException, XPathException
+{
+    step = null;
+    PathExpr ignorePath = new PathExpr(context);
+}
+:
+    #(
+        FT_IGNORE_OPTION
+        step=expr [ignorePath]
+        { step = ignorePath; }
     )
     ;
 
