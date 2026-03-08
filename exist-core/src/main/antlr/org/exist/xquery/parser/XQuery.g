@@ -2784,6 +2784,20 @@ reservedKeywords returns [String name]
 	"exactly" { name = "exactly"; }
 	|
 	"no" { name = "no"; }
+	|
+	"not" { name = "not"; }
+	|
+	"all" { name = "all"; }
+	|
+	"any" { name = "any"; }
+	|
+	"word" { name = "word"; }
+	|
+	"phrase" { name = "phrase"; }
+	|
+	"using" { name = "using"; }
+	|
+	"from" { name = "from"; }
 	;
 
 
