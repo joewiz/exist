@@ -208,26 +208,36 @@ public class FTEvaluator {
             return am;
         }
 
-        final boolean caseInsensitive = options != null &&
-                options.getCaseMode() == FTMatchOptions.CaseMode.INSENSITIVE;
+        final boolean caseInsensitive = options != null && (
+                options.getCaseMode() == FTMatchOptions.CaseMode.INSENSITIVE ||
+                options.getCaseMode() == FTMatchOptions.CaseMode.LOWERCASE ||
+                options.getCaseMode() == FTMatchOptions.CaseMode.UPPERCASE);
         final boolean useWildcards = options != null &&
                 Boolean.TRUE.equals(options.getWildcards());
 
         final FTWords.AnyallMode mode = ftWords.getMode();
+        AllMatches result;
         switch (mode) {
             case ANY:
-                return evalAny(searchStrings, caseInsensitive, useWildcards);
+                result = evalAny(searchStrings, caseInsensitive, useWildcards); break;
             case ANY_WORD:
-                return evalAnyWord(searchStrings, caseInsensitive, useWildcards);
+                result = evalAnyWord(searchStrings, caseInsensitive, useWildcards); break;
             case ALL:
-                return evalAll(searchStrings, caseInsensitive, useWildcards);
+                result = evalAll(searchStrings, caseInsensitive, useWildcards); break;
             case ALL_WORDS:
-                return evalAllWords(searchStrings, caseInsensitive, useWildcards);
+                result = evalAllWords(searchStrings, caseInsensitive, useWildcards); break;
             case PHRASE:
-                return evalPhrase(searchStrings, caseInsensitive, useWildcards);
+                result = evalPhrase(searchStrings, caseInsensitive, useWildcards); break;
             default:
-                return evalAny(searchStrings, caseInsensitive, useWildcards);
+                result = evalAny(searchStrings, caseInsensitive, useWildcards); break;
         }
+
+        // Apply FTTimes constraint if present
+        final FTTimes ftTimes = ftWords.getFTTimes();
+        if (ftTimes != null) {
+            result = applyTimes(result, ftTimes);
+        }
+        return result;
     }
 
     /**
@@ -648,6 +658,24 @@ public class FTEvaluator {
             }
         }
         return result;
+    }
+
+    /**
+     * Apply FTTimes constraint: the number of matches must satisfy the range.
+     * "occurs exactly N times" means exactly N distinct matches.
+     */
+    private AllMatches applyTimes(final AllMatches input, final FTTimes ftTimes)
+            throws XPathException {
+        final FTRange range = ftTimes.getRange();
+        final int[] bounds = evalRange(range);
+        final int min = bounds[0];
+        final int max = bounds[1];
+        final int matchCount = input.getMatches().size();
+
+        if (matchCount >= min && matchCount <= max) {
+            return input;
+        }
+        return new AllMatches(); // constraint not satisfied
     }
 
     // === Helpers ===

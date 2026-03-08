@@ -59,6 +59,7 @@ public class FTWords extends FTAbstractExpr {
 
     private Expression wordsValue;
     private AnyallMode mode = AnyallMode.ANY;
+    private FTTimes ftTimes;
 
     public FTWords(final XQueryContext context) {
         super(context);
@@ -80,10 +81,21 @@ public class FTWords extends FTAbstractExpr {
         return mode;
     }
 
+    public void setFTTimes(final FTTimes ftTimes) {
+        this.ftTimes = ftTimes;
+    }
+
+    public FTTimes getFTTimes() {
+        return ftTimes;
+    }
+
     @Override
     public void analyze(final AnalyzeContextInfo contextInfo) throws XPathException {
         contextInfo.setParent(this);
         wordsValue.analyze(contextInfo);
+        if (ftTimes != null) {
+            ftTimes.analyze(contextInfo);
+        }
     }
 
     @Override

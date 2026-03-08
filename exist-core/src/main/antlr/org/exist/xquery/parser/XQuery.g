@@ -2171,14 +2171,14 @@ ftPrimaryWithOptions throws XPathException
 
 ftPrimary throws XPathException
 :
-	ftWords ( ( "occurs" ) => ftTimes )?
+	ftWords
 	|
 	LPAREN! ftSelection RPAREN!
 	;
 
 ftWords throws XPathException
 :
-	ftWordsValue ( ftAnyallOption )?
+	ftWordsValue ( ftAnyallOption )? ( ( "occurs" ) => ftTimes )?
 	{ #ftWords = #(#[FT_WORDS, "FTWords"], #ftWords); }
 	;
 

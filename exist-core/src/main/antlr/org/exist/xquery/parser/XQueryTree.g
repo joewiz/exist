@@ -3712,7 +3712,7 @@ throws PermissionDeniedException, EXistException, XPathException
             ftWords.setASTNode(ftWordsExpr_AST_in);
             ftWords.setWordsValue(wordsValue);
             ftWords.setMode(mode);
-            // ftTimes is stored on the FTWords for now
+            ftWords.setFTTimes(ftTimes);
             step = ftWords;
         }
     )
