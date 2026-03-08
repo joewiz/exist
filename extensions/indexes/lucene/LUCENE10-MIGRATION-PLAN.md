@@ -12,7 +12,7 @@ capabilities in eXist-db's full-text search infrastructure.
 | Phase 1 | Core Lucene 10 API Migration | **COMPLETE** (duncdrum) |
 | Phase 2 | Match Highlighting via Matches API | **COMPLETE** |
 | Phase 3 | New Highlighting Functions | **COMPLETE** |
-| Phase 4 | `collection.xconf` Configuration | Planned |
+| Phase 4 | `collection.xconf` Configuration | **COMPLETE** |
 | Phase 5 | Testing & Compatibility | **COMPLETE** |
 
 ## Phase 1: Core Lucene 10 API Migration (COMPLETE)
@@ -122,18 +122,35 @@ text with match terms wrapped in `exist:match`:
 - `width` — target passage width in characters (default: 150)
 - `break` — `"sentence"` (default) or `"character"` passage breaking
 
-## Phase 4: `collection.xconf` Configuration (Planned)
+## Phase 4: `collection.xconf` Configuration (COMPLETE)
 
-Update the Lucene index configuration schema to support:
+The `<text>` element in `collection.xconf` now supports passage configuration
+attributes that set defaults for `ft:get-passages()`:
 
 ```xml
 <text qname="p"
-      passage-break="sentence|paragraph|whole"
-      passage-scorer-k1="1.2"
-      passage-scorer-b="0.75">
+      passage-width="200"
+      passage-break="character">
 ```
 
-Defaults should work well out of the box.
+**Attributes:**
+- `passage-width` — target passage width in characters (default: 150)
+- `passage-break` — `"sentence"` (default) or `"character"` passage breaking
+
+These set per-index defaults. Inline `<options>` passed to `ft:get-passages()`
+override config defaults, which override hardcoded defaults:
+
+```
+inline options > collection.xconf > hardcoded defaults (width=150, break=sentence)
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `LuceneIndexConfig.java` | Parse `passage-width` and `passage-break` attributes; add getters |
+| `GetPassages.java` | Resolve passage parameters from inline options → config → defaults |
+| `ft-match.xql` | Added config-driven passage tests with dedicated test collection |
 
 ## Phase 5: Testing & Compatibility (COMPLETE)
 
@@ -147,6 +164,8 @@ Defaults should work well out of the box.
 - [x] XQuery proximity test un-pended (was pending for #833)
 - [x] BoostQuery handling in extractContentQuery
 - [x] ft:highlight() and ft:get-passages() XQuery tests
+- [x] collection.xconf passage-width/passage-break config tests
+- [x] Inline options override config defaults test
 - [x] Performance benchmark (all query types, 10/50/200 paragraphs)
 
 ### Benchmark Results (Apple M1 Pro)

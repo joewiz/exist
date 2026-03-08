@@ -113,18 +113,19 @@ public class GetPassages extends BasicFunction {
                 ? ((IntegerValue) args[1].itemAt(0)).getInt()
                 : DEFAULT_MAX_PASSAGES;
 
-        int width = DEFAULT_WIDTH;
-        String breakType = "sentence";
+        // Inline options (override config defaults)
+        int inlineWidth = -1;
+        String inlineBreak = null;
         if (getArgumentCount() >= 3 && !args[2].isEmpty()) {
             final org.exist.dom.memtree.ElementImpl options =
                     (org.exist.dom.memtree.ElementImpl) args[2].itemAt(0);
             final String widthStr = options.getAttribute("width");
             if (widthStr != null && !widthStr.isEmpty()) {
-                width = Integer.parseInt(widthStr);
+                inlineWidth = Integer.parseInt(widthStr);
             }
             final String breakStr = options.getAttribute("break");
             if (breakStr != null && !breakStr.isEmpty()) {
-                breakType = breakStr;
+                inlineBreak = breakStr;
             }
         }
 
@@ -145,7 +146,7 @@ public class GetPassages extends BasicFunction {
                     continue;
                 }
 
-                extractPassages(proxy, match, maxPassages, width, breakType, builder, result);
+                extractPassages(proxy, match, maxPassages, inlineWidth, inlineBreak, builder, result);
             }
 
             return result;
@@ -157,7 +158,8 @@ public class GetPassages extends BasicFunction {
     }
 
     private void extractPassages(final NodeProxy proxy, final LuceneMatch match,
-                                 final int maxPassages, final int width, final String breakType,
+                                 final int maxPassages, final int inlineWidth,
+                                 final String inlineBreak,
                                  final MemTreeBuilder builder, final InMemoryNodeSet result)
             throws XPathException, IOException {
 
@@ -168,6 +170,25 @@ public class GetPassages extends BasicFunction {
         final LuceneIndexConfig idxConf = config.getConfig(path).next();
         if (idxConf == null) {
             return;
+        }
+
+        // Resolve passage parameters: inline options > config defaults > hardcoded defaults
+        final int width;
+        if (inlineWidth > 0) {
+            width = inlineWidth;
+        } else if (idxConf.getPassageWidth() > 0) {
+            width = idxConf.getPassageWidth();
+        } else {
+            width = DEFAULT_WIDTH;
+        }
+
+        final String breakType;
+        if (inlineBreak != null) {
+            breakType = inlineBreak;
+        } else if (idxConf.getPassageBreak() != null) {
+            breakType = idxConf.getPassageBreak();
+        } else {
+            breakType = "sentence";
         }
 
         // Determine field name and analyzer (same as LuceneMatchListener)

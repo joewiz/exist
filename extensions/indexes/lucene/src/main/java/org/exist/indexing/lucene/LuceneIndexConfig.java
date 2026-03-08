@@ -74,6 +74,9 @@ public class LuceneIndexConfig {
 
     private boolean doIndex = true;
 
+    private int passageWidth = -1;
+    private String passageBreak = null;
+
     protected final LuceneConfig parent;
     // This is for the @attr match boosting
     // and the intention is to do a proper predicate check instead in the future. /ljo
@@ -116,6 +119,25 @@ public class LuceneIndexConfig {
         }
 
         doIndex = Configuration.parseBooleanAttribute(config, INDEX_ATTR, true);
+
+        final String pwStr = config.getAttribute("passage-width");
+        if (pwStr != null && !pwStr.isEmpty()) {
+            try {
+                passageWidth = Integer.parseInt(pwStr);
+            } catch (NumberFormatException e) {
+                throw new DatabaseConfigurationException(
+                        "Invalid value for 'passage-width': integer expected, got " + pwStr);
+            }
+        }
+
+        final String pbStr = config.getAttribute("passage-break");
+        if (pbStr != null && !pbStr.isEmpty()) {
+            if (!"sentence".equals(pbStr) && !"character".equals(pbStr)) {
+                throw new DatabaseConfigurationException(
+                        "Invalid value for 'passage-break': expected 'sentence' or 'character', got " + pbStr);
+            }
+            passageBreak = pbStr;
+        }
 
         parse(parent, config, namespaces, analyzers);
     }
@@ -342,6 +364,20 @@ public class LuceneIndexConfig {
 
     public List<AbstractFieldConfig> getFacetsAndFields() {
         return facetsAndFields;
+    }
+
+    /**
+     * @return configured passage width, or -1 if not set (use default)
+     */
+    public int getPassageWidth() {
+        return passageWidth;
+    }
+
+    /**
+     * @return configured passage break type ("sentence" or "character"), or null if not set
+     */
+    public String getPassageBreak() {
+        return passageBreak;
     }
 
     /**

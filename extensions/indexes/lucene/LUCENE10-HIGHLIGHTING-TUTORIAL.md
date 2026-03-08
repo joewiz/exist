@@ -278,6 +278,27 @@ for fixed-width passages:
 ft:get-passages($hit, 3, <options width="100" break="character"/>)
 ```
 
+### Setting defaults in collection.xconf
+
+You can set default passage width and break type in the index configuration
+so that `ft:get-passages()` uses them automatically without inline options:
+
+```xml
+<collection xmlns="http://exist-db.org/collection-config/1.0">
+    <index>
+        <lucene>
+            <text qname="p" passage-width="200" passage-break="sentence"/>
+        </lucene>
+    </index>
+</collection>
+```
+
+With this config, `ft:get-passages($hit, 3)` uses width 200 and sentence
+breaking by default. Inline `<options>` still override these defaults.
+
+The precedence order is: **inline options > collection.xconf > defaults**
+(width=150, break=sentence).
+
 ---
 
 ## 4. Building a Search Results Page
