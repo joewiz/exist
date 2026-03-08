@@ -560,4 +560,57 @@ public class FTConformanceTest {
     public void edge_unicodeText() throws Exception {
         assertTrue(evalBool("'Stra\u00DFe und Gr\u00FC\u00DFe' contains text 'Stra\u00DFe'"));
     }
+
+    // =========================================================================
+    // XQFTTS-style tests: predicates with step expressions and positional filters
+    // =========================================================================
+
+    @Test
+    public void xqftts_predicateWithDistance() throws Exception {
+        // Reproduces XQFTTS FTDistance-words1: step expression "para" in predicate with distance filter
+        final String query =
+            "let $doc := <books><book>" +
+            "<title>Book1</title>" +
+            "<para>The physical swift movement</para>" +
+            "</book><book>" +
+            "<title>Book2</title>" +
+            "<para>No match here</para>" +
+            "</book></books> " +
+            "return $doc/book[para contains text ('physical' ftand 'swift') distance exactly 0 words]/title/string()";
+        assertEquals("Book1", evalString(query));
+    }
+
+    @Test
+    public void xqftts_predicateWithWindow() throws Exception {
+        final String query =
+            "let $doc := <books><book>" +
+            "<title>Book1</title>" +
+            "<para>The physical swift movement</para>" +
+            "</book></books> " +
+            "return $doc/book[para contains text ('physical' ftand 'swift') window 3 words]/title/string()";
+        assertEquals("Book1", evalString(query));
+    }
+
+    @Test
+    public void xqftts_predicateWithOrdered() throws Exception {
+        final String query =
+            "let $doc := <books><book>" +
+            "<title>Book1</title>" +
+            "<para>The physical swift movement</para>" +
+            "</book></books> " +
+            "return $doc/book[para contains text 'physical' ftand 'swift' ordered]/title/string()";
+        assertEquals("Book1", evalString(query));
+    }
+
+    @Test
+    public void xqftts_predicateBasicFTAnd() throws Exception {
+        // This pattern already works (FTAnd-q1 in XQFTTS passes)
+        final String query =
+            "let $doc := <books><book>" +
+            "<title>Book1</title>" +
+            "<para>software ninja skills</para>" +
+            "</book></books> " +
+            "return $doc/book[para contains text 'software' ftand 'ninja']/title/string()";
+        assertEquals("Book1", evalString(query));
+    }
 }

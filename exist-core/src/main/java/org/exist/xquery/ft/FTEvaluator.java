@@ -21,11 +21,13 @@
  */
 package org.exist.xquery.ft;
 
+import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.value.Sequence;
 
 import java.text.BreakIterator;
+import java.text.Normalizer;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -48,20 +50,38 @@ public class FTEvaluator {
     public static class Match {
         private final SortedSet<Integer> includePositions;
         private final SortedSet<Integer> excludePositions;
+        // Tracks positions per operand group for the 'ordered' filter.
+        // Each element is the set of positions from one FTAnd operand.
+        private final List<SortedSet<Integer>> operandGroups;
 
         public Match() {
             this.includePositions = new TreeSet<>();
             this.excludePositions = new TreeSet<>();
+            this.operandGroups = new ArrayList<>();
         }
 
         public Match(final int pos) {
             this();
             includePositions.add(pos);
+            final SortedSet<Integer> group = new TreeSet<>();
+            group.add(pos);
+            operandGroups.add(group);
         }
 
         public Match(final SortedSet<Integer> includes, final SortedSet<Integer> excludes) {
             this.includePositions = new TreeSet<>(includes);
             this.excludePositions = new TreeSet<>(excludes);
+            this.operandGroups = new ArrayList<>();
+            if (!includes.isEmpty()) {
+                operandGroups.add(new TreeSet<>(includes));
+            }
+        }
+
+        private Match(final SortedSet<Integer> includes, final SortedSet<Integer> excludes,
+                       final List<SortedSet<Integer>> groups) {
+            this.includePositions = new TreeSet<>(includes);
+            this.excludePositions = new TreeSet<>(excludes);
+            this.operandGroups = new ArrayList<>(groups);
         }
 
         public SortedSet<Integer> getIncludePositions() {
@@ -72,19 +92,25 @@ public class FTEvaluator {
             return excludePositions;
         }
 
+        public List<SortedSet<Integer>> getOperandGroups() {
+            return operandGroups;
+        }
+
         public SortedSet<Integer> getAllPositions() {
             final SortedSet<Integer> all = new TreeSet<>(includePositions);
             all.addAll(excludePositions);
             return all;
         }
 
-        /** Combine two matches (e.g. for ftand) */
+        /** Combine two matches (e.g. for ftand), preserving operand groups */
         public Match combine(final Match other) {
             final SortedSet<Integer> inc = new TreeSet<>(includePositions);
             inc.addAll(other.includePositions);
             final SortedSet<Integer> exc = new TreeSet<>(excludePositions);
             exc.addAll(other.excludePositions);
-            return new Match(inc, exc);
+            final List<SortedSet<Integer>> groups = new ArrayList<>(operandGroups);
+            groups.addAll(other.operandGroups);
+            return new Match(inc, exc, groups);
         }
     }
 
@@ -208,28 +234,38 @@ public class FTEvaluator {
             return am;
         }
 
-        final boolean caseInsensitive = options != null && (
+        // XQFT 3.0 §4.1: default case mode is implementation-defined.
+        // We default to case-insensitive, matching most XQFT test suite expectations.
+        final boolean caseInsensitive = options == null ||
+                options.getCaseMode() == null ||
                 options.getCaseMode() == FTMatchOptions.CaseMode.INSENSITIVE ||
                 options.getCaseMode() == FTMatchOptions.CaseMode.LOWERCASE ||
-                options.getCaseMode() == FTMatchOptions.CaseMode.UPPERCASE);
+                options.getCaseMode() == FTMatchOptions.CaseMode.UPPERCASE;
         final boolean useWildcards = options != null &&
                 Boolean.TRUE.equals(options.getWildcards());
+        // XQFT 3.0 §4.3: diacritics mode. Default to insensitive.
+        final boolean diacriticsInsensitive = options == null ||
+                options.getDiacriticsMode() == null ||
+                options.getDiacriticsMode() == FTMatchOptions.DiacriticsMode.INSENSITIVE;
+
+        // Collect stop words from options (XQFT 3.0 §4.6)
+        final Set<String> stopWords = collectStopWords(options, caseInsensitive);
 
         final FTWords.AnyallMode mode = ftWords.getMode();
         AllMatches result;
         switch (mode) {
             case ANY:
-                result = evalAny(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
             case ANY_WORD:
-                result = evalAnyWord(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalAnyWord(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
             case ALL:
-                result = evalAll(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalAll(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
             case ALL_WORDS:
-                result = evalAllWords(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalAllWords(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
             case PHRASE:
-                result = evalPhrase(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalPhrase(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
             default:
-                result = evalAny(searchStrings, caseInsensitive, useWildcards); break;
+                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
         }
 
         // Apply FTTimes constraint if present
@@ -244,19 +280,19 @@ public class FTEvaluator {
      * "any" mode: any of the search strings can match (each as a phrase).
      */
     private AllMatches evalAny(final List<String> searchStrings, final boolean caseInsensitive,
-                               final boolean useWildcards) {
+                               final boolean useWildcards, final boolean diacriticsInsensitive,
+                               final Set<String> stopWords) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
-            if (useWildcards) {
-                // With wildcards, match the raw pattern against each source token
-                findWordMatches(searchStr, caseInsensitive, true, result);
+            final List<String> searchTokens = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
+            if (searchTokens.isEmpty()) {
+                result.addMatch(new Match());
+                continue;
+            }
+            if (searchTokens.size() == 1) {
+                findWordMatches(searchTokens.get(0), caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
             } else {
-                final List<String> searchTokens = tokenize(searchStr);
-                if (searchTokens.isEmpty()) {
-                    result.addMatch(new Match());
-                    continue;
-                }
-                findPhraseMatches(searchTokens, caseInsensitive, false, result);
+                findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
             }
         }
         return result;
@@ -267,16 +303,16 @@ public class FTEvaluator {
      * any single word can match.
      */
     private AllMatches evalAnyWord(final List<String> searchStrings, final boolean caseInsensitive,
-                                   final boolean useWildcards) {
+                                   final boolean useWildcards, final boolean diacriticsInsensitive,
+                                   final Set<String> stopWords) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
-            if (useWildcards) {
-                // With wildcards, match the raw pattern against each source token
-                findWordMatches(searchStr, caseInsensitive, true, result);
-            } else {
-                for (final String word : tokenize(searchStr)) {
-                    findWordMatches(word, caseInsensitive, false, result);
+            final List<String> words = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
+            for (final String word : words) {
+                if (isStopWord(word, stopWords, caseInsensitive)) {
+                    continue;
                 }
+                findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
             }
         }
         return result;
@@ -286,15 +322,16 @@ public class FTEvaluator {
      * "all" mode: all search strings must match (each as a phrase).
      */
     private AllMatches evalAll(final List<String> searchStrings, final boolean caseInsensitive,
-                               final boolean useWildcards) {
+                               final boolean useWildcards, final boolean diacriticsInsensitive,
+                               final Set<String> stopWords) {
         AllMatches combined = null;
         for (final String searchStr : searchStrings) {
-            final List<String> searchTokens = tokenize(searchStr);
+            final List<String> searchTokens = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
             if (searchTokens.isEmpty()) {
                 continue;
             }
             final AllMatches phraseMatches = new AllMatches();
-            findPhraseMatches(searchTokens, caseInsensitive, useWildcards, phraseMatches);
+            findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, phraseMatches);
             if (!phraseMatches.hasMatches()) {
                 return new AllMatches(); // all must match — one failed
             }
@@ -307,18 +344,22 @@ public class FTEvaluator {
      * "all words" mode: tokenize all search strings, every individual word must match.
      */
     private AllMatches evalAllWords(final List<String> searchStrings, final boolean caseInsensitive,
-                                    final boolean useWildcards) {
+                                    final boolean useWildcards, final boolean diacriticsInsensitive,
+                                    final Set<String> stopWords) {
         final List<String> allWords = new ArrayList<>();
         for (final String s : searchStrings) {
-            allWords.addAll(tokenize(s));
+            allWords.addAll(useWildcards ? tokenizeWildcard(s) : tokenize(s));
         }
         if (allWords.isEmpty()) {
             return singleEmptyMatch();
         }
         AllMatches combined = null;
         for (final String word : allWords) {
+            if (isStopWord(word, stopWords, caseInsensitive)) {
+                continue;
+            }
             final AllMatches wordMatches = new AllMatches();
-            findWordMatches(word, caseInsensitive, useWildcards, wordMatches);
+            findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, wordMatches);
             if (!wordMatches.hasMatches()) {
                 return new AllMatches(); // all must match
             }
@@ -331,16 +372,17 @@ public class FTEvaluator {
      * "phrase" mode: all search strings concatenated form one phrase.
      */
     private AllMatches evalPhrase(final List<String> searchStrings, final boolean caseInsensitive,
-                                  final boolean useWildcards) {
+                                  final boolean useWildcards, final boolean diacriticsInsensitive,
+                                  final Set<String> stopWords) {
         final List<String> phraseTokens = new ArrayList<>();
         for (final String s : searchStrings) {
-            phraseTokens.addAll(tokenize(s));
+            phraseTokens.addAll(useWildcards ? tokenizeWildcard(s) : tokenize(s));
         }
         if (phraseTokens.isEmpty()) {
             return singleEmptyMatch();
         }
         final AllMatches result = new AllMatches();
-        findPhraseMatches(phraseTokens, caseInsensitive, useWildcards, result);
+        findPhraseMatches(phraseTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
         return result;
     }
 
@@ -348,9 +390,14 @@ public class FTEvaluator {
      * Find all positions where a single word matches in the token list.
      */
     private void findWordMatches(final String word, final boolean caseInsensitive,
-                                 final boolean useWildcards, final AllMatches result) {
+                                 final boolean useWildcards, final boolean diacriticsInsensitive,
+                                 final Set<String> stopWords, final AllMatches result) {
+        if (isStopWord(word, stopWords, caseInsensitive)) {
+            // Stop words in search query are treated as automatically matching
+            return;
+        }
         for (int i = 0; i < totalTokens; i++) {
-            if (wordMatches(tokens.get(i), word, caseInsensitive, useWildcards)) {
+            if (wordMatches(tokens.get(i), word, caseInsensitive, useWildcards, diacriticsInsensitive)) {
                 result.addMatch(new Match(i));
             }
         }
@@ -358,23 +405,30 @@ public class FTEvaluator {
 
     /**
      * Find all positions where a phrase (sequence of words) matches consecutively.
+     * Stop words in the search phrase are treated as matching any source token.
      */
     private void findPhraseMatches(final List<String> phraseTokens, final boolean caseInsensitive,
-                                   final boolean useWildcards, final AllMatches result) {
+                                   final boolean useWildcards, final boolean diacriticsInsensitive,
+                                   final Set<String> stopWords, final AllMatches result) {
         final int phraseLen = phraseTokens.size();
         outer:
         for (int i = 0; i <= totalTokens - phraseLen; i++) {
             for (int j = 0; j < phraseLen; j++) {
-                if (!wordMatches(tokens.get(i + j), phraseTokens.get(j), caseInsensitive, useWildcards)) {
+                final String searchToken = phraseTokens.get(j);
+                // Stop words in search phrases match any source token position
+                if (isStopWord(searchToken, stopWords, caseInsensitive)) {
+                    continue; // this position is OK
+                }
+                if (!wordMatches(tokens.get(i + j), searchToken, caseInsensitive, useWildcards, diacriticsInsensitive)) {
                     continue outer;
                 }
             }
             // Found a phrase match at positions i..i+phraseLen-1
-            final Match m = new Match();
+            final SortedSet<Integer> positions = new TreeSet<>();
             for (int j = 0; j < phraseLen; j++) {
-                m.getIncludePositions().add(i + j);
+                positions.add(i + j);
             }
-            result.addMatch(m);
+            result.addMatch(new Match(positions, new TreeSet<>()));
         }
     }
 
@@ -382,16 +436,86 @@ public class FTEvaluator {
      * Check if a source token matches a search word.
      */
     private boolean wordMatches(final String sourceToken, final String searchWord,
-                                final boolean caseInsensitive, final boolean useWildcards) {
+                                final boolean caseInsensitive, final boolean useWildcards,
+                                final boolean diacriticsInsensitive) {
+        String src = sourceToken;
+        String search = searchWord;
+
+        // Apply diacritics normalization if insensitive
+        if (diacriticsInsensitive) {
+            src = stripDiacritics(src);
+            search = stripDiacritics(search);
+        }
+
         if (useWildcards) {
-            // Convert XQFT wildcard pattern to Java regex
-            final String regex = wildcardToRegex(searchWord, caseInsensitive);
-            return Pattern.matches(regex, sourceToken);
+            final String regex = wildcardToRegex(search, caseInsensitive);
+            return Pattern.matches(regex, src);
         }
         if (caseInsensitive) {
-            return sourceToken.equalsIgnoreCase(searchWord);
+            return src.equalsIgnoreCase(search);
         }
-        return sourceToken.equals(searchWord);
+        return src.equals(search);
+    }
+
+    /**
+     * Tokenize a wildcard search pattern into tokens.
+     * Unlike the normal tokenizer, this preserves wildcard characters (., *, +, ?, \, {, })
+     * within tokens. Splits on whitespace boundaries.
+     */
+    static List<String> tokenizeWildcard(final String pattern) {
+        if (pattern == null || pattern.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<String> result = new ArrayList<>();
+        for (final String part : pattern.split("\\s+")) {
+            if (!part.isEmpty()) {
+                result.add(part);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Strip diacritical marks from a string using Unicode normalization.
+     * NFD decomposes characters, then we remove combining diacritical marks.
+     */
+    private static String stripDiacritics(final String text) {
+        final String normalized = Normalizer.normalize(text, Normalizer.Form.NFD);
+        // Remove combining diacritical marks (Unicode block 0300-036F)
+        return normalized.replaceAll("[\\p{InCombiningDiacriticalMarks}]", "");
+    }
+
+    /**
+     * Check if a word is in the stop word set.
+     */
+    private static boolean isStopWord(final String word, final Set<String> stopWords,
+                                       final boolean caseInsensitive) {
+        if (stopWords.isEmpty()) {
+            return false;
+        }
+        return caseInsensitive ? stopWords.contains(word.toLowerCase(Locale.ROOT)) : stopWords.contains(word);
+    }
+
+    /**
+     * Collect stop words from FTMatchOptions.
+     * XQFT 3.0 §4.6: inline stop words and stop word URIs.
+     */
+    private static Set<String> collectStopWords(final FTMatchOptions options, final boolean caseInsensitive) {
+        if (options == null) {
+            return Collections.emptySet();
+        }
+        if (Boolean.TRUE.equals(options.getNoStopWords())) {
+            return Collections.emptySet();
+        }
+        final List<String> inlineWords = options.getInlineStopWords();
+        if (inlineWords == null || inlineWords.isEmpty()) {
+            return Collections.emptySet();
+        }
+        final Set<String> result = new HashSet<>();
+        for (final String sw : inlineWords) {
+            result.add(caseInsensitive ? sw.toLowerCase(Locale.ROOT) : sw);
+        }
+        return result;
     }
 
     /**
@@ -404,38 +528,61 @@ public class FTEvaluator {
         if (caseInsensitive) {
             sb.append("(?i)");
         }
-        // XQFT wildcard tokens are already regex-like with . as the wildcard char
-        // We need to escape everything except the wildcard constructs
+        // XQFT wildcard grammar (§4.7):
+        // "." matches any single char
+        // ".?" zero or one, ".+" one or more, ".*" zero or more
+        // ".{n-m}" n to m of any char (note: dash, not comma)
+        // ".{a-z}" character range (single char in range)
         int i = 0;
         while (i < pattern.length()) {
             final char c = pattern.charAt(i);
             if (c == '.') {
-                // Pass through . and following quantifier
-                sb.append('.');
                 i++;
                 if (i < pattern.length()) {
                     final char next = pattern.charAt(i);
                     if (next == '*' || next == '+' || next == '?') {
+                        sb.append('.');
                         sb.append(next);
                         i++;
                     } else if (next == '{') {
-                        // Pass through {n,m}
+                        // Extract content between { and }
+                        i++; // skip {
+                        final StringBuilder rangeContent = new StringBuilder();
                         while (i < pattern.length() && pattern.charAt(i) != '}') {
-                            sb.append(pattern.charAt(i));
+                            rangeContent.append(pattern.charAt(i));
                             i++;
                         }
                         if (i < pattern.length()) {
-                            sb.append('}');
-                            i++;
+                            i++; // skip }
                         }
+                        final String range = rangeContent.toString();
+                        final int dashIdx = range.indexOf('-');
+                        if (dashIdx > 0 && dashIdx < range.length() - 1) {
+                            final String left = range.substring(0, dashIdx);
+                            final String right = range.substring(dashIdx + 1);
+                            if (left.chars().allMatch(Character::isDigit) && right.chars().allMatch(Character::isDigit)) {
+                                // Numeric range: .{n-m} → .{n,m}
+                                sb.append(".{").append(left).append(',').append(right).append('}');
+                            } else {
+                                // Character range: .{a-z} → [a-z]
+                                sb.append('[').append(left).append('-').append(right).append(']');
+                            }
+                        } else {
+                            // Single number: .{n} → .{n}
+                            sb.append('.').append('{').append(range).append('}');
+                        }
+                    } else {
+                        // Just "." — match any single char
+                        sb.append('.');
                     }
+                } else {
+                    sb.append('.');
                 }
             } else if (c == '\\') {
-                // Escaped char — pass through literal
-                sb.append('\\');
+                // Escaped char — treat next char as literal
                 i++;
                 if (i < pattern.length()) {
-                    sb.append(pattern.charAt(i));
+                    sb.append(Pattern.quote(String.valueOf(pattern.charAt(i))));
                     i++;
                 }
             } else {
@@ -487,28 +634,26 @@ public class FTEvaluator {
     }
 
     /**
-     * Mild not: remove matches from left whose include positions overlap
-     * with any include position from right matches.
+     * Mild not: remove matches from left where a right match covers ALL
+     * include positions of the left match (XQFT 3.0 §4.5.3).
+     *
+     * A left match is removed only when there exists a right match whose
+     * include positions are a superset of the left match's include positions.
      */
     private AllMatches applyMildNot(final AllMatches left, final AllMatches right) {
         if (!right.hasMatches()) {
             return left;
         }
-        // Collect all exclude positions from right-side matches
-        final Set<Integer> excludePositions = new HashSet<>();
-        for (final Match rm : right.getMatches()) {
-            excludePositions.addAll(rm.getIncludePositions());
-        }
         final AllMatches result = new AllMatches();
         for (final Match lm : left.getMatches()) {
-            boolean overlaps = false;
-            for (final int pos : lm.getIncludePositions()) {
-                if (excludePositions.contains(pos)) {
-                    overlaps = true;
+            boolean covered = false;
+            for (final Match rm : right.getMatches()) {
+                if (rm.getIncludePositions().containsAll(lm.getIncludePositions())) {
+                    covered = true;
                     break;
                 }
             }
-            if (!overlaps) {
+            if (!covered) {
                 result.addMatch(lm);
             }
         }
@@ -528,6 +673,22 @@ public class FTEvaluator {
             throws XPathException {
         // Merge match options: local options override inherited ones
         final FTMatchOptions effective = mergeOptions(inheritedOptions, pwo.getMatchOptions());
+
+        // XQFT 3.0 §4.6: raise FTST0006 if stop word URIs are specified but not supported
+        if (effective != null && !effective.getStopWordURIs().isEmpty()) {
+            throw new XPathException(pwo, ErrorCodes.FTST0006,
+                    "External stop word lists are not supported: " + effective.getStopWordURIs());
+        }
+
+        // XQFT 3.0 §4.8: raise FTST0009 for unsupported languages
+        if (effective != null && effective.getLanguage() != null) {
+            final String lang = effective.getLanguage().toLowerCase(Locale.ROOT);
+            if (!lang.isEmpty() && !lang.equals("en") && !lang.startsWith("en-")) {
+                throw new XPathException(pwo, ErrorCodes.FTST0009,
+                        "Language not supported: " + effective.getLanguage());
+            }
+        }
+
         return evalExpression(pwo.getPrimary(), effective);
     }
 
@@ -538,40 +699,59 @@ public class FTEvaluator {
         if (filter instanceof FTOrder) {
             return applyOrdered(input);
         } else if (filter instanceof FTWindow) {
-            return applyWindow(input, (FTWindow) filter);
+            final FTWindow ftWindow = (FTWindow) filter;
+            if (ftWindow.getUnit() != FTUnit.WORDS) {
+                throw new XPathException(filter, ErrorCodes.FTST0003,
+                        "Sentence/paragraph tokenization is not supported");
+            }
+            return applyWindow(input, ftWindow);
         } else if (filter instanceof FTDistance) {
-            return applyDistance(input, (FTDistance) filter);
+            final FTDistance ftDistance = (FTDistance) filter;
+            if (ftDistance.getUnit() != FTUnit.WORDS) {
+                throw new XPathException(filter, ErrorCodes.FTST0003,
+                        "Sentence/paragraph tokenization is not supported");
+            }
+            return applyDistance(input, ftDistance);
         } else if (filter instanceof FTContent) {
             return applyContent(input, (FTContent) filter);
         } else if (filter instanceof FTScope) {
-            // Scope (same/different sentence/paragraph) requires sentence/paragraph boundaries
-            // which aren't tracked in this simple tokenizer. Pass through for now.
-            return input;
+            // Scope (same/different sentence/paragraph) always requires sentence/paragraph
+            // boundaries which aren't supported by this tokenizer.
+            throw new XPathException(filter, ErrorCodes.FTST0003,
+                    "Sentence/paragraph tokenization is not supported");
         }
         return input;
     }
 
     /**
-     * "ordered": keep matches where include positions are in ascending order
-     * relative to the order of the sub-expressions that produced them.
-     * Simplified: check that include positions are sorted.
+     * "ordered": keep matches where operand groups appear in ascending
+     * position order — i.e., max position of group i < min position of group i+1.
      */
     private AllMatches applyOrdered(final AllMatches input) {
         final AllMatches result = new AllMatches();
         for (final Match m : input.getMatches()) {
-            final SortedSet<Integer> positions = m.getIncludePositions();
-            if (positions.size() <= 1 || isOrdered(positions)) {
+            if (isOrdered(m)) {
                 result.addMatch(m);
             }
         }
         return result;
     }
 
-    private boolean isOrdered(final SortedSet<Integer> positions) {
-        // Positions are in a SortedSet, so they're always ascending.
-        // The "ordered" constraint really means that the first operand's tokens
-        // appear before the second operand's tokens. Since we combine via
-        // cross-product which preserves this, sorted positions = ordered.
+    private boolean isOrdered(final Match match) {
+        final List<SortedSet<Integer>> groups = match.getOperandGroups();
+        if (groups.size() <= 1) {
+            return true;
+        }
+        int prevMax = Integer.MIN_VALUE;
+        for (final SortedSet<Integer> group : groups) {
+            if (group.isEmpty()) {
+                continue;
+            }
+            if (group.first() <= prevMax) {
+                return false;
+            }
+            prevMax = group.last();
+        }
         return true;
     }
 
@@ -746,6 +926,19 @@ public class FTEvaluator {
         merged.setStemming(local.getStemming() != null ? local.getStemming() : inherited.getStemming());
         merged.setWildcards(local.getWildcards() != null ? local.getWildcards() : inherited.getWildcards());
         merged.setLanguage(local.getLanguage() != null ? local.getLanguage() : inherited.getLanguage());
+        merged.setNoThesaurus(local.getNoThesaurus() != null ? local.getNoThesaurus() : inherited.getNoThesaurus());
+        merged.setNoStopWords(local.getNoStopWords() != null ? local.getNoStopWords() : inherited.getNoStopWords());
+        // Merge stop word lists (local overrides if non-empty)
+        if (!local.getInlineStopWords().isEmpty()) {
+            merged.getInlineStopWords().addAll(local.getInlineStopWords());
+        } else if (inherited.getInlineStopWords() != null) {
+            merged.getInlineStopWords().addAll(inherited.getInlineStopWords());
+        }
+        if (!local.getStopWordURIs().isEmpty()) {
+            merged.getStopWordURIs().addAll(local.getStopWordURIs());
+        } else if (inherited.getStopWordURIs() != null) {
+            merged.getStopWordURIs().addAll(inherited.getStopWordURIs());
+        }
         return merged;
     }
 }

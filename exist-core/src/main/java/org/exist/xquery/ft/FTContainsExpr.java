@@ -21,8 +21,10 @@
  */
 package org.exist.xquery.ft;
 
+import org.exist.dom.memtree.NodeImpl;
 import org.exist.xquery.AbstractExpression;
 import org.exist.xquery.AnalyzeContextInfo;
+import org.exist.xquery.Dependency;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
@@ -31,6 +33,11 @@ import org.exist.xquery.value.BooleanValue;
 import org.exist.xquery.value.Item;
 import org.exist.xquery.value.Sequence;
 import org.exist.xquery.value.Type;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * W3C XQuery and XPath Full Text 3.0 — FTContainsExpr.
@@ -77,6 +84,15 @@ public class FTContainsExpr extends AbstractExpression {
     }
 
     @Override
+    public int getDependencies() {
+        // The source expression (left-hand side of "contains text") is always
+        // evaluated against the context item, so we must report CONTEXT_ITEM
+        // dependency. Without this, Predicate.evalPredicate may pass null
+        // as the context sequence, causing XPDY0002 errors on step expressions.
+        return source.getDependencies() | Dependency.CONTEXT_ITEM;
+    }
+
+    @Override
     public void analyze(final AnalyzeContextInfo contextInfo) throws XPathException {
         contextInfo.setParent(this);
         source.analyze(contextInfo);
@@ -95,16 +111,46 @@ public class FTContainsExpr extends AbstractExpression {
         // Evaluate source expression to get the search context
         final Sequence sourceSeq = source.eval(contextSequence, null);
 
-        // Get the string value of the source for matching
-        final String sourceText = sourceSeq.getStringValue();
+        // Per XQFT 3.0 §2.1: if the source evaluates to an empty sequence,
+        // there is no text to search — return false immediately.
+        if (sourceSeq.isEmpty()) {
+            return BooleanValue.FALSE;
+        }
 
-        // Create the evaluator with the source text
-        final FTEvaluator evaluator = new FTEvaluator(sourceText);
+        // Collect ignored text if FTIgnoreOption is present
+        Set<String> ignoredTexts = null;
+        if (ignoreExpr != null) {
+            final Sequence ignoredNodes = ignoreExpr.eval(contextSequence, null);
+            if (!ignoredNodes.isEmpty()) {
+                ignoredTexts = new HashSet<>();
+                for (int i = 0; i < ignoredNodes.getItemCount(); i++) {
+                    final String ignoredText = ignoredNodes.itemAt(i).getStringValue();
+                    if (ignoredText != null && !ignoredText.isEmpty()) {
+                        ignoredTexts.add(ignoredText);
+                    }
+                }
+            }
+        }
 
-        // Evaluate the FT selection against the source tokens
-        final boolean matches = evaluator.evaluate(ftSelection, null);
+        // Per XQFT 3.0 §2.1: if the source is a sequence of items,
+        // evaluate each item independently and return true if ANY matches.
+        for (int i = 0; i < sourceSeq.getItemCount(); i++) {
+            String sourceText = sourceSeq.itemAt(i).getStringValue();
 
-        return matches ? BooleanValue.TRUE : BooleanValue.FALSE;
+            // Apply FTIgnoreOption: "without content" removes text of ignored nodes
+            if (ignoredTexts != null) {
+                for (final String ignored : ignoredTexts) {
+                    sourceText = sourceText.replace(ignored, " ");
+                }
+            }
+
+            final FTEvaluator evaluator = new FTEvaluator(sourceText);
+            if (evaluator.evaluate(ftSelection, null)) {
+                return BooleanValue.TRUE;
+            }
+        }
+
+        return BooleanValue.FALSE;
     }
 
     @Override

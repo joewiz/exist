@@ -3893,7 +3893,33 @@ throws PermissionDeniedException, EXistException, XPathException
         |
         #( FT_THESAURUS_OPTION ( . )* )
         |
-        #( FT_STOP_WORD_OPTION ( . )* )
+        #( sw:FT_STOP_WORD_OPTION
+            {
+                final String swText = sw.getText();
+                if ("no stop words".equals(swText)) {
+                    opts.setNoStopWords(true);
+                } else {
+                    // Walk children to extract stop words
+                    AST swChild = sw.getFirstChild();
+                    while (swChild != null) {
+                        if (swChild.getType() == FT_STOP_WORDS) {
+                            final String swMode = swChild.getText();
+                            AST swWordNode = swChild.getFirstChild();
+                            while (swWordNode != null) {
+                                if ("at".equals(swMode)) {
+                                    opts.getStopWordURIs().add(swWordNode.getText());
+                                } else {
+                                    opts.getInlineStopWords().add(swWordNode.getText());
+                                }
+                                swWordNode = swWordNode.getNextSibling();
+                            }
+                        }
+                        swChild = swChild.getNextSibling();
+                    }
+                }
+            }
+            ( . )*
+        )
         |
         #( FT_EXTENSION_OPTION ( . )* )
     )+
