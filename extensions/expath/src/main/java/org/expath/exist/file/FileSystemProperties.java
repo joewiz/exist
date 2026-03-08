@@ -97,6 +97,8 @@ public class FileSystemProperties extends BasicFunction {
 
     @Override
     public Sequence eval(final Sequence[] args, final Sequence contextSequence) throws XPathException {
+        ExpathFileModuleHelper.checkDbaRole(context, this);
+
         if (isCalledAs("dir-separator")) {
             return new StringValue(this, File.separator);
         } else if (isCalledAs("line-separator")) {
