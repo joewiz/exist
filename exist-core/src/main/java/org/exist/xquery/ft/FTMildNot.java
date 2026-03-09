@@ -22,6 +22,7 @@
 package org.exist.xquery.ft;
 
 import org.exist.xquery.AnalyzeContextInfo;
+import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
@@ -57,6 +58,48 @@ public class FTMildNot extends FTAbstractExpr {
         contextInfo.setParent(this);
         for (final Expression operand : operands) {
             operand.analyze(contextInfo);
+        }
+        // XQFT 3.0 §3.3: operands of "not in" (mild not) must not contain
+        // ftnot (FTUnaryNot) or "occurs" (FTTimes). Raise FTST0001 if found.
+        if (operands.size() > 1) {
+            for (final Expression operand : operands) {
+                validateMildNotOperand(operand);
+            }
+        }
+    }
+
+    /**
+     * Recursively check that an expression tree does not contain FTUnaryNot or FTTimes.
+     */
+    private void validateMildNotOperand(final Expression expr) throws XPathException {
+        if (expr instanceof FTUnaryNot) {
+            throw new XPathException(this, ErrorCodes.FTST0001,
+                    "ftnot is not allowed as operand of 'not in' (mild not)");
+        }
+        if (expr instanceof FTWords) {
+            final FTWords ftWords = (FTWords) expr;
+            if (ftWords.getFTTimes() != null) {
+                throw new XPathException(this, ErrorCodes.FTST0001,
+                        "'occurs' is not allowed as operand of 'not in' (mild not)");
+            }
+        }
+        // Recurse into sub-expressions
+        if (expr instanceof FTAnd) {
+            for (final Expression child : ((FTAnd) expr).getOperands()) {
+                validateMildNotOperand(child);
+            }
+        } else if (expr instanceof FTOr) {
+            for (final Expression child : ((FTOr) expr).getOperands()) {
+                validateMildNotOperand(child);
+            }
+        } else if (expr instanceof FTMildNot) {
+            for (final Expression child : ((FTMildNot) expr).getOperands()) {
+                validateMildNotOperand(child);
+            }
+        } else if (expr instanceof FTPrimaryWithOptions) {
+            validateMildNotOperand(((FTPrimaryWithOptions) expr).getPrimary());
+        } else if (expr instanceof FTSelection) {
+            validateMildNotOperand(((FTSelection) expr).getFTOr());
         }
     }
 

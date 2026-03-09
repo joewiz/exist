@@ -217,6 +217,24 @@ public class FTContainsTest {
         assertFalse(evalBool("'hello world' contains text 'xyz.*' using wildcards"));
     }
 
+    @Test
+    public void wildcardLiteralPunctuation() throws Exception {
+        // "task?" with literal ? (not preceded by .) should match "task?" in text
+        assertTrue(evalBool("'complete the task? yes' contains text 'task?' using wildcards"));
+    }
+
+    @Test
+    public void wildcardEscapedDot() throws Exception {
+        // "specialist\." — escaped dot matches literal period
+        assertTrue(evalBool("'the specialist. good' contains text 'specialist\\.' using wildcards"));
+    }
+
+    @Test
+    public void wildcardDotThenEscapedQuestion() throws Exception {
+        // "nex.\?" — any char then literal ?
+        assertTrue(evalBool("'what is next? ok' contains text 'nex.\\?' using wildcards"));
+    }
+
     // === With XML nodes ===
 
     @Test
@@ -251,12 +269,28 @@ public class FTContainsTest {
 
     @Test
     public void lowercaseMode() throws Exception {
-        assertTrue(evalBool("'Hello World' contains text 'hello' using lowercase"));
+        // "using lowercase" normalizes search to lowercase, then compares case-sensitively.
+        // Source "hello" matches search "hello" (both lowercase).
+        assertTrue(evalBool("'hello world' contains text 'Hello' using lowercase"));
+    }
+
+    @Test
+    public void lowercaseModeNoMatch() throws Exception {
+        // Source "Hello" (capital H) does NOT match search "hello" case-sensitively.
+        assertFalse(evalBool("'Hello World' contains text 'hello' using lowercase"));
     }
 
     @Test
     public void uppercaseMode() throws Exception {
-        assertTrue(evalBool("'Hello World' contains text 'HELLO' using uppercase"));
+        // "using uppercase" normalizes search to uppercase, then compares case-sensitively.
+        // Source "HELLO" matches search "HELLO" (both uppercase).
+        assertTrue(evalBool("'HELLO WORLD' contains text 'hello' using uppercase"));
+    }
+
+    @Test
+    public void uppercaseModeNoMatch() throws Exception {
+        // Source "Hello" (mixed case) does NOT match search "HELLO" case-sensitively.
+        assertFalse(evalBool("'Hello World' contains text 'HELLO' using uppercase"));
     }
 
     // === FTTimes ===
@@ -283,14 +317,41 @@ public class FTContainsTest {
 
     @Test
     public void ftorEmptySequence() throws Exception {
-        // {()} (empty sequence) should match vacuously, so ftor always succeeds
-        assertTrue(evalBool("'hello world' contains text {()} ftor 'goodbye'"));
+        // {()} (empty sequence) produces no match; only "hello" side of ftor matches
+        assertTrue(evalBool("'hello world' contains text {()} ftor 'hello'"));
     }
 
     @Test
-    public void ftorEmptySequenceBothMiss() throws Exception {
-        // {()} matches vacuously, so even without a word match, ftor succeeds
-        assertTrue(evalBool("'hello world' contains text {()} ftor 'xyz'"));
+    public void ftorEmptySequenceNoMatch() throws Exception {
+        // {()} produces no match, and 'goodbye' doesn't match — result is false
+        assertFalse(evalBool("'hello world' contains text {()} ftor 'goodbye'"));
+    }
+
+    // === XPTY0004 for non-string FTWords values ===
+
+    @Test(expected = XPathException.class)
+    public void ftWordsIntegerRaisesTypeError() throws Exception {
+        evalBool("'hello world' contains text {42} ftor 'hello'");
+    }
+
+    // === Stemming ===
+
+    @Test
+    public void stemmingMatch() throws Exception {
+        // "pictures" stems to same root as "picture"
+        assertTrue(evalBool("'hand-drawn pictures of pages' contains text 'picture' using stemming"));
+    }
+
+    @Test
+    public void stemmingNoMatch() throws Exception {
+        // "tasks" stems to "task", but "picture" stems to "pictur" — no match
+        assertFalse(evalBool("'tasks and training' contains text 'picture' using stemming"));
+    }
+
+    @Test
+    public void stemmingVerbForms() throws Exception {
+        // "performing" and "performed" should share same stem
+        assertTrue(evalBool("'performing specified tasks' contains text 'performed' using stemming"));
     }
 
     // === declare ft-option ===
@@ -309,6 +370,57 @@ public class FTContainsTest {
         assertFalse(evalBool(
             "declare ft-option using case sensitive;\n" +
             "'Hello World' contains text 'hello'"
+        ));
+    }
+
+    // === FTST0019: conflicting match options ===
+
+    @Test(expected = XPathException.class)
+    public void conflictingCaseOptionsInProlog() throws Exception {
+        // FTST0019: conflicting case options in declare ft-option
+        evalBool(
+            "declare ft-option using case sensitive using case insensitive;\n" +
+            "'Hello World' contains text 'Hello'"
+        );
+    }
+
+    // === entire content strictness ===
+
+    @Test
+    public void entireContentRejectsPartialMatch() throws Exception {
+        // "entire content" must cover ALL token positions, not just first and last
+        assertFalse(evalBool(
+            "'one two three four five' contains text 'one' ftand 'five' entire content"
+        ));
+    }
+
+    // === FTST0001: mild not operand restrictions ===
+
+    @Test(expected = XPathException.class)
+    public void mildNotRejectsFtnotLeft() throws Exception {
+        // ftnot in left operand of "not in" must raise FTST0001
+        evalBool("'hello world' contains text ('hello' ftand ftnot 'x') not in 'y'");
+    }
+
+    @Test(expected = XPathException.class)
+    public void mildNotRejectsFtnotRight() throws Exception {
+        // ftnot in right operand of "not in" must raise FTST0001
+        evalBool("'hello world' contains text 'hello' not in ('world' ftand ftnot 'x')");
+    }
+
+    @Test(expected = XPathException.class)
+    public void mildNotRejectsOccurs() throws Exception {
+        // "occurs" in operand of "not in" must raise FTST0001
+        evalBool("'hello world' contains text 'hello' occurs exactly 1 times not in 'world'");
+    }
+
+    // === Positional filter interaction ===
+
+    @Test
+    public void orderedAfterWindowInParens() throws Exception {
+        // After window collapses groups, ordered sees a single unit → vacuously true
+        assertTrue(evalBool(
+            "'one two three' contains text ('three' ftand 'one' window 3 words) ordered"
         ));
     }
 

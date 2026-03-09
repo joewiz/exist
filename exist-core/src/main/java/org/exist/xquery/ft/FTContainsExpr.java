@@ -25,6 +25,7 @@ import org.exist.dom.memtree.NodeImpl;
 import org.exist.xquery.AbstractExpression;
 import org.exist.xquery.AnalyzeContextInfo;
 import org.exist.xquery.Dependency;
+import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
@@ -122,6 +123,15 @@ public class FTContainsExpr extends AbstractExpression {
         if (ignoreExpr != null) {
             final Sequence ignoredNodes = ignoreExpr.eval(contextSequence, null);
             if (!ignoredNodes.isEmpty()) {
+                // XQFT 3.0 §3.7: FTIgnoreOption must evaluate to a node sequence.
+                // Non-node values raise XPTY0004.
+                for (int i = 0; i < ignoredNodes.getItemCount(); i++) {
+                    if (!Type.subTypeOf(ignoredNodes.itemAt(i).getType(), Type.NODE)) {
+                        throw new XPathException(this, ErrorCodes.XPTY0004,
+                                "FTIgnoreOption 'without content' expression must evaluate to nodes, got: "
+                                        + Type.getTypeName(ignoredNodes.itemAt(i).getType()));
+                    }
+                }
                 ignoredTexts = new HashSet<>();
                 for (int i = 0; i < ignoredNodes.getItemCount(); i++) {
                     final String ignoredText = ignoredNodes.itemAt(i).getStringValue();

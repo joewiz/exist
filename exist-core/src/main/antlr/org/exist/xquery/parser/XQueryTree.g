@@ -641,6 +641,10 @@ throws PermissionDeniedException, EXistException, XPathException
             }
             ftDefaultOpts=ftMatchOptionsExpr
             {
+                if (ftDefaultOpts.hasConflict()) {
+                    throw new XPathException(ErrorCodes.FTST0019,
+                            ftDefaultOpts.getConflictDescription());
+                }
                 context.setDefaultFTMatchOptions(ftDefaultOpts);
             }
         )

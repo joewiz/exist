@@ -104,6 +104,18 @@ public class FTEvaluator {
             return all;
         }
 
+        /**
+         * Collapse operand groups into a single group containing all include positions.
+         * Used after positional filters so outer filters see this match as a single unit.
+         */
+        public Match collapseGroups() {
+            final List<SortedSet<Integer>> collapsed = new ArrayList<>();
+            if (!includePositions.isEmpty()) {
+                collapsed.add(new TreeSet<>(includePositions));
+            }
+            return new Match(includePositions, excludePositions, collapsed);
+        }
+
         /** Combine two matches (e.g. for ftand), preserving operand groups */
         public Match combine(final Match other) {
             final SortedSet<Integer> inc = new TreeSet<>(includePositions);
@@ -142,10 +154,13 @@ public class FTEvaluator {
     }
 
     private final List<String> tokens;
+    /** Tokens with trailing punctuation preserved — used for wildcard matching. */
+    private final List<String> rawTokens;
     private final int totalTokens;
 
     public FTEvaluator(final String text) {
         this.tokens = tokenize(text);
+        this.rawTokens = tokenizeRaw(text);
         this.totalTokens = tokens.size();
     }
 
@@ -175,14 +190,56 @@ public class FTEvaluator {
     }
 
     /**
+     * Tokenize text preserving trailing punctuation on each word token.
+     * Used for wildcard matching where patterns may include literal punctuation
+     * (e.g., "task?" matches the literal string "task?" with a question mark).
+     */
+    static List<String> tokenizeRaw(final String text) {
+        if (text == null || text.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<String> result = new ArrayList<>();
+        final BreakIterator wb = BreakIterator.getWordInstance(Locale.ROOT);
+        wb.setText(text);
+        int start = wb.first();
+        // Collect all segments with their boundaries
+        final List<String> segments = new ArrayList<>();
+        final List<Boolean> isWord = new ArrayList<>();
+        for (int end = wb.next(); end != BreakIterator.DONE; start = end, end = wb.next()) {
+            final String seg = text.substring(start, end);
+            segments.add(seg);
+            isWord.add(seg.codePoints().anyMatch(Character::isLetterOrDigit));
+        }
+        // Build raw tokens: word + trailing non-whitespace punctuation
+        for (int i = 0; i < segments.size(); i++) {
+            if (isWord.get(i)) {
+                final StringBuilder token = new StringBuilder(segments.get(i));
+                // Append immediately following non-whitespace, non-word segments
+                while (i + 1 < segments.size() && !isWord.get(i + 1)
+                        && !segments.get(i + 1).isBlank()) {
+                    i++;
+                    token.append(segments.get(i));
+                }
+                result.add(token.toString());
+            }
+        }
+        return result;
+    }
+
+    /**
      * Evaluate the full FTSelection and apply positional filters.
      */
     public boolean evaluate(final FTSelection selection, final FTMatchOptions inheritedOptions)
             throws XPathException {
         AllMatches result = evalExpression(selection.getFTOr(), inheritedOptions);
-        // Apply positional filters
-        for (final Expression filter : selection.getPosFilters()) {
-            result = applyPosFilter(result, filter);
+        // Apply positional filters in sequence; after each filter, collapse
+        // operand groups so subsequent filters treat results as single units.
+        final List<Expression> filters = selection.getPosFilters();
+        for (int f = 0; f < filters.size(); f++) {
+            result = applyPosFilter(result, filters.get(f));
+            if (f < filters.size() - 1) {
+                result = collapseAllGroups(result);
+            }
         }
         return result.hasMatches();
     }
@@ -211,6 +268,11 @@ public class FTEvaluator {
             for (final Expression filter : sel.getPosFilters()) {
                 result = applyPosFilter(result, filter);
             }
+            // After applying inner positional filters, collapse operand groups
+            // so outer filters treat this sub-expression as a single unit.
+            if (!sel.getPosFilters().isEmpty()) {
+                result = collapseAllGroups(result);
+            }
             return result;
         }
         throw new XPathException(expr, "Unsupported FT expression type: " + expr.getClass().getSimpleName());
@@ -226,29 +288,52 @@ public class FTEvaluator {
         final Sequence wordsSeq = ftWords.getWordsValue().eval(null, null);
         final List<String> searchStrings = new ArrayList<>();
         for (int i = 0; i < wordsSeq.getItemCount(); i++) {
-            searchStrings.add(wordsSeq.itemAt(i).getStringValue());
+            final Item item = wordsSeq.itemAt(i);
+            // XQFT 3.0 §3.1: FTWords values must be coercible to xs:string*.
+            // Nodes are atomized to xs:untypedAtomic (always valid).
+            // Atomic types must be xs:string, xs:untypedAtomic, or xs:anyURI.
+            // Other atomic types (xs:integer, etc.) raise XPTY0004.
+            final int itemType = item.getType();
+            if (!Type.subTypeOf(itemType, Type.NODE)
+                    && !Type.subTypeOf(itemType, Type.STRING)
+                    && !Type.subTypeOf(itemType, Type.ANY_URI)
+                    && !Type.subTypeOf(itemType, Type.UNTYPED_ATOMIC)) {
+                throw new XPathException(ftWords, ErrorCodes.XPTY0004,
+                        "Full-text search value must be of type xs:string, got: "
+                                + Type.getTypeName(itemType));
+            }
+            searchStrings.add(item.getStringValue());
         }
 
         if (searchStrings.isEmpty()) {
-            // Empty search matches everything (spec: empty string matches)
-            final AllMatches am = new AllMatches();
-            am.addMatch(new Match());
-            return am;
+            // XQFT 3.0 §3.1: empty sequence produces no matches.
+            return new AllMatches();
         }
 
-        // XQFT 3.0 §4.1: default case mode is implementation-defined.
-        // We default to case-insensitive, matching most XQFT test suite expectations.
-        final boolean caseInsensitive = options == null ||
-                options.getCaseMode() == null ||
-                options.getCaseMode() == FTMatchOptions.CaseMode.INSENSITIVE ||
-                options.getCaseMode() == FTMatchOptions.CaseMode.LOWERCASE ||
-                options.getCaseMode() == FTMatchOptions.CaseMode.UPPERCASE;
+        // XQFT 3.0 §4.1: case mode handling.
+        // - INSENSITIVE (default): compare tokens ignoring case.
+        // - SENSITIVE: compare tokens with exact case.
+        // - LOWERCASE: convert search tokens to lowercase, compare case-sensitively with source.
+        // - UPPERCASE: convert search tokens to uppercase, compare case-sensitively with source.
+        final FTMatchOptions.CaseMode caseMode = options == null ? null : options.getCaseMode();
+        final boolean caseInsensitive = caseMode == null ||
+                caseMode == FTMatchOptions.CaseMode.INSENSITIVE;
+
+        // Apply lowercase/uppercase normalization to search strings
+        if (caseMode == FTMatchOptions.CaseMode.LOWERCASE) {
+            searchStrings.replaceAll(s -> s.toLowerCase(Locale.ROOT));
+        } else if (caseMode == FTMatchOptions.CaseMode.UPPERCASE) {
+            searchStrings.replaceAll(s -> s.toUpperCase(Locale.ROOT));
+        }
         final boolean useWildcards = options != null &&
                 Boolean.TRUE.equals(options.getWildcards());
         // XQFT 3.0 §4.3: diacritics mode. Default to insensitive.
         final boolean diacriticsInsensitive = options == null ||
                 options.getDiacriticsMode() == null ||
                 options.getDiacriticsMode() == FTMatchOptions.DiacriticsMode.INSENSITIVE;
+        // XQFT 3.0 §4.4: stemming mode. Default to no stemming.
+        final boolean useStemming = options != null &&
+                Boolean.TRUE.equals(options.getStemming());
 
         // Collect stop words from options (XQFT 3.0 §4.6)
         final Set<String> stopWords = collectStopWords(options, caseInsensitive);
@@ -264,17 +349,17 @@ public class FTEvaluator {
         AllMatches result;
         switch (mode) {
             case ANY:
-                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
             case ANY_WORD:
-                result = evalAnyWord(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalAnyWord(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
             case ALL:
-                result = evalAll(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalAll(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
             case ALL_WORDS:
-                result = evalAllWords(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalAllWords(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
             case PHRASE:
-                result = evalPhrase(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalPhrase(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
             default:
-                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords); break;
+                result = evalAny(searchStrings, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords); break;
         }
 
         // Apply FTTimes constraint if present
@@ -290,18 +375,18 @@ public class FTEvaluator {
      */
     private AllMatches evalAny(final List<String> searchStrings, final boolean caseInsensitive,
                                final boolean useWildcards, final boolean diacriticsInsensitive,
-                               final Set<String> stopWords) {
+                               final boolean useStemming, final Set<String> stopWords) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
             final List<String> searchTokens = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
             if (searchTokens.isEmpty()) {
-                result.addMatch(new Match());
+                // Empty string tokenizes to nothing — no match
                 continue;
             }
             if (searchTokens.size() == 1) {
-                findWordMatches(searchTokens.get(0), caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
+                findWordMatches(searchTokens.get(0), caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, result);
             } else {
-                findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
+                findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, result);
             }
         }
         return result;
@@ -313,7 +398,7 @@ public class FTEvaluator {
      */
     private AllMatches evalAnyWord(final List<String> searchStrings, final boolean caseInsensitive,
                                    final boolean useWildcards, final boolean diacriticsInsensitive,
-                                   final Set<String> stopWords) {
+                                   final boolean useStemming, final Set<String> stopWords) {
         final AllMatches result = new AllMatches();
         for (final String searchStr : searchStrings) {
             final List<String> words = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
@@ -321,7 +406,7 @@ public class FTEvaluator {
                 if (isStopWord(word, stopWords, caseInsensitive)) {
                     continue;
                 }
-                findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
+                findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, result);
             }
         }
         return result;
@@ -332,7 +417,7 @@ public class FTEvaluator {
      */
     private AllMatches evalAll(final List<String> searchStrings, final boolean caseInsensitive,
                                final boolean useWildcards, final boolean diacriticsInsensitive,
-                               final Set<String> stopWords) {
+                               final boolean useStemming, final Set<String> stopWords) {
         AllMatches combined = null;
         for (final String searchStr : searchStrings) {
             final List<String> searchTokens = useWildcards ? tokenizeWildcard(searchStr) : tokenize(searchStr);
@@ -340,13 +425,13 @@ public class FTEvaluator {
                 continue;
             }
             final AllMatches phraseMatches = new AllMatches();
-            findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, phraseMatches);
+            findPhraseMatches(searchTokens, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, phraseMatches);
             if (!phraseMatches.hasMatches()) {
                 return new AllMatches(); // all must match — one failed
             }
             combined = (combined == null) ? phraseMatches : crossProduct(combined, phraseMatches);
         }
-        return combined != null ? combined : singleEmptyMatch();
+        return combined != null ? combined : new AllMatches();
     }
 
     /**
@@ -354,7 +439,7 @@ public class FTEvaluator {
      */
     private AllMatches evalAllWords(final List<String> searchStrings, final boolean caseInsensitive,
                                     final boolean useWildcards, final boolean diacriticsInsensitive,
-                                    final Set<String> stopWords) {
+                                    final boolean useStemming, final Set<String> stopWords) {
         final List<String> allWords = new ArrayList<>();
         for (final String s : searchStrings) {
             allWords.addAll(useWildcards ? tokenizeWildcard(s) : tokenize(s));
@@ -368,7 +453,7 @@ public class FTEvaluator {
                 continue;
             }
             final AllMatches wordMatches = new AllMatches();
-            findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, wordMatches);
+            findWordMatches(word, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, wordMatches);
             if (!wordMatches.hasMatches()) {
                 return new AllMatches(); // all must match
             }
@@ -382,16 +467,16 @@ public class FTEvaluator {
      */
     private AllMatches evalPhrase(final List<String> searchStrings, final boolean caseInsensitive,
                                   final boolean useWildcards, final boolean diacriticsInsensitive,
-                                  final Set<String> stopWords) {
+                                  final boolean useStemming, final Set<String> stopWords) {
         final List<String> phraseTokens = new ArrayList<>();
         for (final String s : searchStrings) {
             phraseTokens.addAll(useWildcards ? tokenizeWildcard(s) : tokenize(s));
         }
         if (phraseTokens.isEmpty()) {
-            return singleEmptyMatch();
+            return new AllMatches(); // no tokens, no match
         }
         final AllMatches result = new AllMatches();
-        findPhraseMatches(phraseTokens, caseInsensitive, useWildcards, diacriticsInsensitive, stopWords, result);
+        findPhraseMatches(phraseTokens, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming, stopWords, result);
         return result;
     }
 
@@ -400,13 +485,15 @@ public class FTEvaluator {
      */
     private void findWordMatches(final String word, final boolean caseInsensitive,
                                  final boolean useWildcards, final boolean diacriticsInsensitive,
-                                 final Set<String> stopWords, final AllMatches result) {
+                                 final boolean useStemming, final Set<String> stopWords,
+                                 final AllMatches result) {
         if (isStopWord(word, stopWords, caseInsensitive)) {
             // Stop words in search query are treated as automatically matching
             return;
         }
         for (int i = 0; i < totalTokens; i++) {
-            if (wordMatches(tokens.get(i), word, caseInsensitive, useWildcards, diacriticsInsensitive)) {
+            final String rawToken = (useWildcards && i < rawTokens.size()) ? rawTokens.get(i) : null;
+            if (wordMatches(tokens.get(i), rawToken, word, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming)) {
                 result.addMatch(new Match(i));
             }
         }
@@ -418,7 +505,8 @@ public class FTEvaluator {
      */
     private void findPhraseMatches(final List<String> phraseTokens, final boolean caseInsensitive,
                                    final boolean useWildcards, final boolean diacriticsInsensitive,
-                                   final Set<String> stopWords, final AllMatches result) {
+                                   final boolean useStemming, final Set<String> stopWords,
+                                   final AllMatches result) {
         final int phraseLen = phraseTokens.size();
         outer:
         for (int i = 0; i <= totalTokens - phraseLen; i++) {
@@ -428,7 +516,9 @@ public class FTEvaluator {
                 if (isStopWord(searchToken, stopWords, caseInsensitive)) {
                     continue; // this position is OK
                 }
-                if (!wordMatches(tokens.get(i + j), searchToken, caseInsensitive, useWildcards, diacriticsInsensitive)) {
+                final int idx = i + j;
+                final String rawToken = (useWildcards && idx < rawTokens.size()) ? rawTokens.get(idx) : null;
+                if (!wordMatches(tokens.get(idx), rawToken, searchToken, caseInsensitive, useWildcards, diacriticsInsensitive, useStemming)) {
                     continue outer;
                 }
             }
@@ -443,10 +533,12 @@ public class FTEvaluator {
 
     /**
      * Check if a source token matches a search word.
+     * @param rawSourceToken token with trailing punctuation preserved (for wildcard matching), or null
      */
-    private boolean wordMatches(final String sourceToken, final String searchWord,
+    private boolean wordMatches(final String sourceToken, final String rawSourceToken,
+                                final String searchWord,
                                 final boolean caseInsensitive, final boolean useWildcards,
-                                final boolean diacriticsInsensitive) {
+                                final boolean diacriticsInsensitive, final boolean useStemming) {
         String src = sourceToken;
         String search = searchWord;
 
@@ -458,8 +550,28 @@ public class FTEvaluator {
 
         if (useWildcards) {
             final String regex = wildcardToRegex(search, caseInsensitive);
-            return Pattern.matches(regex, src);
+            // First try matching against the clean token
+            if (Pattern.matches(regex, src)) {
+                return true;
+            }
+            // If that fails, try matching against the raw token (with trailing punctuation)
+            // to handle patterns with literal punctuation like "task?" or "specialist\."
+            if (rawSourceToken != null) {
+                String rawSrc = rawSourceToken;
+                if (diacriticsInsensitive) {
+                    rawSrc = stripDiacritics(rawSrc);
+                }
+                return Pattern.matches(regex, rawSrc);
+            }
+            return false;
         }
+
+        // Apply stemming: compare stems instead of exact words
+        if (useStemming) {
+            src = stem(src);
+            search = stem(search);
+        }
+
         if (caseInsensitive) {
             return src.equalsIgnoreCase(search);
         }
@@ -482,6 +594,98 @@ public class FTEvaluator {
             }
         }
         return result;
+    }
+
+    /**
+     * Basic English stemmer using suffix stripping.
+     * Reduces common English inflections (plurals, verb forms, etc.)
+     * to approximate stems for full-text comparison. Based on a simplified
+     * version of the Porter stemming algorithm.
+     */
+    static String stem(final String word) {
+        if (word == null || word.length() < 3) {
+            return word;
+        }
+        String s = word.toLowerCase(Locale.ROOT);
+
+        // Step 1: Strip inflectional suffixes (longest match first)
+        if (s.endsWith("ational")) {
+            s = s.substring(0, s.length() - 7) + "ate";
+        } else if (s.endsWith("iveness")) {
+            s = s.substring(0, s.length() - 7) + "ive";
+        } else if (s.endsWith("fulness")) {
+            s = s.substring(0, s.length() - 7) + "ful";
+        } else if (s.endsWith("ously")) {
+            s = s.substring(0, s.length() - 5) + "ous";
+        } else if (s.endsWith("ement")) {
+            s = s.substring(0, s.length() - 5);
+        } else if (s.endsWith("ness")) {
+            s = s.substring(0, s.length() - 4);
+        } else if (s.endsWith("ment") && !s.endsWith("mment")) {
+            s = s.substring(0, s.length() - 4);
+        } else if (s.endsWith("ies")) {
+            s = s.substring(0, s.length() - 3) + "i";
+        } else if (s.endsWith("ied")) {
+            s = s.substring(0, s.length() - 3) + "i";
+        } else if (s.endsWith("eed")) {
+            // keep as-is (e.g. "feed")
+        } else if (s.endsWith("ing")) {
+            final String base = s.substring(0, s.length() - 3);
+            if (base.length() >= 2) {
+                s = undouble(base);
+            }
+        } else if (s.endsWith("ed")) {
+            final String base = s.substring(0, s.length() - 2);
+            if (base.length() >= 2) {
+                s = undouble(base);
+            }
+        } else if (s.endsWith("ers")) {
+            final String base = s.substring(0, s.length() - 3);
+            if (base.length() >= 2) {
+                s = undouble(base);
+            }
+        } else if (s.endsWith("er")) {
+            final String base = s.substring(0, s.length() - 2);
+            if (base.length() >= 2) {
+                s = undouble(base);
+            }
+        } else if (s.endsWith("es")) {
+            final String base = s.substring(0, s.length() - 2);
+            if (base.length() >= 3) {
+                s = base;
+            }
+        } else if (s.endsWith("s") && !s.endsWith("ss")) {
+            s = s.substring(0, s.length() - 1);
+        } else if (s.endsWith("ly")) {
+            final String base = s.substring(0, s.length() - 2);
+            if (base.length() >= 3) {
+                s = base;
+            }
+        }
+
+        // Step 2: Remove trailing 'e' if the stem is long enough.
+        // This ensures "picture" → "pictur" matches "pictures" → "pictur".
+        if (s.length() >= 4 && s.endsWith("e") && !s.endsWith("ee")) {
+            s = s.substring(0, s.length() - 1);
+        }
+
+        return s;
+    }
+
+    /**
+     * Undo doubled consonant at end of stem (e.g. "runn" → "run").
+     */
+    private static String undouble(final String base) {
+        if (base.length() >= 3
+                && base.charAt(base.length() - 1) == base.charAt(base.length() - 2)
+                && !isVowel(base.charAt(base.length() - 1))) {
+            return base.substring(0, base.length() - 1);
+        }
+        return base;
+    }
+
+    private static boolean isVowel(final char c) {
+        return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
     }
 
     /**
@@ -827,7 +1031,9 @@ public class FTEvaluator {
         final int windowSize = evalIntExpr(ftWindow.getWindowExpr());
         final AllMatches result = new AllMatches();
         for (final Match m : input.getMatches()) {
-            final SortedSet<Integer> positions = m.getAllPositions();
+            // XQFT 3.0 §3.6.2: window considers only include positions,
+            // not exclude positions from ftnot/not-in.
+            final SortedSet<Integer> positions = m.getIncludePositions();
             if (positions.isEmpty()) {
                 result.addMatch(m);
             } else {
@@ -853,6 +1059,13 @@ public class FTEvaluator {
 
         final AllMatches result = new AllMatches();
         for (final Match m : input.getMatches()) {
+            final List<SortedSet<Integer>> groups = m.getOperandGroups();
+            // Single group (e.g. after positional filter collapse): vacuously satisfied
+            if (groups.size() <= 1) {
+                result.addMatch(m);
+                continue;
+            }
+            // Check distance between consecutive individual positions
             final List<Integer> posList = new ArrayList<>(m.getIncludePositions());
             if (posList.size() <= 1) {
                 result.addMatch(m);
@@ -895,7 +1108,10 @@ public class FTEvaluator {
                     }
                     break;
                 case ENTIRE_CONTENT:
-                    if (positions.first() == 0 && positions.last() == totalTokens - 1) {
+                    // XQFT 3.0 §3.6.2: entire content requires that the match covers
+                    // all token positions from 0 to totalTokens-1.
+                    if (positions.first() == 0 && positions.last() == totalTokens - 1
+                            && positions.size() == totalTokens) {
                         result.addMatch(m);
                     }
                     break;
@@ -940,6 +1156,19 @@ public class FTEvaluator {
             for (final Match rm : right.getMatches()) {
                 result.addMatch(lm.combine(rm));
             }
+        }
+        return result;
+    }
+
+    /**
+     * Collapse operand groups in all matches to single groups.
+     * Used after positional filters in nested FTSelection so outer filters
+     * treat the result as a single unit.
+     */
+    private AllMatches collapseAllGroups(final AllMatches input) {
+        final AllMatches result = new AllMatches();
+        for (final Match m : input.getMatches()) {
+            result.addMatch(m.collapseGroups());
         }
         return result;
     }
