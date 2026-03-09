@@ -308,6 +308,11 @@ public class XQueryContext implements BinaryValueManager, Context {
     private String defaultCollation = Collations.UNICODE_CODEPOINT_COLLATION_URI;
 
     /**
+     * XQFT 3.0: default full-text match options declared via "declare ft-option".
+     */
+    private org.exist.xquery.ft.FTMatchOptions defaultFTMatchOptions;
+
+    /**
      * The default language
      */
     private static final String DefaultLanguage = Locale.getDefault().getLanguage();
@@ -1088,6 +1093,14 @@ public class XQueryContext implements BinaryValueManager, Context {
     @Override
     public String getDefaultCollation() {
         return defaultCollation;
+    }
+
+    public void setDefaultFTMatchOptions(final org.exist.xquery.ft.FTMatchOptions opts) {
+        this.defaultFTMatchOptions = opts;
+    }
+
+    public org.exist.xquery.ft.FTMatchOptions getDefaultFTMatchOptions() {
+        return defaultFTMatchOptions;
     }
 
     @Override

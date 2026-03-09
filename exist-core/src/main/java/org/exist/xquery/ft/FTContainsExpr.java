@@ -145,7 +145,9 @@ public class FTContainsExpr extends AbstractExpression {
             }
 
             final FTEvaluator evaluator = new FTEvaluator(sourceText);
-            if (evaluator.evaluate(ftSelection, null)) {
+            // Pass default FT match options from static context (declare ft-option)
+            final FTMatchOptions defaultOpts = context.getDefaultFTMatchOptions();
+            if (evaluator.evaluate(ftSelection, defaultOpts)) {
                 return BooleanValue.TRUE;
             }
         }

@@ -24,7 +24,9 @@ package org.exist.xquery.ft;
 import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
+import org.exist.xquery.value.Item;
 import org.exist.xquery.value.Sequence;
+import org.exist.xquery.value.Type;
 
 import java.text.BreakIterator;
 import java.text.Normalizer;
@@ -250,6 +252,13 @@ public class FTEvaluator {
 
         // Collect stop words from options (XQFT 3.0 §4.6)
         final Set<String> stopWords = collectStopWords(options, caseInsensitive);
+
+        // Validate wildcard patterns (XQFT 1.0 §A.2: only ., .+, .*, .? are valid)
+        if (useWildcards) {
+            for (final String searchStr : searchStrings) {
+                validateWildcardPattern(searchStr, ftWords);
+            }
+        }
 
         final FTWords.AnyallMode mode = ftWords.getMode();
         AllMatches result;
@@ -519,6 +528,51 @@ public class FTEvaluator {
     }
 
     /**
+     * Validate a wildcard pattern for XQFT syntax compliance.
+     * Raises FTDY0020 if the pattern contains invalid wildcard constructs.
+     * Valid: .{n,m} (comma-separated numeric range), .{c,c} (comma-separated char range)
+     * Invalid: .{n} (single number), .{n-m} (dash-separated), .{c-c} (dash-separated chars)
+     */
+    static void validateWildcardPattern(final String pattern, final Expression context) throws XPathException {
+        int i = 0;
+        while (i < pattern.length()) {
+            final char c = pattern.charAt(i);
+            if (c == '.') {
+                i++;
+                if (i < pattern.length()) {
+                    final char next = pattern.charAt(i);
+                    if (next == '{') {
+                        // Extract content between { and }
+                        final int braceStart = i;
+                        i++; // skip {
+                        final StringBuilder content = new StringBuilder();
+                        while (i < pattern.length() && pattern.charAt(i) != '}') {
+                            content.append(pattern.charAt(i));
+                            i++;
+                        }
+                        if (i < pattern.length()) {
+                            i++; // skip }
+                        }
+                        final String rangeContent = content.toString();
+                        // Only .{X,Y} with commas is valid; dashes and single values are invalid
+                        if (!rangeContent.contains(",")) {
+                            throw new XPathException(context, ErrorCodes.FTDY0020,
+                                    "Invalid wildcard pattern: .{" + rangeContent + "} is not valid wildcard syntax");
+                        }
+                    } else if (next == '*' || next == '+' || next == '?') {
+                        i++;
+                    }
+                    // else just '.', which is fine
+                }
+            } else if (c == '\\') {
+                i += 2; // skip escaped char
+            } else {
+                i++;
+            }
+        }
+    }
+
+    /**
      * Convert XQFT wildcard pattern to Java regex.
      * XQFT wildcards: "." matches any single char, ".+" matches one or more,
      * ".*" matches zero or more, ".{n,m}" etc.
@@ -671,8 +725,15 @@ public class FTEvaluator {
 
     AllMatches evalFTPrimaryWithOptions(final FTPrimaryWithOptions pwo, final FTMatchOptions inheritedOptions)
             throws XPathException {
+        // XQFT 3.0 §4.9: raise FTST0019 if match options conflict
+        final FTMatchOptions localOptions = pwo.getMatchOptions();
+        if (localOptions != null && localOptions.hasConflict()) {
+            throw new XPathException(pwo, ErrorCodes.FTST0019,
+                    localOptions.getConflictDescription());
+        }
+
         // Merge match options: local options override inherited ones
-        final FTMatchOptions effective = mergeOptions(inheritedOptions, pwo.getMatchOptions());
+        final FTMatchOptions effective = mergeOptions(inheritedOptions, localOptions);
 
         // XQFT 3.0 §4.6: raise FTST0006 if stop word URIs are specified but not supported
         if (effective != null && !effective.getStopWordURIs().isEmpty()) {
@@ -680,10 +741,13 @@ public class FTEvaluator {
                     "External stop word lists are not supported: " + effective.getStopWordURIs());
         }
 
-        // XQFT 3.0 §4.8: raise FTST0009 for unsupported languages
+        // XQFT 3.0 §4.8: raise FTST0009 for invalid language tags.
+        // We accept all valid BCP 47 language tags (matching with default tokenization)
+        // but reject invalid tags (numeric-only, single-char, etc.).
+        // BCP 47 primary language subtags are 2-8 letters.
         if (effective != null && effective.getLanguage() != null) {
-            final String lang = effective.getLanguage().toLowerCase(Locale.ROOT);
-            if (!lang.isEmpty() && !lang.equals("en") && !lang.startsWith("en-")) {
+            final String lang = effective.getLanguage().trim();
+            if (!lang.isEmpty() && !lang.matches("[a-zA-Z]{2,8}(-.*)?")) {
                 throw new XPathException(pwo, ErrorCodes.FTST0009,
                         "Language not supported: " + effective.getLanguage());
             }
@@ -853,6 +917,12 @@ public class FTEvaluator {
         final int matchCount = input.getMatches().size();
 
         if (matchCount >= min && matchCount <= max) {
+            // If the count satisfies the range but AllMatches is empty (0 matches),
+            // return a single empty match to signal "constraint satisfied".
+            // Per XQFT 3.0 §4.8: 0 occurrences satisfies "at most N times".
+            if (matchCount == 0) {
+                return singleEmptyMatch();
+            }
             return input;
         }
         return new AllMatches(); // constraint not satisfied
@@ -882,7 +952,24 @@ public class FTEvaluator {
 
     private int evalIntExpr(final Expression expr) throws XPathException {
         final Sequence seq = expr.eval(null, null);
-        return seq.itemAt(0).toJavaObject(int.class);
+        if (seq.isEmpty()) {
+            throw new XPathException(expr, ErrorCodes.XPTY0004,
+                    "Full-text range/window/distance expression must evaluate to a single integer");
+        }
+        final Item item = seq.itemAt(0);
+        final int type = item.getType();
+        // Per XQFT 3.0: must be a non-negative integer
+        if (type != Type.INTEGER && type != Type.INT && type != Type.SHORT
+                && type != Type.LONG && type != Type.BYTE
+                && type != Type.UNSIGNED_INT && type != Type.UNSIGNED_SHORT
+                && type != Type.UNSIGNED_LONG && type != Type.UNSIGNED_BYTE
+                && type != Type.NON_NEGATIVE_INTEGER && type != Type.POSITIVE_INTEGER
+                && type != Type.NON_POSITIVE_INTEGER && type != Type.NEGATIVE_INTEGER) {
+            throw new XPathException(expr, ErrorCodes.XPTY0004,
+                    "Full-text range/window/distance expression must evaluate to an integer, got: "
+                            + Type.getTypeName(type));
+        }
+        return item.toJavaObject(int.class);
     }
 
     private int[] evalRange(final FTRange range) throws XPathException {

@@ -47,18 +47,47 @@ public class FTMatchOptions {
     private Boolean noStopWords;
     private final List<String> stopWordURIs = new ArrayList<>();
     private final List<String> inlineStopWords = new ArrayList<>();
+    private boolean hasConflict;
+    private String conflictDescription;
+
+    public boolean hasConflict() { return hasConflict; }
+    public String getConflictDescription() { return conflictDescription; }
 
     public CaseMode getCaseMode() { return caseMode; }
-    public void setCaseMode(final CaseMode caseMode) { this.caseMode = caseMode; }
+    public void setCaseMode(final CaseMode caseMode) {
+        if (this.caseMode != null && this.caseMode != caseMode) {
+            hasConflict = true;
+            conflictDescription = "Conflicting case options: " + this.caseMode + " and " + caseMode;
+        }
+        this.caseMode = caseMode;
+    }
 
     public DiacriticsMode getDiacriticsMode() { return diacriticsMode; }
-    public void setDiacriticsMode(final DiacriticsMode diacriticsMode) { this.diacriticsMode = diacriticsMode; }
+    public void setDiacriticsMode(final DiacriticsMode diacriticsMode) {
+        if (this.diacriticsMode != null && this.diacriticsMode != diacriticsMode) {
+            hasConflict = true;
+            conflictDescription = "Conflicting diacritics options: " + this.diacriticsMode + " and " + diacriticsMode;
+        }
+        this.diacriticsMode = diacriticsMode;
+    }
 
     public Boolean getStemming() { return stemming; }
-    public void setStemming(final Boolean stemming) { this.stemming = stemming; }
+    public void setStemming(final Boolean stemming) {
+        if (this.stemming != null && !this.stemming.equals(stemming)) {
+            hasConflict = true;
+            conflictDescription = "Conflicting stemming options";
+        }
+        this.stemming = stemming;
+    }
 
     public Boolean getWildcards() { return wildcards; }
-    public void setWildcards(final Boolean wildcards) { this.wildcards = wildcards; }
+    public void setWildcards(final Boolean wildcards) {
+        if (this.wildcards != null && !this.wildcards.equals(wildcards)) {
+            hasConflict = true;
+            conflictDescription = "Conflicting wildcard options";
+        }
+        this.wildcards = wildcards;
+    }
 
     public String getLanguage() { return language; }
     public void setLanguage(final String language) { this.language = language; }

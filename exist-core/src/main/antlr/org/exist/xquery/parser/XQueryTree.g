@@ -633,6 +633,18 @@ throws PermissionDeniedException, EXistException, XPathException
             )
         )
         |
+        // XQFT 3.0 §5.2: declare ft-option using <match-options>
+        #(
+            FT_OPTION_DECL
+            {
+                FTMatchOptions ftDefaultOpts = new FTMatchOptions();
+            }
+            ftDefaultOpts=ftMatchOptionsExpr
+            {
+                context.setDefaultFTMatchOptions(ftDefaultOpts);
+            }
+        )
+        |
         functionDecl [path]
         |
         importDecl [path]

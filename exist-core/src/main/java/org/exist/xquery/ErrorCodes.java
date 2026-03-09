@@ -250,6 +250,7 @@ public class ErrorCodes {
     public static final ErrorCode FTST0008 = new W3CErrorCode("FTST0008", "It is a static error if a stop word list is not in the correct format.");
     public static final ErrorCode FTST0009 = new W3CErrorCode("FTST0009", "It is a static error if the specified language is not supported.");
     public static final ErrorCode FTDY0017 = new W3CErrorCode("FTDY0017", "It is a dynamic error if the right-hand match of mild not has any include-matches matching tokens not matched by include-matches of the left-hand match.");
+    public static final ErrorCode FTST0019 = new W3CErrorCode("FTST0019", "It is a static error if match options in a single contains text expression conflict with each other.");
 
     /* eXist specific XQuery and XPath errors
      *

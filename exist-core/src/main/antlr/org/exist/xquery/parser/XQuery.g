@@ -222,6 +222,7 @@ imaginaryTokenDefinitions
 	FT_EXTENSION_OPTION
 	FT_IGNORE_OPTION
 	FT_WEIGHT
+	FT_OPTION_DECL
 	;
 
 // === XPointer ===
@@ -292,6 +293,9 @@ prolog throws XPathException
 				if(!inSetters)
 					throw new XPathException(#s, "Default declarations have to come first");
 			}
+            |
+			( "declare" "ft-option" )
+			=> ftOptionDecl { inSetters = false; }
             |
 			( "declare" "option" )
 			=> optionDecl { inSetters = false; }
@@ -1096,6 +1100,21 @@ castExpr throws XPathException
 
 comparisonExpr throws XPathException
 :
+	r1:ftContainsExpr (
+		( BEFORE ) => BEFORE^ ftContainsExpr
+		|
+		( AFTER ) => AFTER^ ftContainsExpr
+		| ( ( "eq"^ | "ne"^ | "lt"^ | "le"^ | "gt"^ | "ge"^ ) ftContainsExpr )
+		| ( GT EQ ) => GT^ EQ^ r2:ftContainsExpr
+			{ #comparisonExpr = #(#[GTEQ, ">="], #r1, #r2); }
+		| ( ( EQ^ | NEQ^ | GT^ | LT^ | LTEQ^ ) ftContainsExpr )
+		| ( ( "is"^ | "isnot"^ ) ftContainsExpr )
+	)?
+	;
+
+// XQFT 3.0: FTContainsExpr sits between StringConcatExpr and ComparisonExpr
+ftContainsExpr throws XPathException
+:
 	r1:stringConcatExpr (
 		( "contains" "text" ) => "contains"! "text"! ft:ftSelection ( ( "without" ) => fti:ftIgnoreOption )?
 			{
@@ -1103,20 +1122,11 @@ comparisonExpr throws XPathException
 				#r1.setNextSibling(null);
 				#ft.setNextSibling(null);
 				if (#fti != null) {
-					#comparisonExpr = #(#[FT_CONTAINS, "contains text"], #r1, #ft, #fti);
+					#ftContainsExpr = #(#[FT_CONTAINS, "contains text"], #r1, #ft, #fti);
 				} else {
-					#comparisonExpr = #(#[FT_CONTAINS, "contains text"], #r1, #ft);
+					#ftContainsExpr = #(#[FT_CONTAINS, "contains text"], #r1, #ft);
 				}
 			}
-		|
-		( BEFORE ) => BEFORE^ stringConcatExpr
-		|
-		( AFTER ) => AFTER^ stringConcatExpr
-		| ( ( "eq"^ | "ne"^ | "lt"^ | "le"^ | "gt"^ | "ge"^ ) stringConcatExpr )
-		| ( GT EQ ) => GT^ EQ^ r2:rangeExpr
-			{ #comparisonExpr = #(#[GTEQ, ">="], #r1, #r2); }
-		| ( ( EQ^ | NEQ^ | GT^ | LT^ | LTEQ^ ) stringConcatExpr )
-		| ( ( "is"^ | "isnot"^ ) stringConcatExpr )
 	)?
 	;
 
@@ -2295,6 +2305,15 @@ ftContent
 ftUnit
 :
 	"words" | "sentences" | "paragraphs"
+	;
+
+// === Full Text Option Declaration (prolog) ===
+// XQFT 3.0 §5.2: declare ft-option using <match-options>
+
+ftOptionDecl throws XPathException
+:
+	"declare"! "ft-option"! ftMatchOptions
+	{ #ftOptionDecl = #(#[FT_OPTION_DECL, "ft-option"], #ftOptionDecl); }
 	;
 
 // === Full Text Match Options ===

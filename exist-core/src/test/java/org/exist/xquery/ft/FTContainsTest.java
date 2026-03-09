@@ -71,8 +71,10 @@ public class FTContainsTest {
     }
 
     @Test
-    public void caseSensitiveByDefault() throws Exception {
-        assertFalse(evalBool("'Hello World' contains text 'hello'"));
+    public void caseInsensitiveByDefault() throws Exception {
+        // XQFT 3.0 §4.1: default case mode is implementation-defined.
+        // Our implementation defaults to case-insensitive, matching XQFTTS expectations.
+        assertTrue(evalBool("'Hello World' contains text 'hello'"));
     }
 
     @Test
@@ -243,5 +245,80 @@ public class FTContainsTest {
             "return $w"
         );
         assertEquals(2, result.getItemCount());
+    }
+
+    // === Case modes ===
+
+    @Test
+    public void lowercaseMode() throws Exception {
+        assertTrue(evalBool("'Hello World' contains text 'hello' using lowercase"));
+    }
+
+    @Test
+    public void uppercaseMode() throws Exception {
+        assertTrue(evalBool("'Hello World' contains text 'HELLO' using uppercase"));
+    }
+
+    // === FTTimes ===
+
+    @Test
+    public void timesAtMostZeroOccurrences() throws Exception {
+        // "goodbye" doesn't appear in "hello world", which satisfies "at most 1 times"
+        assertTrue(evalBool("'hello world' contains text 'goodbye' occurs at most 1 times"));
+    }
+
+    @Test
+    public void timesAtMostOneOccurrence() throws Exception {
+        // "hello" appears exactly 1 time, which satisfies "at most 1 times"
+        assertTrue(evalBool("'hello world' contains text 'hello' occurs at most 1 times"));
+    }
+
+    @Test
+    public void timesAtMostExceeded() throws Exception {
+        // "hello" appears 2 times, which does NOT satisfy "at most 1 times"
+        assertFalse(evalBool("'hello hello world' contains text 'hello' occurs at most 1 times"));
+    }
+
+    // === FTOr with empty sequence ===
+
+    @Test
+    public void ftorEmptySequence() throws Exception {
+        // {()} (empty sequence) should match vacuously, so ftor always succeeds
+        assertTrue(evalBool("'hello world' contains text {()} ftor 'goodbye'"));
+    }
+
+    @Test
+    public void ftorEmptySequenceBothMiss() throws Exception {
+        // {()} matches vacuously, so even without a word match, ftor succeeds
+        assertTrue(evalBool("'hello world' contains text {()} ftor 'xyz'"));
+    }
+
+    // === declare ft-option ===
+
+    @Test
+    public void declareFtOption() throws Exception {
+        assertTrue(evalBool(
+            "declare ft-option using case sensitive;\n" +
+            "'Hello World' contains text 'Hello'"
+        ));
+    }
+
+    @Test
+    public void declareFtOptionCaseSensitiveRejects() throws Exception {
+        // With case sensitive declared, 'hello' (lowercase) should NOT match 'Hello'
+        assertFalse(evalBool(
+            "declare ft-option using case sensitive;\n" +
+            "'Hello World' contains text 'hello'"
+        ));
+    }
+
+    // === contains text with comparison ===
+
+    @Test
+    public void containsTextEqComparison() throws Exception {
+        // "contains text" has higher precedence than "eq"
+        assertFalse(evalBool(
+            "'Hello World' contains text 'Hello' eq fn:false()"
+        ));
     }
 }
