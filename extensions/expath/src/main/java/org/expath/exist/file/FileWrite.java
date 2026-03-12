@@ -251,6 +251,13 @@ public class FileWrite extends BasicFunction {
                     throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
                             "Offset must not be negative: " + offset);
                 }
+                if (Files.exists(path)) {
+                    final long fileSize = Files.size(path);
+                    if (offset > fileSize) {
+                        throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
+                                "Offset " + offset + " exceeds file size " + fileSize);
+                    }
+                }
                 try (final RandomAccessFile raf = new RandomAccessFile(path.toFile(), "rw");
                      final InputStream is = binaryValue.getInputStream()) {
                     raf.seek(offset);
