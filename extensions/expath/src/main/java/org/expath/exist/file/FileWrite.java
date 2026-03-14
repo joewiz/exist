@@ -148,7 +148,7 @@ public class FileWrite extends BasicFunction {
         ExpathFileModuleHelper.checkDbaRole(context, this);
 
         final String pathStr = args[0].getStringValue();
-        final Path path = ExpathFileModuleHelper.getPath(pathStr, this);
+        final Path path = ExpathFileModuleHelper.getPath(pathStr, this, context);
 
         checkParentDir(path);
 

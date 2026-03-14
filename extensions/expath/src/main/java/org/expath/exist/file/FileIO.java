@@ -148,7 +148,7 @@ public class FileIO extends BasicFunction {
         ExpathFileModuleHelper.checkDbaRole(context, this);
 
         final String pathStr = args[0].getStringValue();
-        final Path path = ExpathFileModuleHelper.getPath(pathStr, this);
+        final Path path = ExpathFileModuleHelper.getPath(pathStr, this, context);
 
         if (!Files.exists(path)) {
             throw new XPathException(this, ExpathFileErrorCode.NOT_FOUND,
@@ -252,20 +252,61 @@ public class FileIO extends BasicFunction {
 
     /**
      * Reads a file as text with the given encoding.
-     * If fallback is true, invalid characters are replaced with U+FFFD;
-     * otherwise, MalformedInputException is allowed to propagate.
+     * If fallback is true, malformed byte sequences and XML-illegal characters
+     * are replaced with U+FFFD. Otherwise, an IOException is thrown if the file
+     * contains malformed bytes or XML-illegal characters.
      */
     private String readFileText(final Path path, final Charset encoding, final boolean fallback) throws IOException {
+        final String content;
         if (fallback) {
             final java.nio.charset.CharsetDecoder decoder = encoding.newDecoder()
                     .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
                     .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE)
                     .replaceWith("\uFFFD");
             final byte[] bytes = Files.readAllBytes(path);
-            return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+            content = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+            // Replace XML-illegal characters with U+FFFD
+            return replaceXmlIllegalChars(content);
         } else {
-            return Files.readString(path, encoding);
+            content = Files.readString(path, encoding);
+            // Check for XML-illegal characters
+            checkXmlIllegalChars(content);
+            return content;
         }
+    }
+
+    /**
+     * Check if a string contains characters illegal in XML 1.0 and throw IOException if so.
+     * XML 1.0 allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+     */
+    private void checkXmlIllegalChars(final String text) throws IOException {
+        for (int i = 0; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if (c < 0x20 && c != 0x9 && c != 0xA && c != 0xD) {
+                throw new IOException("File contains XML-illegal character U+" +
+                        String.format("%04X", (int) c) + " at position " + i);
+            }
+            if (c >= 0xFFFE) {
+                throw new IOException("File contains XML-illegal character U+" +
+                        String.format("%04X", (int) c) + " at position " + i);
+            }
+        }
+    }
+
+    /**
+     * Replace characters illegal in XML 1.0 with U+FFFD.
+     */
+    private String replaceXmlIllegalChars(final String text) {
+        final StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if ((c < 0x20 && c != 0x9 && c != 0xA && c != 0xD) || c >= 0xFFFE) {
+                sb.append('\uFFFD');
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     private Charset getEncoding(final Sequence[] args, final int index) throws XPathException {

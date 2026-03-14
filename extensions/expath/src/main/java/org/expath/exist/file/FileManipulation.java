@@ -205,7 +205,7 @@ public class FileManipulation extends BasicFunction {
         }
 
         final String pathStr = args[0].getStringValue();
-        final Path path = ExpathFileModuleHelper.getPath(pathStr, this);
+        final Path path = ExpathFileModuleHelper.getPath(pathStr, this, context);
 
         if (isCalledAs("copy")) {
             return copy(path, args);
@@ -235,7 +235,7 @@ public class FileManipulation extends BasicFunction {
             throw new XPathException(this, ExpathFileErrorCode.NOT_FOUND,
                     "Source does not exist: " + source.toAbsolutePath());
         }
-        final Path target = ExpathFileModuleHelper.getPath(args[1].getStringValue(), this);
+        final Path target = ExpathFileModuleHelper.getPath(args[1].getStringValue(), this, context);
 
         // Check target parent directory exists
         final Path targetParent = target.toAbsolutePath().getParent();
@@ -280,7 +280,7 @@ public class FileManipulation extends BasicFunction {
             throw new XPathException(this, ExpathFileErrorCode.NOT_FOUND,
                     "Source does not exist: " + source.toAbsolutePath());
         }
-        final Path target = ExpathFileModuleHelper.getPath(args[1].getStringValue(), this);
+        final Path target = ExpathFileModuleHelper.getPath(args[1].getStringValue(), this, context);
 
         // Check target parent directory exists
         final Path targetParent = target.toAbsolutePath().getParent();
@@ -362,7 +362,7 @@ public class FileManipulation extends BasicFunction {
         final String prefix = args.length > 0 && !args[0].isEmpty() ? args[0].getStringValue() : "";
         final String suffix = args.length > 1 && !args[1].isEmpty() ? args[1].getStringValue() : "";
         final Path dir = args.length > 2 && !args[2].isEmpty()
-                ? ExpathFileModuleHelper.getPath(args[2].getStringValue(), this)
+                ? ExpathFileModuleHelper.getPath(args[2].getStringValue(), this, context)
                 : Paths.get(System.getProperty("java.io.tmpdir"));
 
         if (!Files.isDirectory(dir)) {
@@ -388,7 +388,7 @@ public class FileManipulation extends BasicFunction {
         final String prefix = args.length > 0 && !args[0].isEmpty() ? args[0].getStringValue() : "";
         final String suffix = args.length > 1 && !args[1].isEmpty() ? args[1].getStringValue() : "";
         final Path dir = args.length > 2 && !args[2].isEmpty()
-                ? ExpathFileModuleHelper.getPath(args[2].getStringValue(), this)
+                ? ExpathFileModuleHelper.getPath(args[2].getStringValue(), this, context)
                 : Paths.get(System.getProperty("java.io.tmpdir"));
 
         if (!Files.isDirectory(dir)) {
