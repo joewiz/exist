@@ -217,38 +217,41 @@ public class FileIO extends BasicFunction {
 
         try {
             final long fileSize = Files.size(path);
-            if (offset < 0 || offset > fileSize) {
-                throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
-                        "Offset " + offset + " is out of range for file of size " + fileSize);
-            }
-            if (hasLength && length < 0) {
-                throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
-                        "Length must not be negative: " + length);
-            }
-            if (hasLength && offset + length > fileSize) {
-                throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
-                        "Offset + length exceeds file size: " + (offset + length) + " > " + fileSize);
-            }
+            validateBinaryRange(offset, length, hasLength, fileSize);
 
-            final byte[] data;
-            if (offset == 0 && !hasLength) {
-                // Read entire file
-                data = Files.readAllBytes(path);
-            } else {
-                // Partial read
-                try (final RandomAccessFile raf = new RandomAccessFile(path.toFile(), "r")) {
-                    raf.seek(offset);
-                    final int readLen = hasLength ? (int) length : (int) (fileSize - offset);
-                    data = new byte[readLen];
-                    raf.readFully(data);
-                }
-            }
-
-            // Encode as base64 and return a lightweight BinaryValue with no open handles
+            final byte[] data = readBinaryData(path, offset, hasLength, length, fileSize);
             final String base64 = java.util.Base64.getEncoder().encodeToString(data);
             return new BinaryValueFromBinaryString(this, new Base64BinaryValueType(), base64);
         } catch (final IOException e) {
             throw new XPathException(this, ExpathFileErrorCode.IO_ERROR, e.getMessage());
+        }
+    }
+
+    private void validateBinaryRange(final long offset, final long length, final boolean hasLength, final long fileSize) throws XPathException {
+        if (offset < 0 || offset > fileSize) {
+            throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
+                    "Offset " + offset + " is out of range for file of size " + fileSize);
+        }
+        if (hasLength && length < 0) {
+            throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
+                    "Length must not be negative: " + length);
+        }
+        if (hasLength && offset + length > fileSize) {
+            throw new XPathException(this, ExpathFileErrorCode.OUT_OF_RANGE,
+                    "Offset + length exceeds file size: " + (offset + length) + " > " + fileSize);
+        }
+    }
+
+    private byte[] readBinaryData(final Path path, final long offset, final boolean hasLength, final long length, final long fileSize) throws IOException {
+        if (offset == 0 && !hasLength) {
+            return Files.readAllBytes(path);
+        }
+        try (final RandomAccessFile raf = new RandomAccessFile(path.toFile(), "r")) {
+            raf.seek(offset);
+            final int readLen = hasLength ? (int) length : (int) (fileSize - offset);
+            final byte[] data = new byte[readLen];
+            raf.readFully(data);
+            return data;
         }
     }
 
