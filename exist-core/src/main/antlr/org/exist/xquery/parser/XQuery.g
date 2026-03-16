@@ -2354,6 +2354,25 @@ reservedKeywords returns [String name]
 	"pattern-separator" { name = "pattern-separator"; }
 	|
 	"exponent-separator" { name = "exponent-separator"; }
+	"ascending" { name = "ascending"; }
+	|
+	"descending" { name = "descending"; }
+	|
+	"greatest" { name = "greatest"; }
+	|
+	"least" { name = "least"; }
+	|
+	"satisfies" { name = "satisfies"; }
+	|
+	"schema-attribute" { name = "schema-attribute"; }
+	|
+	"castable" { name = "castable"; }
+	|
+	"idiv" { name = "idiv"; }
+	|
+	"processing-instruction" { name = "processing-instruction"; }
+	|
+	"allowing" { name = "allowing"; }
 	;
 
 
