@@ -68,6 +68,24 @@ declare variable $ftt:FIELD_SAMPLE :=
 declare variable $ftt:COLLECTION_NAME := "lucene-test-ft-match";
 declare variable $ftt:COLLECTION := "/db/" || $ftt:COLLECTION_NAME;
 
+(:~ Config with passage-width and passage-break on the <text> element :)
+declare variable $ftt:PASSAGE_CONFIG :=
+    <collection xmlns="http://exist-db.org/collection-config/1.0">
+        <index xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <lucene>
+                <text qname="para" passage-width="50" passage-break="character"/>
+            </lucene>
+        </index>
+    </collection>;
+
+declare variable $ftt:PASSAGE_DATA :=
+    <doc>
+        <para>The quick brown fox jumps over the lazy dog near the river bank. Birds sing their morning songs while deer roam the forest.</para>
+    </doc>;
+
+declare variable $ftt:PASSAGE_COLLECTION_NAME := "lucene-test-ft-passage-config";
+declare variable $ftt:PASSAGE_COLLECTION := "/db/" || $ftt:PASSAGE_COLLECTION_NAME;
+
 declare
     %test:setUp
 function ftt:setup() {
@@ -78,14 +96,22 @@ function ftt:setup() {
     xmldb:create-collection("/db", $ftt:COLLECTION_NAME),
     xmldb:store($ftt:COLLECTION, "test.xml", $ftt:DATA),
     xmldb:store($ftt:COLLECTION, "testFields.xml", $ftt:FIELD_SAMPLE),
-    xmldb:reindex($ftt:COLLECTION)
+    xmldb:reindex($ftt:COLLECTION),
+
+    xmldb:create-collection("/db/system/config/db", $ftt:PASSAGE_COLLECTION_NAME),
+    xmldb:store("/db/system/config/db/" || $ftt:PASSAGE_COLLECTION_NAME, "collection.xconf", $ftt:PASSAGE_CONFIG),
+    xmldb:create-collection("/db", $ftt:PASSAGE_COLLECTION_NAME),
+    xmldb:store($ftt:PASSAGE_COLLECTION, "passages.xml", $ftt:PASSAGE_DATA),
+    xmldb:reindex($ftt:PASSAGE_COLLECTION)
 };
 
 declare
     %test:tearDown
 function ftt:cleanup() {
     xmldb:remove($ftt:COLLECTION),
-    xmldb:remove("/db/system/config/db/" || $ftt:COLLECTION_NAME)
+    xmldb:remove("/db/system/config/db/" || $ftt:COLLECTION_NAME),
+    xmldb:remove($ftt:PASSAGE_COLLECTION),
+    xmldb:remove("/db/system/config/db/" || $ftt:PASSAGE_COLLECTION_NAME)
 };
 
 (:~
@@ -171,7 +197,6 @@ function ftt:highlight($query as xs:string) {
  : @return xs:integer+ (match-count for string query, match-count for XML query)
  :)
 declare
-    %test:pending("Proximity/slop string vs XML match-count equality, see #833")
     %test:assertEquals(1, 1)
 function ftt:slop-string-vs-xml-equality() {
     let $queries := (
@@ -185,4 +210,87 @@ function ftt:slop-string-vs-xml-equality() {
             $match-count := count($expanded//exist:match)
         return $match-count
     return ($results[1], $results[2])
+};
+
+(:~
+ : ft:highlight returns the full element with exist:match markers.
+ :)
+declare
+    %test:assertTrue
+function ftt:highlight-basic() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "Nixon")]
+    let $highlighted := ft:highlight($hits)
+    return exists($highlighted//exist:match)
+};
+
+(:~
+ : ft:highlight preserves full element structure.
+ :)
+declare
+    %test:assertEquals(2)
+function ftt:highlight-preserves-structure() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "Nixon")]
+    let $highlighted := ft:highlight($hits)
+    return count($highlighted//exist:match)
+};
+
+(:~
+ : ft:get-passages returns exist:passage elements with exist:match children.
+ : Query for "text" in the nested div should produce at least one passage.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-basic() {
+    let $hits := collection($ftt:COLLECTION)//div[ft:query(., "text")]
+    let $passages := ft:get-passages($hits, 3)
+    return exists($passages//exist:match)
+};
+
+(:~
+ : ft:get-passages with max-passages=1 returns at most 1 passage per hit.
+ :)
+declare
+    %test:assertEquals(1)
+function ftt:get-passages-max-one() {
+    let $hit := collection($ftt:COLLECTION)//div[ft:query(., "text")][1]
+    return count(ft:get-passages($hit, 1))
+};
+
+(:~
+ : ft:get-passages passage elements have a score attribute.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-has-score() {
+    let $hit := collection($ftt:COLLECTION)//div[ft:query(., "text")][1]
+    let $passages := ft:get-passages($hit, 1)
+    return every $p in $passages satisfies $p/@score castable as xs:double
+};
+
+(:~
+ : ft:get-passages uses passage-break="character" from collection.xconf
+ : when no inline options are provided. With width=50 and character break,
+ : passages should be ~50 chars each.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-config-break() {
+    let $hit := collection($ftt:PASSAGE_COLLECTION)//para[ft:query(., "fox")][1]
+    let $passages := ft:get-passages($hit, 10)
+    (: With character break at width 50, each passage should be <= 50 chars :)
+    return every $p in $passages satisfies string-length(string($p)) <= 55
+};
+
+(:~
+ : ft:get-passages inline options override collection.xconf defaults.
+ : Config says width=50, character break; inline says width=200, sentence break.
+ :)
+declare
+    %test:assertTrue
+function ftt:get-passages-inline-overrides-config() {
+    let $hit := collection($ftt:PASSAGE_COLLECTION)//para[ft:query(., "fox")][1]
+    (: Override config width=50 with inline width=200 :)
+    let $passages := ft:get-passages($hit, 1, <options width="200" break="sentence"/>)
+    (: With width=200 sentence break, the entire text fits in one passage :)
+    return string-length(string($passages[1])) > 50
 };

@@ -474,6 +474,182 @@ public class LuceneMatchListenerTest {
         }
     }
 
+    /**
+     * Test that proximity/near queries produce correct exist:match markers.
+     * Previously (issue #833), the manual token-matching approach could not
+     * handle proximity queries, resulting in missing highlights.
+     * The MemoryIndex + Matches API approach fixes this for all query types.
+     */
+    @Test
+    public void proximityQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+            assertNotNull(xquery);
+
+            // Proximity query: "quick" near "fox" within 3 words.
+            // The Matches API correctly highlights the entire matching span.
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><near slop=\"3\">quick fox</near></query>)]", null);
+            assertNotNull(seq);
+            assertEquals("Proximity query should find 1 hit", 1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            // The span "quick brown fox" should be highlighted as one match
+            assertTrue("Proximity match should be highlighted: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+
+            // Wildcard query: "qu*" should highlight "quick"
+            seq = xquery.execute(broker,
+                "//para[ft:query(., 'qu*')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            result = queryResult2String(broker, seq);
+            assertTrue("Wildcard 'qu*' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+
+            // Fuzzy query: "quikc~" should highlight "quick"
+            seq = xquery.execute(broker,
+                "//para[ft:query(., 'quikc~')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            result = queryResult2String(broker, seq);
+            assertTrue("Fuzzy 'quikc~' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that phrase queries highlight the entire phrase as one match span.
+     */
+    @Test
+    public void phraseQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., '\"quick brown fox\"')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Phrase should highlight as single span: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that regex queries produce correct highlights.
+     */
+    @Test
+    public void regexQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Regex query via XML syntax: /qu.*k/ should match "quick"
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><regex>qu.*k</regex></query>)]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Regex 'qu.*k' should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that prefix queries produce correct highlights.
+     */
+    @Test
+    public void prefixQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Prefix query: "bro*" should match "brown"
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., 'bro*')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Prefix 'bro*' should highlight 'brown': " + result,
+                    result.contains(MATCH_START + "brown" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test boolean combinations with multiple match spans.
+     */
+    @Test
+    public void booleanQueryHighlighting() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Boolean: "quick AND lazy" should highlight both terms
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., '+quick +lazy')]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            assertTrue("Boolean should highlight 'quick': " + result,
+                    result.contains(MATCH_START + "quick" + MATCH_END));
+            assertTrue("Boolean should highlight 'lazy': " + result,
+                    result.contains(MATCH_START + "lazy" + MATCH_END));
+            // "brown" should NOT be highlighted
+            assertFalse("'brown' should not be highlighted: " + result,
+                    result.contains(MATCH_START + "brown" + MATCH_END));
+        }
+    }
+
+    /**
+     * Test that overlapping match spans are merged into one exist:match.
+     * For example, a boolean query "quick OR quick brown fox" would produce
+     * two overlapping spans: [quick] and [quick brown fox]. These should merge.
+     */
+    @Test
+    public void overlappingMatchesMerged() throws EXistException, PermissionDeniedException, XPathException, SAXException, CollectionConfigurationException, LockException, IOException {
+        final String xml = "<root><para>The quick brown fox jumps over the lazy dog</para></root>";
+        configureAndStore(CONF2, xml);
+
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Boolean OR of a term + phrase that includes the term.
+            // This should produce merged highlights, not broken/nested ones.
+            Sequence seq = xquery.execute(broker,
+                "//para[ft:query(., <query><bool>" +
+                "<term>quick</term>" +
+                "<phrase>quick brown fox</phrase>" +
+                "</bool></query>)]", null);
+            assertNotNull(seq);
+            assertEquals(1, seq.getItemCount());
+            String result = queryResult2String(broker, seq);
+            // Should have "quick brown fox" as one merged match, not nested/duplicated
+            assertTrue("Overlapping matches should merge: " + result,
+                    result.contains(MATCH_START + "quick brown fox" + MATCH_END));
+            // Should NOT have a separate match for just "quick" inside the phrase span
+            assertFalse("Should not have separate match for 'quick' within phrase: " + result,
+                    result.contains(MATCH_END + " " + MATCH_START + "brown"));
+        }
+    }
+
     @ClassRule
     public static final ExistEmbeddedServer existEmbeddedServer = new ExistEmbeddedServer(true, true);
 
