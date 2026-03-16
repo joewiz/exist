@@ -21,6 +21,8 @@
  */
 package org.exist.xquery.modules.range;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.exist.collections.Collection;
 import org.exist.dom.persistent.DocumentSet;
 import org.exist.dom.persistent.NodeProxy;
@@ -44,7 +46,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-public class Lookup extends Function implements Optimizable {
+public class Lookup extends Function implements Optimizable, IndexUseReporter {
+
+    private static final Logger LOG = LogManager.getLogger(Lookup.class);
 
     private final static SequenceType[] PARAMETER_TYPE = new SequenceType[] {
             new FunctionParameterSequenceType("nodes", Type.NODE, Cardinality.ZERO_OR_MORE,
@@ -529,5 +533,10 @@ public class Lookup extends Function implements Optimizable {
 
     public int returnsType() {
         return Type.NODE;
+    }
+
+    @Override
+    public boolean hasUsedIndex() {
+        return true; // Lookup is only used when range index optimization was applied
     }
 }

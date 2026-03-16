@@ -29,12 +29,17 @@ import org.apache.lucene.queryparser.flexible.standard.CommonQueryParserConfigur
 import org.apache.lucene.search.MultiTermQuery;
 import org.exist.numbering.NodeId;
 import org.exist.stax.ExtendedXMLStreamReader;
+import org.exist.util.Configuration;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
 import org.exist.xquery.functions.array.ArrayType;
 import org.exist.xquery.functions.map.AbstractMapType;
-import org.exist.xquery.value.*;
+import org.exist.xquery.value.AtomicValue;
+import org.exist.xquery.value.Sequence;
+import org.exist.xquery.value.SequenceIterator;
+import org.exist.xquery.value.Type;
+import org.exist.xquery.value.NodeValue;
 
 import javax.annotation.Nullable;
 import javax.xml.stream.XMLStreamException;
@@ -215,7 +220,7 @@ public class QueryOptions {
                 }
                 break;
             case OPTION_LEADING_WILDCARD:
-                allowLeadingWildcard = "yes".equalsIgnoreCase(value);
+                allowLeadingWildcard = Configuration.parseBoolean(value, false);
                 break;
             case OPTION_PHRASE_SLOP:
                 try {
@@ -225,10 +230,10 @@ public class QueryOptions {
                 }
                 break;
             case OPTION_FILTER_REWRITE:
-                filterRewrite = "yes".equalsIgnoreCase(value);
+                filterRewrite = Configuration.parseBoolean(value, false);
                 break;
             case OPTION_LOWERCASE_EXPANDED_TERMS:
-                lowercaseExpandedTerms = "yes".equalsIgnoreCase(value);
+                lowercaseExpandedTerms = Configuration.parseBoolean(value, false);
                 break;
             case OPTION_QUERY_ANALYZER_ID:
                 queryAnalyzerId = value;
@@ -253,11 +258,11 @@ public class QueryOptions {
             parser.setAllowLeadingWildcard(true);
         phraseSlop.ifPresent(parser::setPhraseSlop);
         if (filterRewrite)
-            parser.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE);
+            parser.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_REWRITE);
         else
-            parser.setMultiTermRewriteMethod(MultiTermQuery.CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE);
+            parser.setMultiTermRewriteMethod(MultiTermQuery.SCORING_BOOLEAN_REWRITE);
         if (lowercaseExpandedTerms) {
-            parser.setLowercaseExpandedTerms(lowercaseExpandedTerms);
+            // parser.setLowercaseExpandedTerms(lowercaseExpandedTerms);
         }
     }
 

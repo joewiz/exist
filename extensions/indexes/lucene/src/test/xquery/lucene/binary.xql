@@ -35,40 +35,42 @@ declare variable $luct:INDEX_DATA_SUBCOLL :=
         <field name="title">Only admin can read this</field>
     </doc>;
     
+declare variable $luct:COLLECTION := "/db/lucene-test-binary";
+
 declare
     %test:setUp
 function luct:setup() {
-    xmldb:create-collection("/db", "lucenetest"),
-    xmldb:store("/db/lucenetest", "test.txt", "Lorem ipsum", "text/text"),
-    sm:chmod(xs:anyURI("/db/lucenetest/test.txt"), "rw-------"),
-    ft:index("/db/lucenetest/test.txt", $luct:INDEX_DATA),
-    
-    xmldb:create-collection("/db/lucenetest", "sub"),
-    sm:chmod(xs:anyURI("/db/lucenetest/sub"), "rwx------"),
-    xmldb:store("/db/lucenetest/sub", "test.txt", "Lorem ipsum", "text/text"),
-    sm:chmod(xs:anyURI("/db/lucenetest/sub/test.txt"), "rw-rw-rw-"),
-    ft:index("/db/lucenetest/sub/test.txt", $luct:INDEX_DATA_SUBCOLL)
+    ( xmldb:create-collection("/db", "lucene-test-binary"),
+      xmldb:store($luct:COLLECTION, "test.txt", "Lorem ipsum", "text/text"),
+      sm:chmod(xs:anyURI($luct:COLLECTION || "/test.txt"), "rw-------"),
+      ft:index($luct:COLLECTION || "/test.txt", $luct:INDEX_DATA),
+
+      xmldb:create-collection($luct:COLLECTION, "sub"),
+      sm:chmod(xs:anyURI($luct:COLLECTION || "/sub"), "rwx------"),
+      xmldb:store($luct:COLLECTION || "/sub", "test.txt", "Lorem ipsum", "text/text"),
+      sm:chmod(xs:anyURI($luct:COLLECTION || "/sub/test.txt"), "rw-rw-rw-"),
+      ft:index($luct:COLLECTION || "/sub/test.txt", $luct:INDEX_DATA_SUBCOLL) )
 };
 
 declare
     %test:tearDown
 function luct:cleanup() {
-    xmldb:remove("/db/lucenetest")
+    xmldb:remove($luct:COLLECTION)
 };
 
 declare
     %test:assertEmpty
 function luct:check-visibility-fail() {
     system:as-user("guest", "guest", 
-        ft:search("/db/lucenetest/", "title:ipsum")/search/@uri/string()
+        ft:search("/db/lucene-test-binary/", "title:ipsum")/search/@uri/string()
     )
 };
 
 declare
-    %test:assertEquals("/db/lucenetest/test.txt")
+    %test:assertEquals("/db/lucene-test-binary/test.txt")
 function luct:check-visibility-pass() {
     system:as-user("admin", "", 
-        ft:search("/db/lucenetest/", "title:ipsum")/search/@uri/string()
+        ft:search("/db/lucene-test-binary/", "title:ipsum")/search/@uri/string()
     )
 };
 
@@ -76,22 +78,22 @@ declare
     %test:assertEmpty
 function luct:check-visibility-collection-fail() {
     system:as-user("guest", "guest", 
-        ft:search("/db/lucenetest/sub/", "title:admin")/search/@uri/string()
+        ft:search("/db/lucene-test-binary/sub/", "title:admin")/search/@uri/string()
     )
 };
 
 declare
-    %test:assertEquals("/db/lucenetest/sub/test.txt")
+    %test:assertEquals("/db/lucene-test-binary/sub/test.txt")
 function luct:check-visibility-collection-pass() {
     system:as-user("admin", "", 
-        ft:search("/db/lucenetest/sub/", "title:admin")/search/@uri/string()
+        ft:search("/db/lucene-test-binary/sub/", "title:admin")/search/@uri/string()
     )
 };
 
 declare
-    %test:assertEquals("/db/lucenetest/test.txt")
+    %test:assertEquals("/db/lucene-test-binary/test.txt")
 function luct:check-leading-wildcard() {
     system:as-user("admin", "",
-        ft:search("/db/lucenetest/", "title:*rem", (), <options><leading-wildcard>yes</leading-wildcard></options>)/search/@uri/string()
+        ft:search("/db/lucene-test-binary/", "title:*rem", (), <options><leading-wildcard>yes</leading-wildcard></options>)/search/@uri/string()
     )
 };
