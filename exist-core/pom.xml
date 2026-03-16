@@ -315,6 +315,10 @@
             <artifactId>nekohtml</artifactId>
             <version>${nekohtml.version}</version>
             <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>de.bottlecaps</groupId>
+            <artifactId>markup-blitz</artifactId>
             <exclusions>
                 <exclusion>
                     <groupId>xerces</groupId>

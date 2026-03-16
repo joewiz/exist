@@ -25,7 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.sf.saxon.Configuration;
-import net.sf.saxon.om.Item;
+import net.sf.saxon.str.StringView;
 import net.sf.saxon.regex.RegexIterator;
 import net.sf.saxon.regex.RegularExpression;
 import org.exist.dom.QName;
@@ -126,15 +126,15 @@ public class FunAnalyzeString extends BasicFunction {
         final List<String> warnings = new ArrayList<>(1);
 
         try {
-            final RegularExpression regularExpression = config.compileRegularExpression(pattern, flags, "XP30", warnings);
-            if (regularExpression.matches("")) {
+            final RegularExpression regularExpression = config.compileRegularExpression(StringView.of(pattern), flags, "XP30", warnings);
+            if (regularExpression.matches(StringView.of(""))) {
                 throw new XPathException(this, ErrorCodes.FORX0003, "regular expression could match empty string");
             }
 
             //TODO(AR) cache the regular expression... might be possible through Saxon config
 
-            final RegexIterator regexIterator = regularExpression.analyze(input);
-            Item item;
+            final RegexIterator regexIterator = regularExpression.analyze(StringView.of(input));
+            net.sf.saxon.value.StringValue item;
             while ((item = regexIterator.next()) != null) {
                 if (regexIterator.isMatching()) {
                     match(builder, regexIterator);
@@ -147,7 +147,7 @@ public class FunAnalyzeString extends BasicFunction {
                 LOG.warn(warning);
             }
         } catch (final net.sf.saxon.trans.XPathException e) {
-            switch (e.getErrorCodeLocalPart()) {
+            switch (e.getErrorCodeQName().getLocalPart()) {
                 case "FORX0001" -> throw new XPathException(this, ErrorCodes.FORX0001, e.getMessage());
                 case "FORX0002" -> throw new XPathException(this, ErrorCodes.FORX0002, e.getMessage());
                 case "FORX0003" -> throw new XPathException(this, ErrorCodes.FORX0003, e.getMessage());
@@ -163,14 +163,14 @@ public class FunAnalyzeString extends BasicFunction {
         // When running in the normal eXist server (or on the next branch with full Saxon),
         // the proxy delegates to Saxon's own group traversal logic.
         try {
-            final Class<?> handlerClass = Class.forName("net.sf.saxon.regex.RegexIterator$MatchHandler");
+            final Class<?> handlerClass = Class.forName("net.sf.saxon.regex.RegexMatchHandler");
             final Object handler = java.lang.reflect.Proxy.newProxyInstance(
                     handlerClass.getClassLoader(),
                     new Class<?>[]{ handlerClass },
                     (proxy, method, args) -> {
                         switch (method.getName()) {
                             case "characters":
-                                builder.characters((CharSequence) args[0]);
+                                builder.characters(args[0].toString());
                                 break;
                             case "onGroupStart":
                                 final AttributesImpl attrs = new AttributesImpl();
@@ -189,21 +189,21 @@ public class FunAnalyzeString extends BasicFunction {
             processMethod.invoke(regexIterator, handler);
         } catch (final ClassNotFoundException e) {
             // MatchHandler unavailable — output match text without group decomposition
-            builder.characters(regexIterator.getRegexGroup(0));
+            builder.characters(regexIterator.getRegexGroup(0).toString());
         } catch (final java.lang.reflect.InvocationTargetException e) {
             if (e.getCause() instanceof net.sf.saxon.trans.XPathException) {
                 throw (net.sf.saxon.trans.XPathException) e.getCause();
             }
-            builder.characters(regexIterator.getRegexGroup(0));
+            builder.characters(regexIterator.getRegexGroup(0).toString());
         } catch (final Exception e) {
-            builder.characters(regexIterator.getRegexGroup(0));
+            builder.characters(regexIterator.getRegexGroup(0).toString());
         }
         builder.endElement();
     }
 
-    private void nonMatch(final MemTreeBuilder builder, final Item item) {
+    private void nonMatch(final MemTreeBuilder builder, final net.sf.saxon.value.StringValue item) {
         builder.startElement(QN_NON_MATCH, null);
-        builder.characters(item.getStringValueCS());
+        builder.characters(item.getStringValue());
         builder.endElement();
     }
 }
