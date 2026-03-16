@@ -228,6 +228,29 @@ imaginaryTokenDefinitions
 	FT_WEIGHT
 	FT_SCORE_VAR
 	FT_OPTION_DECL
+	// XQuery 4.0
+	FOCUS_FUNCTION
+	KEYWORD_ARG
+	FOR_MEMBER
+	STRING_TEMPLATE
+	FOR_KEY
+	FOR_VALUE
+	FOR_KEY_VALUE
+	VALUE_VAR
+	SWITCH_BOOLEAN
+	MAPPING_ARROW
+	FILTER_AM
+	QNAME_LITERAL
+	PARAM_DEFAULT
+	CHOICE_TYPE
+	ENUM_TYPE
+	TERNARY
+	SEQ_DESTRUCTURE
+	ARRAY_DESTRUCTURE
+	MAP_DESTRUCTURE
+	DESTRUCTURE_VAR_TYPE
+	RECORD_TEST
+	RECORD_FIELD
 	;
 
 // === XPointer ===
@@ -321,7 +344,7 @@ prolog throws XPathException
 			( "declare" "variable" )
 			=> varDeclUp { inSetters = false; }
 			|
-            ( "declare" "context" "item" )
+            ( "declare" "context" ("item" | "value") )
             => contextItemDeclUp { inSetters = false; }
 			|
 			( "declare" MOD )
@@ -514,7 +537,7 @@ contextItemDeclUp! throws XPathException
 
 contextItemDecl [XQueryAST decl] throws XPathException
 :
-	"context"! "item"! ( typeDeclaration )?
+	"context"! ( "item"! | "value"! ) ( typeDeclaration )?
 	(
 	    COLON! EQ! e1:expr
 	    |
@@ -537,8 +560,20 @@ annotation
 	String name= null;
 }
 :
-	MOD! name=eqName! (LPAREN! literal (COMMA! literal)* RPAREN!)?
+	MOD! name=eqName! (LPAREN! annotationLiteral (COMMA! annotationLiteral)* RPAREN!)?
         { #annotation= #(#[ANNOT_DECL, name], #annotation); }
+    ;
+
+// XQ4: annotation parameters support literals, true(), false(), and negated numeric literals
+// Note: true()/false() must be matched via NCNAME + semantic predicate, NOT as "true"/"false" keywords.
+// Using quoted keyword syntax would register them in testLiterals, breaking true()/false() function
+// calls throughout the grammar (ANTLR 2 converts all NCNAMEs matching keywords to LITERAL_xxx tokens).
+annotationLiteral
+:
+    literal
+    | ( { LT(1).getText().equals("true") || LT(1).getText().equals("false") }? b:NCNAME LPAREN! RPAREN!
+        { #annotationLiteral = #[STRING_LITERAL, #b.getText()]; #b = null; } )
+    | MINUS! n:numericLiteral { #n.setText("-" + #n.getText()); #annotationLiteral = #n; }
     ;
 
 eqName returns [String name]
@@ -631,7 +666,10 @@ param throws XPathException
 { String varName= null; }
 :
 	DOLLAR! varName=eqName ( t:typeDeclaration )?
-	{ #param= #(#[VARIABLE_BINDING, varName], #t); }
+	( ( COLON EQ ) => COLON! EQ! pd:exprSingle!
+	  { #pd = #(#[PARAM_DEFAULT, "param-default"], #pd); }
+	)?
+	{ #param= #(#[VARIABLE_BINDING, varName], #t, #pd); }
 	;
 
 uriList throws XPathException
@@ -669,9 +707,15 @@ itemType throws XPathException
 	|
 	( "function" LPAREN ) => functionTest
 	|
+	( "fn" LPAREN ) => fnShorthandFunctionTest
+	|
 	( "map" LPAREN ) => mapType
 	|
 	( "array" LPAREN ) => arrayType
+	|
+	( "record" LPAREN ) => recordType
+	|
+	( "enum" LPAREN ) => enumType
 	|
 	( LPAREN ) => parenthesizedItemType
 	|
@@ -681,13 +725,51 @@ itemType throws XPathException
 	;
 
 parenthesizedItemType throws XPathException
+{ int count = 0; }
 :
-	LPAREN! itemType RPAREN!
+	LPAREN! itemType { count++; } ( UNION! itemType { count++; } )* RPAREN!
+	{
+		if (count > 1) {
+			#parenthesizedItemType = #(#[CHOICE_TYPE, "choice-type"], #parenthesizedItemType);
+		}
+	}
+	;
+
+enumType throws XPathException
+{ List enumValues = new ArrayList(); }
+:
+	e:"enum"! LPAREN!
+		s1:STRING_LITERAL! { enumValues.add(s1.getText()); }
+		( COMMA! s2:STRING_LITERAL! { enumValues.add(s2.getText()); } )*
+	RPAREN!
+	{
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < enumValues.size(); i++) {
+			if (i > 0) sb.append(",");
+			sb.append(enumValues.get(i));
+		}
+		#enumType = #(#[ENUM_TYPE, sb.toString()]);
+		#enumType.copyLexInfo(#e);
+	}
 	;
 
 singleType throws XPathException
+{ int count = 0; }
 :
-	atomicType ( QUESTION )?
+	(
+		( "enum" LPAREN ) => enumType ( QUESTION )?
+		|
+		( LPAREN ) =>
+		LPAREN! atomicType { count++; } ( UNION! atomicType { count++; } )* RPAREN!
+		{
+			if (count > 1) {
+				#singleType = #(#[CHOICE_TYPE, "choice-type"], #singleType);
+			}
+		}
+		( QUESTION )?
+		|
+		atomicType ( QUESTION )?
+	)
 	;
 
 atomicType throws XPathException
@@ -717,6 +799,26 @@ typedFunctionTest throws XPathException
 :
 	"function"! LPAREN! (sequenceType (COMMA! sequenceType)*)? RPAREN! "as" sequenceType
 	{ #typedFunctionTest = #(#[FUNCTION_TEST, "anyFunction"], #typedFunctionTest); }
+	;
+
+// XQ4: fn(...) as shorthand for function(...) in type positions
+fnShorthandFunctionTest throws XPathException
+:
+	( "fn" LPAREN STAR RPAREN) => fnShorthandAnyFunctionTest
+	|
+	fnShorthandTypedFunctionTest
+	;
+
+fnShorthandAnyFunctionTest throws XPathException
+:
+	"fn"! LPAREN! s2:STAR RPAREN!
+	{ #fnShorthandAnyFunctionTest = #(#[FUNCTION_TEST, "anyFunction"], #s2); }
+	;
+
+fnShorthandTypedFunctionTest throws XPathException
+:
+	"fn"! LPAREN! (sequenceType (COMMA! sequenceType)*)? RPAREN! "as" sequenceType
+	{ #fnShorthandTypedFunctionTest = #(#[FUNCTION_TEST, "anyFunction"], #fnShorthandTypedFunctionTest); }
 	;
 
 mapType throws XPathException
@@ -767,6 +869,50 @@ arrayTypeTest throws XPathException
 	}
 	;
 
+recordType throws XPathException
+:
+	( "record" LPAREN STAR ) => anyRecordTypeTest
+	|
+	( "record" LPAREN RPAREN ) => emptyRecordTypeTest
+	|
+	recordTypeTest
+	;
+
+anyRecordTypeTest throws XPathException
+:
+	m:"record"! LPAREN! s:STAR RPAREN!
+	{
+		#anyRecordTypeTest = #(#[RECORD_TEST, "record"], #s);
+		#anyRecordTypeTest.copyLexInfo(#m);
+	}
+	;
+
+emptyRecordTypeTest throws XPathException
+:
+	m:"record"! LPAREN! RPAREN!
+	{
+		#emptyRecordTypeTest = #(#[RECORD_TEST, "record"]);
+		#emptyRecordTypeTest.copyLexInfo(#m);
+	}
+	;
+
+recordTypeTest throws XPathException
+:
+	m:"record"! LPAREN! recordFieldDecl ( COMMA! ( STAR | recordFieldDecl ) )* RPAREN!
+	{
+		#recordTypeTest = #(#[RECORD_TEST, "record"], #recordTypeTest);
+	}
+	;
+
+recordFieldDecl throws XPathException
+{ String fieldName = null; }
+:
+	fieldName=ncnameOrKeyword! ( QUESTION )? ( "as"! sequenceType )?
+	{
+		#recordFieldDecl = #(#[RECORD_FIELD, fieldName], #recordFieldDecl);
+	}
+	;
+
 // === Expressions ===
 
 queryBody throws XPathException: expr ;
@@ -783,7 +929,7 @@ expr throws XPathException
 
 exprSingle throws XPathException
 :
-	( ( "for" | "let" ) ("tumbling" | "sliding" | "score" | DOLLAR ) ) => flworExpr
+	( ( "for" | "let" ) ("tumbling" | "sliding" | "score" | "member" | "key" | "value" | DOLLAR) ) => flworExpr
 	| ( "try" LCURLY ) => tryCatchExpr
 	| ( ( "some" | "every" ) DOLLAR ) => quantifiedExpr
 	| ( "if" LPAREN ) => ifExpr
@@ -893,11 +1039,14 @@ xqufCopyBinding throws XPathException
 	}
 	;
 
-// === try/catch ===
+// === try/catch/finally ===
 tryCatchExpr throws XPathException
 :
 	"try"^ LCURLY! tryTargetExpr RCURLY!
-    (catchClause)+
+	(
+		(catchClause)+ (finallyClause)?
+		| finallyClause
+	)
 	;
 
 tryTargetExpr throws XPathException
@@ -908,6 +1057,11 @@ tryTargetExpr throws XPathException
 catchClause throws XPathException
 :
 	"catch"^ catchErrorList (catchVars)? LCURLY! expr RCURLY!
+	;
+
+finallyClause throws XPathException
+:
+	"finally"^ LCURLY! (expr)? RCURLY!
 	;
 
 catchErrorList throws XPathException
@@ -950,19 +1104,24 @@ flworExpr throws XPathException
 
 initialClause throws XPathException
 :
-    ( ( "for" DOLLAR ) => forClause
+    ( ( "for" ( "member" | "key" | "value" | DOLLAR ) ) => forClause
     | ( "for" ( "tumbling" | "sliding" ) ) => windowClause
     | letClause )
     ;
 
 intermediateClause throws XPathException
 :
-    ( initialClause | whereClause | groupByClause | orderByClause | countClause )
+    ( initialClause | whereClause | whileClause | groupByClause | orderByClause | countClause )
     ;
 
 whereClause throws XPathException
 :
 	"where"^ exprSingle
+	;
+
+whileClause throws XPathException
+:
+	"while"^ exprSingle
 	;
 
 countClause throws XPathException
@@ -974,7 +1133,77 @@ countClause throws XPathException
 
 forClause throws XPathException
 :
-	"for"^ inVarBinding ( COMMA! inVarBinding )*
+	"for"^ forBinding ( COMMA! forBinding )*
+	;
+
+forBinding throws XPathException
+:
+	( "member" ) => memberVarBinding
+	| ( "key" ) => keyVarBinding
+	| ( "value" ) => valueVarBinding
+	| inVarBinding
+	;
+
+memberVarBinding throws XPathException
+{ String varName; }
+:
+	"member"! DOLLAR! varName=v:varName! ( typeDeclaration )?
+	( positionalVar )?
+	"in"! exprSingle
+	{
+		#memberVarBinding= #(#[VARIABLE_BINDING, varName], #memberVarBinding);
+		#memberVarBinding.copyLexInfo(#v);
+		#memberVarBinding= #(#[FOR_MEMBER, null], #memberVarBinding);
+	}
+	;
+
+keyVarBinding throws XPathException
+{ String varName; }
+:
+	"key"! DOLLAR! varName=v:varName! ( typeDeclaration )?
+	(
+		( "value" DOLLAR ) => keyValueVarPart
+	)?
+	( positionalVar )?
+	"in"! exprSingle
+	{
+		#keyVarBinding= #(#[VARIABLE_BINDING, varName], #keyVarBinding);
+		#keyVarBinding.copyLexInfo(#v);
+		// Check if we have a value variable (keyValueVarPart was matched)
+		boolean hasValueVar = false;
+		AST child = #keyVarBinding.getFirstChild();
+		while (child != null) {
+			if (child.getType() == VALUE_VAR) { hasValueVar = true; break; }
+			child = child.getNextSibling();
+		}
+		if (hasValueVar) {
+			#keyVarBinding= #(#[FOR_KEY_VALUE, null], #keyVarBinding);
+		} else {
+			#keyVarBinding= #(#[FOR_KEY, null], #keyVarBinding);
+		}
+	}
+	;
+
+keyValueVarPart throws XPathException
+{ String valueVarName; }
+:
+	"value"! DOLLAR! valueVarName=varName! ( typeDeclaration )?
+	{
+		#keyValueVarPart = #(#[VALUE_VAR, valueVarName], #keyValueVarPart);
+	}
+	;
+
+valueVarBinding throws XPathException
+{ String varName; }
+:
+	"value"! DOLLAR! varName=v:varName! ( typeDeclaration )?
+	( positionalVar )?
+	"in"! exprSingle
+	{
+		#valueVarBinding= #(#[VARIABLE_BINDING, varName], #valueVarBinding);
+		#valueVarBinding.copyLexInfo(#v);
+		#valueVarBinding= #(#[FOR_VALUE, null], #valueVarBinding);
+	}
 	;
 
 letClause throws XPathException
@@ -1047,6 +1276,16 @@ windowVars throws XPathException
 letVarBinding throws XPathException
 { String varName; }
 :
+	// XQ4: sequence destructuring - let $($x, $y) := expr
+	( DOLLAR LPAREN ) => letDestructureSeq
+	|
+	// XQ4: array destructuring - let $[$x, $y] := expr
+	( DOLLAR LPPAREN ) => letDestructureArray
+	|
+	// XQ4: map destructuring - let ${$x, $y} := expr
+	( DOLLAR LCURLY ) => letDestructureMap
+	|
+	// Standard let binding
 	DOLLAR! varName=v:varName! ( typeDeclaration )?
 	COLON! EQ! exprSingle
 	{
@@ -1071,6 +1310,67 @@ ftScoreVarBinding throws XPathException
 	{
 		#ftScoreVarBinding= #(#[VARIABLE_BINDING, varName], #[FT_SCORE_VAR, "score"], #ftScoreVarBinding);
 		#ftScoreVarBinding.copyLexInfo(#v);
+	}
+	;
+
+// XQ4: Per-variable type annotations: "x+,y" means $x has a DESTRUCTURE_VAR_TYPE child, $y does not
+letDestructureSeq throws XPathException
+{ String vn;
+  StringBuilder sb = new StringBuilder(); }
+:
+	d:DOLLAR! LPAREN!
+		DOLLAR! vn=varName! { sb.append(vn); }
+		( destructureVarType { sb.append("+"); } )?
+		( COMMA! DOLLAR! vn=varName! { sb.append(",").append(vn); }
+		  ( destructureVarType { sb.append("+"); } )? )*
+	RPAREN! ( typeDeclaration )?
+	COLON! EQ! exprSingle
+	{
+		#letDestructureSeq = #(#[SEQ_DESTRUCTURE, sb.toString()], #letDestructureSeq);
+		#letDestructureSeq.copyLexInfo(#d);
+	}
+	;
+
+letDestructureArray throws XPathException
+{ String vn;
+  StringBuilder sb = new StringBuilder(); }
+:
+	d:DOLLAR! LPPAREN!
+		DOLLAR! vn=varName! { sb.append(vn); }
+		( destructureVarType { sb.append("+"); } )?
+		( COMMA! DOLLAR! vn=varName! { sb.append(",").append(vn); }
+		  ( destructureVarType { sb.append("+"); } )? )*
+	RPPAREN! ( typeDeclaration )?
+	COLON! EQ! exprSingle
+	{
+		#letDestructureArray = #(#[ARRAY_DESTRUCTURE, sb.toString()], #letDestructureArray);
+		#letDestructureArray.copyLexInfo(#d);
+	}
+	;
+
+letDestructureMap throws XPathException
+{ String vn;
+  StringBuilder sb = new StringBuilder(); }
+:
+	d:DOLLAR! LCURLY!
+		DOLLAR! vn=varName! { sb.append(vn); }
+		( destructureVarType { sb.append("+"); } )?
+		( COMMA! DOLLAR! vn=varName! { sb.append(",").append(vn); }
+		  ( destructureVarType { sb.append("+"); } )? )*
+	RCURLY! ( typeDeclaration )?
+	COLON! EQ! exprSingle
+	{
+		#letDestructureMap = #(#[MAP_DESTRUCTURE, sb.toString()], #letDestructureMap);
+		#letDestructureMap.copyLexInfo(#d);
+	}
+	;
+
+// Helper: wraps typeDeclaration in DESTRUCTURE_VAR_TYPE imaginary token
+destructureVarType throws XPathException
+:
+	td:typeDeclaration
+	{
+		#destructureVarType = #(#[DESTRUCTURE_VAR_TYPE, "vartype"], #td);
 	}
 	;
 
@@ -1135,9 +1435,26 @@ quantifiedInVarBinding throws XPathException
 
 switchExpr throws XPathException
 :
-	"switch"^ LPAREN! expr RPAREN!
-	( switchCaseClause )+
-	"default" "return"! exprSingle
+	"switch"^ LPAREN!
+	(
+	    // XQ4 omitted comparand - boolean mode: switch () { case boolExpr return ... }
+	    ( RPAREN ) =>
+	    RPAREN! switchBooleanMarker
+	|
+	    expr RPAREN!
+	)
+	(
+	    // XQ4 braced syntax: switch (...) { case ... default ... }
+	    ( LCURLY "case" ) =>
+	    LCURLY! ( switchCaseClause )+ "default" "return"! exprSingle RCURLY!
+	|
+	    ( switchCaseClause )+ "default" "return"! exprSingle
+	)
+	;
+
+switchBooleanMarker
+:
+	{ #switchBooleanMarker = #(#[SWITCH_BOOLEAN, "switch-boolean"]); }
 	;
 
 switchCaseClause throws XPathException
@@ -1150,8 +1467,13 @@ typeswitchExpr throws XPathException
 { String varName; }
 :
 	"typeswitch"^ LPAREN! expr RPAREN!
-	( caseClause )+
-	"default" ( defaultVar )? "return"! exprSingle
+	(
+	    // XQ4 braced syntax: typeswitch (...) { case ... default ... }
+	    ( LCURLY "case" ) =>
+	    LCURLY! ( caseClause )+ "default" ( defaultVar )? "return"! exprSingle RCURLY!
+	|
+	    ( caseClause )+ "default" ( defaultVar )? "return"! exprSingle
+	)
 	;
 
 caseClause throws XPathException
@@ -1186,12 +1508,28 @@ defaultVar throws XPathException
 	;
 
 ifExpr throws XPathException
+{
+    org.exist.xquery.parser.XQueryAST emptyNode = null;
+}
 :
-    "if"^ LPAREN! expr RPAREN! t:"then"! thenExpr:exprSingle e:"else"! elseExpr:exprSingle
-    {
-        #thenExpr.copyLexInfo(#t);
-        #elseExpr.copyLexInfo(#e);
-    }
+    "if"^ LPAREN! expr RPAREN!
+    (
+        // Traditional: if (cond) then expr else expr
+        ( "then" ) =>
+        t:"then"! thenExpr:exprSingle e:"else"! elseExpr:exprSingle
+        {
+            #thenExpr.copyLexInfo(#t);
+            #elseExpr.copyLexInfo(#e);
+        }
+    |
+        // XQ4 Braced: if (cond) { expr }   (no else clause; returns empty sequence if false)
+        LCURLY! bracedThenExpr:expr RCURLY!
+        {
+            // Synthesize empty sequence as implicit else branch
+            emptyNode = (org.exist.xquery.parser.XQueryAST) #(#[PARENTHESIZED, "()"]);
+            #ifExpr.addChild(emptyNode);
+        }
+    )
     ;
 
 // === Logical ===
@@ -1199,6 +1537,12 @@ ifExpr throws XPathException
 orExpr throws XPathException
 :
 	andExpr ( "or"^ andExpr )*
+	(
+		DOUBLE_QUESTION! exprSingle DOUBLE_BANG! exprSingle
+		{
+			#orExpr = #(#[TERNARY, "ternary"], #orExpr);
+		}
+	)?
 	;
 
 andExpr throws XPathException
@@ -1223,7 +1567,12 @@ castableExpr throws XPathException
 
 castExpr throws XPathException
 :
-	arrowExpr ( "cast"^ "as"! singleType )?
+	pipelineExpr ( "cast"^ "as"! singleType )?
+	;
+
+pipelineExpr throws XPathException
+:
+	arrowExpr ( PIPELINE_OP^ arrowExpr )*
 	;
 
 comparisonExpr throws XPathException
@@ -1240,10 +1589,10 @@ comparisonExpr throws XPathException
 	)?
 	;
 
-// XQFT 3.0: FTContainsExpr sits between StringConcatExpr and ComparisonExpr
+// XQFT 3.0: FTContainsExpr sits between OtherwiseExpr and ComparisonExpr
 ftContainsExpr throws XPathException
 :
-	r1:stringConcatExpr (
+	r1:otherwiseExpr (
 		( "contains" "text" ) => "contains"! "text"! ft:ftSelection ( ( "without" ) => fti:ftIgnoreOption )?
 			{
 				// Break auto-tree sibling links to prevent circular refs in ASTFactory.make()
@@ -1256,6 +1605,11 @@ ftContainsExpr throws XPathException
 				}
 			}
 	)?
+	;
+
+otherwiseExpr throws XPathException
+:
+	stringConcatExpr ( "otherwise"^ stringConcatExpr )*
 	;
 
 stringConcatExpr throws XPathException
@@ -1402,13 +1756,15 @@ stepExpr throws XPathException
 	|
 	( ( "element" | "attribute" | "text" | "document" | "comment" |
 	  "namespace-node" | "processing-instruction" | "namespace" | "ordered" |
-	  "unordered" | "map" | "array" ) LCURLY ) =>
+	  "unordered" | "map" | "array" | "fn" | "function" ) LCURLY ) =>
 	postfixExpr
 	|
 	( ( "element" | "attribute" | "processing-instruction" | "namespace" ) eqName LCURLY ) => postfixExpr
 	|
+	( "fn" LPAREN ) => postfixExpr
+	|
 	( MOD | DOLLAR | ( eqName ( LPAREN | HASH ) ) | SELF | LPAREN | literal | XML_COMMENT | LT |
-	  XML_PI | QUESTION | LPPAREN | STRING_CONSTRUCTOR_START )
+	  XML_PI | QUESTION | LPPAREN | STRING_CONSTRUCTOR_START | STRING_TEMPLATE_START | LCURLY | HASH )
 	=> postfixExpr
 	|
 	axisStep
@@ -1452,6 +1808,7 @@ forwardAxisSpecifier
 :
 	"child" | "self" | "attribute" | "descendant" | "descendant-or-self"
     | "following-sibling" | "following"
+    | "following-or-self" | "following-sibling-or-self"
 	;
 
 reverseAxis : reverseAxisSpecifier COLON! COLON! ;
@@ -1459,6 +1816,7 @@ reverseAxis : reverseAxisSpecifier COLON! COLON! ;
 reverseAxisSpecifier
 :
 	"parent" | "ancestor" | "ancestor-or-self" | "preceding-sibling" | "preceding"
+    | "preceding-or-self" | "preceding-sibling-or-self"
 	;
 
 nodeTest throws XPathException
@@ -1506,18 +1864,40 @@ postfixExpr throws XPathException
 		|
 		(LPAREN) => dynamicFunCall
 		|
+		// XQ4: ?[ must come before ? lookup to disambiguate
+		(QUESTION LPPAREN) => filterExprAM
+		|
 		(QUESTION) => lookup
 	)*
 	;
 
 arrowExpr throws XPathException
 :
-    unaryExpr ( ARROW_OP^ arrowFunctionSpecifier argumentList )*
+    unaryExpr (
+        ( ARROW_OP^ | MAPPING_ARROW_OP^ ) arrowFunctionSpecifier argumentList
+        |
+        METHOD_CALL_OP^ NCNAME argumentList
+    )*
     ;
 
 arrowFunctionSpecifier throws XPathException
 { String name= null; }
 :
+    // XQ4: inline/focus function expression
+    ( MOD | ( ("function" | "fn") (LPAREN | LCURLY) ) ) => inlineOrFocusFunctionExpr
+    |
+    // XQ4: named function reference (eqName '#' arity)
+    ( eqName HASH ) => namedFunctionRef
+    |
+    // XQ4: map constructor as function
+    ( "map" LCURLY ) => mapConstructor
+    |
+    // XQ4: bare map constructor as function
+    ( LCURLY ) => bareMapConstructor
+    |
+    // XQ4: array constructor as function
+    ( LPPAREN | ("array" LCURLY) ) => arrayConstructor
+    |
     name=n:eqName
     {
         #arrowFunctionSpecifier= #[EQNAME, name];
@@ -1529,8 +1909,17 @@ arrowFunctionSpecifier throws XPathException
     varRef
     ;
 
+filterExprAM throws XPathException
+:
+    q:QUESTION! LPPAREN! expr RPPAREN!
+    {
+        #filterExprAM = #(#[FILTER_AM, "filter-am"], #filterExprAM);
+        #filterExprAM.copyLexInfo(#q);
+    }
+    ;
+
 lookup throws XPathException
-{ String name= null; }
+{ String name= null; String varName= null; }
 :
     q:QUESTION!
     (
@@ -1540,15 +1929,56 @@ lookup throws XPathException
         	#lookup.copyLexInfo(#q);
 		}
         |
+        // XQ4: decimal and double literals as key selectors (?1.2, ?1.2e0)
+        dbl:DOUBLE_LITERAL
+        {
+        	#lookup = #(#[LOOKUP, "?"], #dbl);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
+        dec:DECIMAL_LITERAL
+        {
+        	#lookup = #(#[LOOKUP, "?"], #dec);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
         pos:INTEGER_LITERAL
         {
         	#lookup = #(#[LOOKUP, "?"], #pos);
         	#lookup.copyLexInfo(#q);
 		}
         |
+        // XQ4: string literal as key selector (?"first value")
+        str:STRING_LITERAL
+        {
+        	#lookup = #(#[LOOKUP, "?"], #str);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
         paren:parenthesizedExpr
         {
         	#lookup = #(#[LOOKUP, "?"], #paren);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
+        // XQ4: variable reference as key selector (?$var)
+        DOLLAR! varName=v:varName
+        {
+        	#lookup = #(#[LOOKUP, "?"], #[VARIABLE_REF, varName]);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
+        // XQ4: context item as key selector (?.)
+        dot:SELF
+        {
+        	#lookup = #(#[LOOKUP, "?"], #dot);
+        	#lookup.copyLexInfo(#q);
+		}
+        |
+        // XQ4: QName literal as key selector (?#name)
+        qnl:qnameLiteral
+        {
+        	#lookup = #(#[LOOKUP, "?"], #qnl);
         	#lookup.copyLexInfo(#q);
 		}
         |
@@ -1603,15 +2033,26 @@ primaryExpr throws XPathException
 	|
 	( "map" LCURLY ) => mapConstructor
 	|
+	( LCURLY RCURLY ) => bareMapConstructor
+	|
+	( LCURLY exprSingle COLON ) => bareMapConstructor
+	|
 	directConstructor
 	|
-	( MOD | "function" LPAREN | eqName HASH ) => functionItemExpr
+	( ( "fn" | "function" ) LCURLY ) => focusFunctionExpr
+	|
+	// XQ4: QName literal (#local, #prefix:local, #Q{uri}local)
+	( HASH ) => qnameLiteral
+	|
+	( MOD | ( "fn" | "function" ) LPAREN | eqName HASH ) => functionItemExpr
 	|
 	( eqName LPAREN ) => functionCall
 	|
 	( QUESTION ) => unaryLookup
 	|
 	( STRING_CONSTRUCTOR_START ) => stringConstructor
+	|
+	( STRING_TEMPLATE_START ) => stringTemplate
 	|
 	contextItemExpr
 	|
@@ -1639,10 +2080,32 @@ stringConstructorContent throws XPathException
 stringConstructorInterpolation throws XPathException
 :
 	STRING_CONSTRUCTOR_INTERPOLATION_START^
-	{ lexer.inStringConstructor = false; }
+	{ lexer.inStringConstructor = false; lexer.stringConstructorInterpolationDepth++; }
 	( expr )?
 	STRING_CONSTRUCTOR_INTERPOLATION_END!
-	{ lexer.inStringConstructor = true; }
+	{ lexer.stringConstructorInterpolationDepth--; lexer.inStringConstructor = true; }
+	;
+
+stringTemplate throws XPathException
+:
+	st:STRING_TEMPLATE_START!
+	{ lexer.inStringTemplate = true; }
+	( STRING_TEMPLATE_CONTENT | stringTemplateInterpolation )*
+	STRING_TEMPLATE_END!
+	{ lexer.inStringTemplate = false; }
+	{
+		#stringTemplate = #(#[STRING_TEMPLATE, null], #stringTemplate);
+		#stringTemplate.copyLexInfo(#st);
+	}
+	;
+
+stringTemplateInterpolation throws XPathException
+:
+	lc:LCURLY!
+	{ lexer.inStringTemplate = false; lexer.stringTemplateDepth++; }
+	( expr )?
+	RCURLY!
+	{ lexer.stringTemplateDepth--; lexer.inStringTemplate = true; }
 	;
 
 mapConstructor throws XPathException
@@ -1651,6 +2114,15 @@ mapConstructor throws XPathException
     {
         #mapConstructor = #(#[MAP, "map"], #mapConstructor);
         #mapConstructor.copyLexInfo(#a);
+    }
+    ;
+
+bareMapConstructor throws XPathException
+:
+    lc:LCURLY! ( mapAssignment ( COMMA! mapAssignment )* )? RCURLY!
+    {
+        #bareMapConstructor = #(#[MAP, "map"], #bareMapConstructor);
+        #bareMapConstructor.copyLexInfo(#lc);
     }
     ;
 
@@ -1705,6 +2177,16 @@ literal
 	STRING_LITERAL^ | numericLiteral
 	;
 
+qnameLiteral throws XPathException
+{ String name = null; }
+:
+    h:HASH! name=eqName
+    {
+        #qnameLiteral = #(#[QNAME_LITERAL, name]);
+        #qnameLiteral.copyLexInfo(#h);
+    }
+    ;
+
 numericLiteral
 :
 	DOUBLE_LITERAL^ | DECIMAL_LITERAL^ | INTEGER_LITERAL^
@@ -1719,7 +2201,7 @@ parenthesizedExpr throws XPathException
 
 functionItemExpr throws XPathException
 :
-	( MOD | "function" ) => inlineFunctionExpr
+	( MOD | "function" | "fn" ) => inlineOrFocusFunctionExpr
 	|
 	namedFunctionRef
 	;
@@ -1733,24 +2215,36 @@ namedFunctionRef throws XPathException
 	}
 	;
 
-inlineFunctionExpr throws XPathException
+inlineOrFocusFunctionExpr throws XPathException
 :
-	ann:annotations! "function"! lp:LPAREN! ( paramList )?
-	RPAREN! ( returnType )?
-	functionBody
-	{
-	  	#inlineFunctionExpr = #(#[INLINE_FUNCTION_DECL, null], null, #inlineFunctionExpr);
-		#inlineFunctionExpr.copyLexInfo(#lp);
-	}
+	ann:annotations! ( "function"! | "fn"! )
+	(
+		(LPAREN) => lp:LPAREN! ( paramList )?
+		RPAREN! ( returnType )?
+		functionBody
+		{
+			#inlineOrFocusFunctionExpr = #(#[INLINE_FUNCTION_DECL, null], #ann, #inlineOrFocusFunctionExpr);
+			#inlineOrFocusFunctionExpr.copyLexInfo(#lp);
+		}
+	|
+		lc:LCURLY! ( expr )? RCURLY!
+		{
+			#inlineOrFocusFunctionExpr = #(#[FOCUS_FUNCTION, null], #inlineOrFocusFunctionExpr);
+			#inlineOrFocusFunctionExpr.copyLexInfo(#lc);
+		}
+	)
 	exception catch [RecognitionException e]
 	{
-		if (#lp == null) {
-			throw new XPathException(e.getLine(), e.getColumn(), ErrorCodes.XPST0003, "Syntax error within inline function: " + e.getMessage());
-		} else {
-			#lp.setLine(e.getLine());
-			#lp.setColumn(e.getColumn());
-			throw new XPathException(#lp, ErrorCodes.XPST0003, "Syntax error within user defined function: " + e.getMessage());
-		}
+		throw new XPathException(e.getLine(), e.getColumn(), ErrorCodes.XPST0003, "Syntax error within inline function: " + e.getMessage());
+	}
+	;
+
+focusFunctionExpr throws XPathException
+:
+	( "fn"! | "function"! ) lc:LCURLY! ( expr )? RCURLY!
+	{
+		#focusFunctionExpr = #(#[FOCUS_FUNCTION, null], #focusFunctionExpr);
+		#focusFunctionExpr.copyLexInfo(#lc);
 	}
 	;
 
@@ -1775,8 +2269,34 @@ argumentList throws XPathException
 
 argument throws XPathException
 :
-	(QUESTION! ( NCNAME | INTEGER_LITERAL | LPAREN | STAR )) => lookup
+	(QUESTION ( ncnameOrKeyword | INTEGER_LITERAL | DECIMAL_LITERAL | DOUBLE_LITERAL | STRING_LITERAL | LPAREN | DOLLAR | SELF | HASH | STAR )) => unaryLookup
 	| argumentPlaceholder
+	| ( ncnameOrKeyword COLON ( EQ | ncnameOrKeyword COLON EQ ) ) => keywordArgument
+	| exprSingle
+	;
+
+// XQ4: keyword arguments - name := value, or prefix:name := value
+keywordArgument throws XPathException
+{ String kwName = null; String prefix = null; String local = null; }
+:
+    // Prefixed keyword: prefix:name := value
+    ( ( ncnameOrKeyword COLON ncnameOrKeyword COLON EQ ) =>
+        prefix=ncnameOrKeyword! COLON! local=ncnameOrKeyword! COLON! EQ! keywordArgumentValue
+        { kwName = prefix + ":" + local; }
+    |
+    // Simple keyword: name := value
+        kwName=ncnameOrKeyword! COLON! EQ! keywordArgumentValue
+    )
+	{
+		#keywordArgument = #(#[KEYWORD_ARG, kwName], #keywordArgument);
+	}
+	;
+
+// XQ4: keyword argument value can be an expression or argument placeholder (?)
+// Use lookahead to distinguish bare ? (placeholder) from ?key (unary lookup)
+keywordArgumentValue throws XPathException
+:
+	( QUESTION ( RPAREN | COMMA ) ) => argumentPlaceholder
 	| exprSingle
 	;
 
@@ -1786,7 +2306,7 @@ contextItemExpr : SELF ;
 
 kindTest
 :
-	textTest | anyKindTest | elementTest | attributeTest |
+	textTest | anyKindTest | gnodeTest | elementTest | attributeTest |
 	commentTest | namespaceNodeTest | piTest | documentTest
 	;
 
@@ -1798,6 +2318,13 @@ textTest
 anyKindTest
 :
     "node"^ LPAREN! RPAREN!
+    ;
+
+// XQ4: gnode() is a synonym for node()
+gnodeTest
+:
+    "gnode"! LPAREN! RPAREN!
+    { #gnodeTest = #[LITERAL_node, "node"]; }
     ;
 
 elementTest
@@ -2645,7 +3172,22 @@ ncnameOrKeyword returns [String name]
 	name=reservedKeywords
 	;
 
+/**
+ * Top-level dispatcher for reserved keywords usable as NCNames.
+ * Split into feature-area sub-rules to reduce merge conflicts on the
+ * next integration branch. Each feature branch owns its sub-rule;
+ * merging adds a single alternative here instead of interleaving 80+ lines.
+ */
 reservedKeywords returns [String name]
+{ name= null; }
+:
+	name=coreReservedKeywords
+	|
+	name=xq4Keywords
+	;
+
+// ---- Core reserved keywords (XQuery 3.1 + eXist-db extensions) ----
+coreReservedKeywords returns [String name]
 { name= null; }
 :
 	"element" { name = "element"; }
@@ -2696,6 +3238,14 @@ reservedKeywords returns [String name]
 	|
 	"preceding" { name = "preceding"; }
 	|
+	"following-or-self" { name = "following-or-self"; }
+	|
+	"preceding-or-self" { name = "preceding-or-self"; }
+	|
+	"following-sibling-or-self" { name = "following-sibling-or-self"; }
+	|
+	"preceding-sibling-or-self" { name = "preceding-sibling-or-self"; }
+	|
 	"item" { name= "item"; }
 	|
 	"empty" { name= "empty"; }
@@ -2708,8 +3258,8 @@ reservedKeywords returns [String name]
 	|
 	"namespace-node" { name= "namespace-node"; }
 	|
-    "namespace" { name= "namespace"; }
-    |
+	"namespace" { name= "namespace"; }
+	|
 	"if" { name= "if"; }
 	|
 	"then" { name= "then"; }
@@ -2748,8 +3298,8 @@ reservedKeywords returns [String name]
 	|
 	"by" { name = "by"; }
 	|
-    "group" { name = "group"; }
-    |
+	"group" { name = "group"; }
+	|
 	"some" { name = "some"; }
 	|
 	"every" { name = "every"; }
@@ -2864,7 +3414,7 @@ reservedKeywords returns [String name]
 	|
 	"tumbling" { name = "tumbling"; }
 	|
-	"sliding" { name = "sliding"; }	
+	"sliding" { name = "sliding"; }
 	|
 	"window" { name = "window"; }
 	|
@@ -3032,6 +3582,27 @@ reservedKeywords returns [String name]
 	"from" { name = "from"; }
 	;
 
+// ---- XQuery 4.0 keywords (feature/xquery-4.0-parser) ----
+xq4Keywords returns [String name]
+{ name= null; }
+:
+	"fn" { name = "fn"; }
+	|
+	"member" { name = "member"; }
+	|
+	"otherwise" { name = "otherwise"; }
+	|
+	"key" { name = "key"; }
+	|
+	"while" { name = "while"; }
+	|
+	"finally" { name = "finally"; }
+	|
+	"record" { name = "record"; }
+	|
+	"gnode" { name = "gnode"; }
+	;
+
 
 /**
  * The XQuery/XPath lexical analyzer.
@@ -3050,6 +3621,9 @@ options {
 	protected boolean wsExplicit= false;
 	protected boolean parseStringLiterals= true;
 	protected boolean inStringConstructor = false;
+	protected boolean inStringTemplate = false;
+	protected int stringTemplateDepth = 0;
+	protected int stringConstructorInterpolationDepth = 0;
 	protected boolean inElementContent= false;
 	protected boolean inAttributeContent= false;
 	protected boolean inFunctionBody= false;
@@ -3083,6 +3657,8 @@ options {
 protected SLASH options { paraphrase="single slash '/'"; }: '/' ;
 protected DSLASH options { paraphrase="double slash '//'"; }: '/' '/' ;
 protected BANG : '!' ;
+protected DOUBLE_BANG options { paraphrase="double bang '!!'"; }: '!' '!' ;
+protected DOUBLE_QUESTION options { paraphrase="double question '??'"; }: '?' '?' ;
 protected MOD : '%' ;
 protected COLON : ':' ;
 protected COMMA : ',' ;
@@ -3100,7 +3676,10 @@ protected SELF options { paraphrase="."; }: '.' ;
 protected PARENT options { paraphrase=".."; }: ".." ;
 protected UNION options { paraphrase="union"; }: '|' ;
 protected CONCAT options { paraphrase="||"; }: '|' '|';
+protected METHOD_CALL_OP options { paraphrase="method call operator"; }: '=' '?' '>';
+protected MAPPING_ARROW_OP options { paraphrase="mapping arrow operator"; }: '=' '!' '>';
 protected ARROW_OP options { paraphrase="arrow operator"; }: '=' '>';
+protected PIPELINE_OP options { paraphrase="pipeline operator"; }: '-' '>';
 protected AT options { paraphrase="@ char"; }: '@' ;
 protected DOLLAR options { paraphrase="dollar sign '$'"; }: '$' ;
 protected EQ options { paraphrase="="; }: '=' ;
@@ -3134,12 +3713,17 @@ protected LETTER
 
 protected DIGITS
 :
-	( DIGIT )+
+	( DIGIT )+ ( '_' ( DIGIT )+ )*
 	;
 
 protected HEX_DIGITS
 :
-	( '0'..'9' | 'a'..'f' | 'A'..'F' )+
+	( '0'..'9' | 'a'..'f' | 'A'..'F' )+ ( '_' ( '0'..'9' | 'a'..'f' | 'A'..'F' )+ )*
+	;
+
+protected BINARY_DIGITS
+:
+	( '0' | '1' )+ ( '_' ( '0' | '1' )+ )*
 	;
 
 protected NCNAME
@@ -3196,16 +3780,26 @@ protected INTEGER_LITERAL
 	{ !(inElementContent || inAttributeContent) }? DIGITS
 	;
 
+protected HEX_INTEGER_LITERAL
+:
+	{ !(inElementContent || inAttributeContent) }? '0' ('x' | 'X') HEX_DIGITS
+	;
+
+protected BINARY_INTEGER_LITERAL
+:
+	{ !(inElementContent || inAttributeContent) }? '0' ('b' | 'B') BINARY_DIGITS
+	;
+
 protected DOUBLE_LITERAL
 :
 	{ !(inElementContent || inAttributeContent) }?
-	( ( '.' DIGITS ) | ( DIGITS ( '.' ( DIGIT )* )? ) ) ( 'e' | 'E' ) ( '+' | '-' )? DIGITS
+	( ( '.' DIGITS ) | ( DIGITS ( '.' ( DIGITS )? )? ) ) ( 'e' | 'E' ) ( '+' | '-' )? DIGITS
 	;
 
 protected DECIMAL_LITERAL
 :
 	{ !(inElementContent || inAttributeContent) }?
-	( '.' DIGITS ) | ( DIGITS ( '.' ( DIGIT )* )? )
+	( '.' DIGITS ) | ( DIGITS ( '.' ( DIGITS )? )? )
 	;
 
 protected PREDEFINED_ENTITY_REF
@@ -3246,11 +3840,25 @@ options {
 :
 	(
         ( '\n' ) => '\n' { newline(); } |
-		( '&' ) => ( PREDEFINED_ENTITY_REF | CHAR_REF ) |
 		( ( ']' '`' ) ~ ( '`' ) ) => ( ']' '`' ) |
 		( ']' ~ ( '`' ) ) => ']' |
 		( '`' ~ ( '{') ) => '`' |
 		~ ( ']' | '`')
+	)+
+	;
+
+protected STRING_TEMPLATE_START options { paraphrase="start of string template"; }: '`';
+protected STRING_TEMPLATE_END options { paraphrase="end of string template"; }: '`';
+
+protected STRING_TEMPLATE_CONTENT
+options {
+	testLiterals = false;
+	paraphrase = "string template content";
+}
+:
+	(
+		'\n' { newline(); } |
+		~ ( '\n' | '{' | '}' | '`')
 	)+
 	;
 
@@ -3367,6 +3975,46 @@ options {
 	testLiterals = false;
 }
 :
+	{ inStringTemplate }?
+	( '`' '`' ) => '`' '`' {
+		$setType(STRING_TEMPLATE_CONTENT);
+	}
+	|
+	{ inStringTemplate }?
+	( '{' '{' ) => '{' '{' {
+		$setType(STRING_TEMPLATE_CONTENT);
+	}
+	|
+	{ inStringTemplate }?
+	( '}' '}' ) => '}' '}' {
+		$setType(STRING_TEMPLATE_CONTENT);
+	}
+	|
+	{ inStringTemplate }?
+	STRING_TEMPLATE_END {
+		$setType(STRING_TEMPLATE_END);
+	}
+	|
+	{ inStringTemplate }?
+	LCURLY {
+		$setType(LCURLY);
+	}
+	|
+	{ inStringTemplate }?
+	STRING_TEMPLATE_CONTENT {
+		$setType(STRING_TEMPLATE_CONTENT);
+	}
+	|
+	{ !inStringConstructor && !inStringTemplate }?
+	( '`' '`' '[' ) => STRING_CONSTRUCTOR_START {
+		$setType(STRING_CONSTRUCTOR_START);
+	}
+	|
+	{ !inStringConstructor && !inStringTemplate }?
+	STRING_TEMPLATE_START {
+		$setType(STRING_TEMPLATE_START);
+	}
+	|
 	{ !inStringConstructor }?
 	STRING_CONSTRUCTOR_START {
 		$setType(STRING_CONSTRUCTOR_START);
@@ -3382,7 +4030,7 @@ options {
 		$setType(STRING_CONSTRUCTOR_INTERPOLATION_START);
 	}
 	|
-	{ !inStringConstructor }?
+	{ !inStringConstructor && stringTemplateDepth == 0 && stringConstructorInterpolationDepth > 0 }?
 	STRING_CONSTRUCTOR_INTERPOLATION_END {
 		$setType(STRING_CONSTRUCTOR_INTERPOLATION_END);
 	}
@@ -3503,7 +4151,7 @@ options {
 	( NAME_START_CHAR ) =>
 	ncname:NCNAME { $setType(ncname.getType()); }
 	|
-	{ parseStringLiterals && !inElementContent && !inStringConstructor }?
+	{ parseStringLiterals && !inElementContent && !inStringConstructor && !inStringTemplate }?
 	STRING_LITERAL { $setType(STRING_LITERAL); }
 	|
 	BRACED_URI_LITERAL { $setType(BRACED_URI_LITERAL); }
@@ -3527,7 +4175,15 @@ options {
 	( '.' )
 	=> SELF { $setType(SELF); }
 	|
-	( INTEGER_LITERAL ( '.' ( INTEGER_LITERAL )? )? ( 'e' | 'E' ) )
+	// XQ4: hex integer literals (0xFF, 0xCAFE_BABE)
+	( '0' ('x' | 'X') )
+	=> HEX_INTEGER_LITERAL { $setType(INTEGER_LITERAL); }
+	|
+	// XQ4: binary integer literals (0b1010, 0b1111_0000)
+	( '0' ('b' | 'B') )
+	=> BINARY_INTEGER_LITERAL { $setType(INTEGER_LITERAL); }
+	|
+	( INTEGER_LITERAL ( '.' ( DIGITS )? )? ( 'e' | 'E' ) )
 	=> DOUBLE_LITERAL
 	{ $setType(DOUBLE_LITERAL); }
 	|
@@ -3542,6 +4198,8 @@ options {
 	{ !(inAttributeContent || inElementContent) }?
 	DSLASH { $setType(DSLASH); }
 	|
+	( DOUBLE_BANG ) => DOUBLE_BANG { $setType(DOUBLE_BANG); }
+	|
 	BANG { $setType(BANG); }
 	|
 	COLON { $setType(COLON); }
@@ -3554,9 +4212,16 @@ options {
 	|
 	STAR { $setType(STAR); }
 	|
+	// XQ4: Unicode multiplication sign (U+00D7) as alternative to *
+	'\u00D7' { $setType(STAR); }
+	|
+	( DOUBLE_QUESTION ) => DOUBLE_QUESTION { $setType(DOUBLE_QUESTION); }
+	|
 	QUESTION { $setType(QUESTION); }
 	|
 	PLUS { $setType(PLUS); }
+	|
+	( PIPELINE_OP ) => PIPELINE_OP { $setType(PIPELINE_OP); }
 	|
 	MINUS { $setType(MINUS); }
 	|
@@ -3572,6 +4237,10 @@ options {
 	|
 	DOLLAR { $setType(DOLLAR); }
 	|
+    ( METHOD_CALL_OP ) => METHOD_CALL_OP { $setType(METHOD_CALL_OP); }
+    |
+    ( MAPPING_ARROW_OP ) => MAPPING_ARROW_OP { $setType(MAPPING_ARROW_OP); }
+    |
     ARROW_OP { $setType(ARROW_OP); }
     |
 	EQ { $setType(EQ); }

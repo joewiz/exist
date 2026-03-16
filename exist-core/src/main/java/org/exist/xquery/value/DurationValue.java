@@ -214,7 +214,7 @@ public class DurationValue extends ComputableValue {
                 ).add(zeroIfNull((BigDecimal) duration.getField(DatatypeConstants.SECONDS)));
     }
 
-    protected BigDecimal secondsValueSigned() {
+    public BigDecimal secondsValueSigned() {
         BigDecimal x = secondsValue();
         if (duration.getSign() < 0) {
             x = x.negate();
@@ -229,7 +229,7 @@ public class DurationValue extends ComputableValue {
                         .add(zeroIfNull((BigInteger) duration.getField(DatatypeConstants.MONTHS)));
     }
 
-    protected BigInteger monthsValueSigned() {
+    public BigInteger monthsValueSigned() {
         BigInteger x = monthsValue();
         if (duration.getSign() < 0) {
             x = x.negate();
@@ -312,8 +312,8 @@ public class DurationValue extends ComputableValue {
                 canonicalize();
                 return new UntypedAtomicValue(getExpression(), getStringValue());
             default:
-                throw new XPathException(getExpression(), ErrorCodes.FORG0001,
-                        "Type error: cannot cast ' + Type.getTypeName(getType()) 'to "
+                throw new XPathException(getExpression(), ErrorCodes.XPTY0004,
+                        "Type error: cannot cast " + Type.getTypeName(getType()) + " to "
                                 + Type.getTypeName(requiredType));
         }
     }

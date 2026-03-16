@@ -209,6 +209,9 @@ public class ErrorCodes {
     public static final ErrorCode FORX0002 = new W3CErrorCode("FORX0002", "Invalid regular expression.");
     public static final ErrorCode FORX0003 = new W3CErrorCode("FORX0003", "Regular expression matches zero-length string.");
     public static final ErrorCode FORX0004 = new W3CErrorCode("FORX0004", "Invalid replacement string.");
+    public static final ErrorCode FOCV0001 = new W3CErrorCode("FOCV0001", "CSV quote error.");
+    public static final ErrorCode FOCV0002 = new W3CErrorCode("FOCV0002", "Invalid CSV delimiter.");
+    public static final ErrorCode FOCV0003 = new W3CErrorCode("FOCV0003", "Conflicting CSV delimiters.");
     public static final ErrorCode FOTY0012 = new W3CErrorCode("FOTY0012", "Argument node does not have a typed value.");
     public static final ErrorCode FOTY0013 = new W3CErrorCode("FOTY0013", "The argument to fn:data() contains a function item.");
 
@@ -244,11 +247,13 @@ public class ErrorCodes {
 	public static final ErrorCode FTDY0020 = new W3CErrorCode("FTDY0020", "");
 
 	public static final ErrorCode FODC0006 = new W3CErrorCode("FODC0006", "String passed to fn:parse-xml is not a well-formed XML document.");
+	public static final ErrorCode FODC0011 = new W3CErrorCode("FODC0011", "HTML parsing error.");
 
 	public static final ErrorCode FOAP0001 = new W3CErrorCode("FOAP0001", "Wrong number of arguments");
 
     /* XQuery 3.1 */
     public static final ErrorCode XQTY0105 = new W3CErrorCode("XQTY0105", "It is a type error if the content sequence in an element constructor contains a function.");
+    public static final ErrorCode XQTY0153 = new W3CErrorCode("XQTY0153", "It is a type error if the finally clause of a try/catch expression evaluates to a non-empty sequence.");
     public static final ErrorCode FOAY0001 = new W3CErrorCode("FOAY0001", "Array index out of bounds.");
     public static final ErrorCode FOAY0002 = new W3CErrorCode("FOAY0002", "Negative array length.");
 
@@ -273,6 +278,10 @@ public class ErrorCodes {
     public static final ErrorCode FOXT0003 = new W3CErrorCode("FOXT0003", "XSLT transformation failed");
     public static final ErrorCode FOXT0004 = new W3CErrorCode("FOXT0004", "XSLT transformation has been disabled");
     public static final ErrorCode FOXT0006 = new W3CErrorCode("FOXT0006", "XSLT output contains non-accepted characters");
+
+    // Invisible XML errors
+    public static final ErrorCode FOIX0001 = new W3CErrorCode("FOIX0001", "Invalid ixml grammar");
+    public static final ErrorCode FOIX0002 = new W3CErrorCode("FOIX0002", "ixml parse error");
 
     public static final ErrorCode XTSE0165 = new W3CErrorCode("XTSE0165","It is a static error if the processor is not able to retrieve the resource identified by the URI reference [ in the href attribute of xsl:include or xsl:import] , or if the resource that is retrieved does not contain a stylesheet module conforming to this specification.");
 
@@ -307,6 +316,7 @@ public class ErrorCodes {
     public static final ErrorCode EXXQDY0004 = new EXistErrorCode("EXXQDY0004", "Only Supported for xquery version \"3.1\" and later.");
     public static final ErrorCode EXXQDY0005 = new EXistErrorCode("EXXQDY0005", "No function call details were provided when trying to execute a Library Module.");
     public static final ErrorCode EXXQDY0006 = new EXistErrorCode("EXXQDY0006", "Unable to find named function when trying to execute a Library Module.");
+    public static final ErrorCode EXXQST0001 = new EXistErrorCode("EXXQST0001", "Unable to find function implementation.");
 
     public static final ErrorCode ERROR = new EXistErrorCode("ERROR", "Error.");
 

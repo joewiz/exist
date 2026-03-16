@@ -55,7 +55,12 @@ public class ArrayFunction extends BasicFunction {
         FOR_EACH_PAIR("for-each-pair"),
         FLATTEN("flatten"),
         PUT("put"),
-        SORT("sort");
+        SORT("sort"),
+        EMPTY("empty"),
+        FOOT("foot"),
+        TRUNK("trunk"),
+        ITEMS("items"),
+        MEMBERS("members");
 
         final static Map<String, Fn> fnMap = new HashMap<>();
         static {
@@ -90,7 +95,7 @@ public class ArrayFunction extends BasicFunction {
                     "as calling $array($index).",
                     new SequenceType[] {
                         new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array"),
-                        new FunctionParameterSequenceType("index", Type.INTEGER, Cardinality.EXACTLY_ONE, "The index")
+                        new FunctionParameterSequenceType("position", Type.INTEGER, Cardinality.EXACTLY_ONE, "The index")
                     },
                     new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The value at $index")
             ),
@@ -100,7 +105,7 @@ public class ArrayFunction extends BasicFunction {
                     "member at the end.",
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array"),
-                            new FunctionParameterSequenceType("appendage", Type.ITEM, Cardinality.ZERO_OR_MORE, "The items to append")
+                            new FunctionParameterSequenceType("member", Type.ITEM, Cardinality.ZERO_OR_MORE, "The items to append")
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "A copy of $array with the new member attached")
             ),
@@ -190,7 +195,11 @@ public class ArrayFunction extends BasicFunction {
                     "$function to the corresponding member of $array.",
                     new SequenceType[] {
                         new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array to process"),
-                        new FunctionParameterSequenceType("function", Type.FUNCTION, Cardinality.EXACTLY_ONE, "The function called on each member of the array")
+                        new FunctionParameterFunctionSequenceType("function", Type.FUNCTION,
+                                new SequenceType[] {
+                                        new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+                                },
+                                Cardinality.EXACTLY_ONE, "The function called on each member of the array")
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The resulting array")
             ),
@@ -199,7 +208,12 @@ public class ArrayFunction extends BasicFunction {
                     "Returns an array containing those members of the $array for which $function returns true.",
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array to process"),
-                            new FunctionParameterSequenceType("function", Type.FUNCTION, Cardinality.EXACTLY_ONE, "The function called on each member of the array")
+                            new FunctionParameterFunctionSequenceType("function", Type.FUNCTION,
+                                    new SequenceType[] {
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+                                    },
+                                    new SequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE),
+                                    Cardinality.EXACTLY_ONE, "The function called on each member of the array")
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The resulting array")
             ),
@@ -209,7 +223,12 @@ public class ArrayFunction extends BasicFunction {
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array to process"),
                             new FunctionParameterSequenceType("zero", Type.ITEM, Cardinality.ZERO_OR_MORE, "Start value"),
-                            new FunctionParameterSequenceType("function", Type.FUNCTION, Cardinality.EXACTLY_ONE, "The function to call")
+                            new FunctionParameterFunctionSequenceType("function", Type.FUNCTION,
+                                    new SequenceType[] {
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE),
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+                                    },
+                                    Cardinality.EXACTLY_ONE, "The function called on each member of the array")
                     },
                     new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The result of the cumulative function call")
             ),
@@ -219,7 +238,12 @@ public class ArrayFunction extends BasicFunction {
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array to process"),
                             new FunctionParameterSequenceType("zero", Type.ITEM, Cardinality.ZERO_OR_MORE, "Start value"),
-                            new FunctionParameterSequenceType("function", Type.FUNCTION, Cardinality.EXACTLY_ONE, "The function to call")
+                            new FunctionParameterFunctionSequenceType("function", Type.FUNCTION,
+                                    new SequenceType[] {
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE),
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+                                    },
+                                    Cardinality.EXACTLY_ONE, "The function called on each member of the array")
                     },
                     new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The result of the cumulative function call")
             ),
@@ -230,7 +254,12 @@ public class ArrayFunction extends BasicFunction {
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array1", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The first array to process"),
                             new FunctionParameterSequenceType("array2", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The second array to process"),
-                            new FunctionParameterSequenceType("function", Type.FUNCTION, Cardinality.EXACTLY_ONE, "The function to call for each pair")
+                            new FunctionParameterFunctionSequenceType("function", Type.FUNCTION,
+                                    new SequenceType[] {
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE),
+                                            new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+                                    },
+                                    Cardinality.EXACTLY_ONE,"The function to call for each pair")
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The resulting array")
             ),
@@ -269,6 +298,47 @@ public class ArrayFunction extends BasicFunction {
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The sorted array")
             )
+            // --- XQuery 4.0 array functions ---
+            ,new FunctionSignature(
+                    new QName(Fn.EMPTY.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Returns true if the supplied array is empty.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array to test")
+                    },
+                    new FunctionReturnSequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE, "true if the array is empty")
+            ),
+            new FunctionSignature(
+                    new QName(Fn.FOOT.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Returns the last member of an array.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array")
+                    },
+                    new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The last member of the array")
+            ),
+            new FunctionSignature(
+                    new QName(Fn.TRUNK.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Returns all members except the last from a supplied array.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array")
+                    },
+                    new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "All members except the last")
+            ),
+            new FunctionSignature(
+                    new QName(Fn.ITEMS.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Returns the members of an array as a sequence.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array")
+                    },
+                    new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The members as a sequence")
+            ),
+            new FunctionSignature(
+                    new QName(Fn.MEMBERS.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Returns each member of an array as a single-member array.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array")
+                    },
+                    new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.ZERO_OR_MORE, "A sequence of single-member arrays")
+            )
     };
 
     private AnalyzeContextInfo cachedContextInfo;
@@ -306,6 +376,8 @@ public class ArrayFunction extends BasicFunction {
                 switch (called) {
                     case SIZE:
                         return new IntegerValue(this, array.getSize());
+                    case EMPTY:
+                        return BooleanValue.valueOf(array.getSize() == 0);
                     case GET:
                         final IntegerValue index = (IntegerValue) args[1].itemAt(0);
                         return array.get(index);
@@ -390,31 +462,67 @@ public class ArrayFunction extends BasicFunction {
                     case FOR_EACH_PAIR:
                         return getFunction(args[2], ref -> array.forEachPair((ArrayType) args[1].itemAt(0), ref));
                     case SORT:
-                        if(args.length < 3) {
-                            final Collator collator;
-                            if (args.length == 2 && !args[1].isEmpty()) {
-                                final String collationURI = args[1].getStringValue();
-                                collator = context.getCollator(collationURI);
-                            } else {
-                                collator = context.getDefaultCollator();
+                        try {
+                            if(args.length < 3) {
+                                final Collator collator;
+                                if (args.length == 2 && !args[1].isEmpty()) {
+                                    final String collationURI = args[1].getStringValue();
+                                    collator = context.getCollator(collationURI);
+                                } else {
+                                    collator = context.getDefaultCollator();
+                                }
+
+                                //by default use fn:data#1 as the key function
+                                final FunctionReference keyFun = new FunctionReference(this, NamedFunctionReference.lookupFunction(this, context, FunData.qnData, 1));
+                                return array.sort(collator, keyFun);
+
+                            } else if (args.length == 3) {
+                                final Collator collator;
+                                if (!args[1].isEmpty()) {
+                                    final String collationURI = args[1].getStringValue();
+                                    collator = context.getCollator(collationURI);
+                                } else {
+                                    collator = context.getDefaultCollator();
+                                }
+
+                                //user specified key function
+                                return getFunction(args[2], ref -> array.sort(collator, ref));
                             }
-
-                            //by default use fn:data#1 as the key function
-                            final FunctionReference keyFun = new FunctionReference(this, NamedFunctionReference.lookupFunction(this, context, FunData.qnData, 1));
-                            return array.sort(collator, keyFun);
-
-                        } else if (args.length == 3) {
-                            final Collator collator;
-                            if (!args[1].isEmpty()) {
-                                final String collationURI = args[1].getStringValue();
-                                collator = context.getCollator(collationURI);
-                            } else {
-                                collator = context.getDefaultCollator();
+                        } catch (final ClassCastException e) {
+                            if (e.getCause() instanceof XPathException) {
+                                throw (XPathException) e.getCause();
                             }
-
-                            //user specified key function
-                            return getFunction(args[2], ref -> array.sort(collator, ref));
+                            throw e;
                         }
+                    case FOOT:
+                        if (array.getSize() == 0) {
+                            throw new XPathException(this, ErrorCodes.FOAY0001, "Array is empty");
+                        }
+                        return array.get(array.getSize() - 1);
+                    case TRUNK:
+                        if (array.getSize() == 0) {
+                            throw new XPathException(this, ErrorCodes.FOAY0001, "Array is empty");
+                        }
+                        return array.subarray(0, array.getSize() - 1);
+                    case ITEMS:
+                        final ValueSequence itemsResult = new ValueSequence();
+                        for (int idx = 0; idx < array.getSize(); idx++) {
+                            final Sequence member = array.get(idx);
+                            for (SequenceIterator si = member.iterate(); si.hasNext(); ) {
+                                itemsResult.add(si.nextItem());
+                            }
+                        }
+                        return itemsResult;
+                    case MEMBERS:
+                        final ValueSequence membersResult = new ValueSequence();
+                        for (int idx = 0; idx < array.getSize(); idx++) {
+                            // Each member becomes a map { "value": member }
+                            final org.exist.xquery.functions.map.MapType memberMap =
+                                    new org.exist.xquery.functions.map.MapType(this, context, null);
+                            memberMap.add(new StringValue("value"), array.get(idx));
+                            membersResult.add(memberMap);
+                        }
+                        return membersResult;
                 }
         }
         throw new XPathException(this, "Unknown function: " + getName());

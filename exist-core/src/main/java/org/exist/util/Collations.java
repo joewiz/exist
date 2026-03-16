@@ -76,6 +76,11 @@ public class Collations {
     public final static String HTML_ASCII_CASE_INSENSITIVE_COLLATION_URI = "http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive";
 
     /**
+     * The Unicode Case-Insensitive Collation as defined by XPath F&amp;O 4.0.
+     */
+    public final static String UNICODE_CASE_INSENSITIVE_COLLATION_URI = "http://www.w3.org/2005/xpath-functions/collation/unicode-case-insensitive";
+
+    /**
      * The XQTS ASCII Case-blind Collation as defined by the XQTS 3.1.
      */
     public final static String XQTS_ASCII_CASE_BLIND_COLLATION_URI = "http://www.w3.org/2010/09/qt-fots-catalog/collation/caseblind";
@@ -89,6 +94,11 @@ public class Collations {
      * Lazy-initialized singleton Html Ascii Case Insensitive Collator
      */
     private final static AtomicReference<Collator> htmlAsciiCaseInsensitiveCollator = new AtomicReference<>();
+
+    /**
+     * Lazy-initialized singleton Unicode Case Insensitive Collator
+     */
+    private final static AtomicReference<Collator> unicodeCaseInsensitiveCollator = new AtomicReference<>();
 
     /**
      * Lazy-initialized singleton XQTS Case Blind Collator
@@ -276,6 +286,12 @@ public class Collations {
             } catch (final Exception e) {
                 throw new XPathException(expression, "Unable to instantiate HTML ASCII Case Insensitive Collator: " + e.getMessage(), e);
             }
+        } else if(UNICODE_CASE_INSENSITIVE_COLLATION_URI.equals(uri)) {
+            try {
+                collator = getUnicodeCaseInsensitiveCollator();
+            } catch (final Exception e) {
+                throw new XPathException(expression, "Unable to instantiate Unicode Case Insensitive Collator: " + e.getMessage(), e);
+            }
         } else if(XQTS_ASCII_CASE_BLIND_COLLATION_URI.equals(uri)) {
             try {
                 collator = getXqtsAsciiCaseBlindCollator();
@@ -346,7 +362,24 @@ public class Collations {
      */
     public static int compare(@Nullable final Collator collator, final String s1,final  String s2) {
         if (collator == null) {
-            return s1 == null ? (s2 == null ? 0 : -1) : s1.compareTo(s2);
+            if (s1 == null) {
+                return s2 == null ? 0 : -1;
+            }
+            // Compare by Unicode codepoints, not UTF-16 code units.
+            // String.compareTo() compares char (UTF-16) values, which gives wrong
+            // ordering for supplementary characters (U+10000+) encoded as surrogate pairs.
+            int i1 = 0, i2 = 0;
+            while (i1 < s1.length() && i2 < s2.length()) {
+                final int cp1 = s1.codePointAt(i1);
+                final int cp2 = s2.codePointAt(i2);
+                if (cp1 != cp2) {
+                    return cp1 - cp2;
+                }
+                i1 += Character.charCount(cp1);
+                i2 += Character.charCount(cp2);
+            }
+            // Shorter string is less; equal length means equal
+            return (s1.length() - i1) - (s2.length() - i2);
         } else {
             return collator.compare(s1, s2);
         }
@@ -371,10 +404,16 @@ public class Collations {
                 return true;
             } else if (s1.isEmpty()) {
                 return false;
-            } else {
+            } else if (collator instanceof RuleBasedCollator rbc) {
                 final SearchIterator searchIterator =
-                        new StringSearch(s2, new StringCharacterIterator(s1), (RuleBasedCollator) collator);
+                        new StringSearch(s2, new StringCharacterIterator(s1), rbc);
                 return searchIterator.first() == 0;
+            } else {
+                // Fallback for non-RuleBasedCollator (e.g., HtmlAsciiCaseInsensitiveCollator)
+                if (s1.length() >= s2.length()) {
+                    return collator.compare(s1.substring(0, s2.length()), s2) == 0;
+                }
+                return false;
             }
         }
     }
@@ -398,9 +437,9 @@ public class Collations {
                 return true;
             } else if (s1.isEmpty()) {
                 return false;
-            } else {
+            } else if (collator instanceof RuleBasedCollator rbc) {
                 final SearchIterator searchIterator =
-                        new StringSearch(s2, new StringCharacterIterator(s1), (RuleBasedCollator) collator);
+                        new StringSearch(s2, new StringCharacterIterator(s1), rbc);
                 int lastPos = SearchIterator.DONE;
                 int lastLen = 0;
                 for (int pos = searchIterator.first(); pos != SearchIterator.DONE;
@@ -410,6 +449,12 @@ public class Collations {
                 }
 
                 return lastPos > SearchIterator.DONE && lastPos + lastLen == s1.length();
+            } else {
+                // Fallback for non-RuleBasedCollator
+                if (s1.length() >= s2.length()) {
+                    return collator.compare(s1.substring(s1.length() - s2.length()), s2) == 0;
+                }
+                return false;
             }
         }
     }
@@ -433,10 +478,18 @@ public class Collations {
                 return true;
             } else if (s1.isEmpty()) {
                 return false;
-            } else {
+            } else if (collator instanceof RuleBasedCollator rbc) {
                 final SearchIterator searchIterator =
-                        new StringSearch(s2, new StringCharacterIterator(s1), (RuleBasedCollator) collator);
+                        new StringSearch(s2, new StringCharacterIterator(s1), rbc);
                 return searchIterator.first() >= 0;
+            } else {
+                // Fallback for non-RuleBasedCollator
+                for (int i = 0; i <= s1.length() - s2.length(); i++) {
+                    if (collator.compare(s1.substring(i, i + s2.length()), s2) == 0) {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
     }
@@ -459,10 +512,18 @@ public class Collations {
                 return 0;
             } else if (s1.isEmpty()) {
                 return -1;
-            } else {
+            } else if (collator instanceof RuleBasedCollator rbc) {
                 final SearchIterator searchIterator =
-                        new StringSearch(s2, new StringCharacterIterator(s1), (RuleBasedCollator) collator);
+                        new StringSearch(s2, new StringCharacterIterator(s1), rbc);
                 return searchIterator.first();
+            } else {
+                // Fallback for non-RuleBasedCollator
+                for (int i = 0; i <= s1.length() - s2.length(); i++) {
+                    if (collator.compare(s1.substring(i, i + s2.length()), s2) == 0) {
+                        return i;
+                    }
+                }
+                return -1;
             }
         }
     }
@@ -809,19 +870,117 @@ public class Collations {
         return collator;
     }
 
-    private static Collator getHtmlAsciiCaseInsensitiveCollator() throws Exception {
+    private static Collator getHtmlAsciiCaseInsensitiveCollator() {
         Collator collator = htmlAsciiCaseInsensitiveCollator.get();
         if (collator == null) {
-            collator = new RuleBasedCollator("&a=A &b=B &c=C &d=D &e=E &f=F &g=G &h=H "
-                    + "&i=I &j=J &k=K &l=L &m=M &n=N &o=O &p=P &q=Q &r=R &s=S &t=T "
-                    + "&u=U &v=V &w=W &x=X &y=Y &z=Z");
-            collator.setStrength(Collator.PRIMARY);
+            // XQ4 html-ascii-case-insensitive: ASCII letters A-Z fold to a-z,
+            // all other characters compare by Unicode codepoint order.
+            // Cannot use RuleBasedCollator with PRIMARY strength because that
+            // makes ALL case/accent differences irrelevant, not just ASCII.
             htmlAsciiCaseInsensitiveCollator.compareAndSet(null,
-                    collator.freeze());
+                    new HtmlAsciiCaseInsensitiveCollator());
             collator = htmlAsciiCaseInsensitiveCollator.get();
         }
 
         return collator;
+    }
+
+    private static Collator getUnicodeCaseInsensitiveCollator() {
+        Collator collator = unicodeCaseInsensitiveCollator.get();
+        if (collator == null) {
+            // Unicode case-insensitive: UCA with SECONDARY strength
+            // ignores case differences but respects accents and other distinctions
+            final Collator uca = Collator.getInstance();
+            uca.setStrength(Collator.SECONDARY);
+            unicodeCaseInsensitiveCollator.compareAndSet(null, uca);
+            collator = unicodeCaseInsensitiveCollator.get();
+        }
+
+        return collator;
+    }
+
+    /**
+     * Custom Collator for HTML ASCII case-insensitive comparison.
+     * Folds only ASCII letters A-Z to a-z, then compares by Unicode codepoint.
+     * Non-ASCII characters are compared by their codepoint value without folding.
+     */
+    private static final class HtmlAsciiCaseInsensitiveCollator extends Collator {
+
+        @Override
+        public int compare(final String source, final String target) {
+            int i1 = 0, i2 = 0;
+            while (i1 < source.length() && i2 < target.length()) {
+                int cp1 = source.codePointAt(i1);
+                int cp2 = target.codePointAt(i2);
+                // Fold ASCII uppercase to lowercase only
+                if (cp1 >= 'A' && cp1 <= 'Z') {
+                    cp1 += 32;
+                }
+                if (cp2 >= 'A' && cp2 <= 'Z') {
+                    cp2 += 32;
+                }
+                if (cp1 != cp2) {
+                    return cp1 - cp2;
+                }
+                i1 += Character.charCount(cp1);
+                i2 += Character.charCount(cp2);
+            }
+            return (source.length() - i1) - (target.length() - i2);
+        }
+
+        @Override
+        public CollationKey getCollationKey(final String source) {
+            throw new UnsupportedOperationException("CollationKey not supported for HTML ASCII case-insensitive collation");
+        }
+
+        @Override
+        public RawCollationKey getRawCollationKey(final String source, final RawCollationKey key) {
+            throw new UnsupportedOperationException("RawCollationKey not supported for HTML ASCII case-insensitive collation");
+        }
+
+        @Override
+        public int setVariableTop(final String varTop) {
+            return 0;
+        }
+
+        @Override
+        public int getVariableTop() {
+            return 0;
+        }
+
+        @Override
+        public void setVariableTop(final int varTop) {
+        }
+
+        @Override
+        public VersionInfo getVersion() {
+            return VersionInfo.getInstance(1);
+        }
+
+        @Override
+        public VersionInfo getUCAVersion() {
+            return VersionInfo.getInstance(1);
+        }
+
+        @Override
+        public int hashCode() {
+            return HtmlAsciiCaseInsensitiveCollator.class.hashCode();
+        }
+
+        @Override
+        public Collator freeze() {
+            return this;
+        }
+
+        @Override
+        public boolean isFrozen() {
+            return true;
+        }
+
+        @Override
+        public Collator cloneAsThawed() {
+            return new HtmlAsciiCaseInsensitiveCollator();
+        }
     }
 
     private static Collator getXqtsAsciiCaseBlindCollator() throws Exception {

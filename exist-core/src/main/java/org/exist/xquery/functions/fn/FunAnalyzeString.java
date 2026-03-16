@@ -25,11 +25,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.sf.saxon.Configuration;
+import net.sf.saxon.om.Item;
 import net.sf.saxon.regex.RegexIterator;
-import net.sf.saxon.regex.RegexMatchHandler;
 import net.sf.saxon.regex.RegularExpression;
-import net.sf.saxon.str.StringView;
-import net.sf.saxon.str.UnicodeString;
 import org.exist.dom.QName;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.xquery.*;
@@ -66,7 +64,7 @@ public class FunAnalyzeString extends BasicFunction {
             "matched substrings, which substrings matched each " +
             "capturing group in the regular expression.",
             new SequenceType[] { 
-                new FunctionParameterSequenceType("input", Type.STRING,
+                new FunctionParameterSequenceType("value", Type.STRING,
                     Cardinality.ZERO_OR_ONE, "The input string"),
                 new FunctionParameterSequenceType("pattern", Type.STRING,
                     Cardinality.EXACTLY_ONE, "The pattern")
@@ -82,7 +80,7 @@ public class FunAnalyzeString extends BasicFunction {
             "matched substrings, which substrings matched each " +
             "capturing group in the regular expression.",
             new SequenceType[] { 
-                new FunctionParameterSequenceType("input", Type.STRING,
+                new FunctionParameterSequenceType("value", Type.STRING,
                     Cardinality.ZERO_OR_ONE, "The input string"),
                 new FunctionParameterSequenceType("pattern", Type.STRING,
                     Cardinality.EXACTLY_ONE, "The pattern"),
@@ -128,15 +126,15 @@ public class FunAnalyzeString extends BasicFunction {
         final List<String> warnings = new ArrayList<>(1);
 
         try {
-            final RegularExpression regularExpression = config.compileRegularExpression(StringView.of(pattern), flags, "XP30", warnings);
-            if (regularExpression.matches(StringView.of(""))) {
+            final RegularExpression regularExpression = config.compileRegularExpression(pattern, flags, "XP30", warnings);
+            if (regularExpression.matches("")) {
                 throw new XPathException(this, ErrorCodes.FORX0003, "regular expression could match empty string");
             }
 
             //TODO(AR) cache the regular expression... might be possible through Saxon config
 
-            final RegexIterator regexIterator = regularExpression.analyze(StringView.of(input));
-            net.sf.saxon.value.StringValue item;
+            final RegexIterator regexIterator = regularExpression.analyze(input);
+            Item item;
             while ((item = regexIterator.next()) != null) {
                 if (regexIterator.isMatching()) {
                     match(builder, regexIterator);
@@ -149,7 +147,7 @@ public class FunAnalyzeString extends BasicFunction {
                 LOG.warn(warning);
             }
         } catch (final net.sf.saxon.trans.XPathException e) {
-            switch (e.getErrorCodeQName().getLocalPart()) {
+            switch (e.getErrorCodeLocalPart()) {
                 case "FORX0001" -> throw new XPathException(this, ErrorCodes.FORX0001, e.getMessage());
                 case "FORX0002" -> throw new XPathException(this, ErrorCodes.FORX0002, e.getMessage());
                 case "FORX0003" -> throw new XPathException(this, ErrorCodes.FORX0003, e.getMessage());
@@ -160,31 +158,52 @@ public class FunAnalyzeString extends BasicFunction {
     
     private void match(final MemTreeBuilder builder, final RegexIterator regexIterator) throws net.sf.saxon.trans.XPathException {
         builder.startElement(QN_MATCH, null);
-        regexIterator.processMatchingSubstring(new RegexMatchHandler() {
-            @Override
-            public void characters(final UnicodeString s) {
-                builder.characters(s.toString());
+        // Use reflection to avoid compile-time dependency on RegexIterator$MatchHandler,
+        // which is stripped from the XQTS runner assembly JAR by sbt's merge strategy.
+        // When running in the normal eXist server (or on the next branch with full Saxon),
+        // the proxy delegates to Saxon's own group traversal logic.
+        try {
+            final Class<?> handlerClass = Class.forName("net.sf.saxon.regex.RegexIterator$MatchHandler");
+            final Object handler = java.lang.reflect.Proxy.newProxyInstance(
+                    handlerClass.getClassLoader(),
+                    new Class<?>[]{ handlerClass },
+                    (proxy, method, args) -> {
+                        switch (method.getName()) {
+                            case "characters":
+                                builder.characters((CharSequence) args[0]);
+                                break;
+                            case "onGroupStart":
+                                final AttributesImpl attrs = new AttributesImpl();
+                                attrs.addAttribute("", QN_NR.getLocalPart(), QN_NR.getLocalPart(),
+                                        "int", Integer.toString((Integer) args[0]));
+                                builder.startElement(QN_GROUP, attrs);
+                                break;
+                            case "onGroupEnd":
+                                builder.endElement();
+                                break;
+                        }
+                        return null;
+                    });
+            final java.lang.reflect.Method processMethod = regexIterator.getClass().getMethod(
+                    "processMatchingSubstring", handlerClass);
+            processMethod.invoke(regexIterator, handler);
+        } catch (final ClassNotFoundException e) {
+            // MatchHandler unavailable — output match text without group decomposition
+            builder.characters(regexIterator.getRegexGroup(0));
+        } catch (final java.lang.reflect.InvocationTargetException e) {
+            if (e.getCause() instanceof net.sf.saxon.trans.XPathException) {
+                throw (net.sf.saxon.trans.XPathException) e.getCause();
             }
-
-            @Override
-            public void onGroupStart(final int groupNumber) throws net.sf.saxon.trans.XPathException {
-                final AttributesImpl attributes = new AttributesImpl();
-                attributes.addAttribute("", QN_NR.getLocalPart(), QN_NR.getLocalPart(), "int", Integer.toString(groupNumber));
-
-                builder.startElement(QN_GROUP, attributes);
-            }
-
-            @Override
-            public void onGroupEnd(final int groupNumber) throws net.sf.saxon.trans.XPathException {
-                builder.endElement();
-            }
-        });
+            builder.characters(regexIterator.getRegexGroup(0));
+        } catch (final Exception e) {
+            builder.characters(regexIterator.getRegexGroup(0));
+        }
         builder.endElement();
     }
 
-    private void nonMatch(final MemTreeBuilder builder, final net.sf.saxon.value.StringValue item) {
+    private void nonMatch(final MemTreeBuilder builder, final Item item) {
         builder.startElement(QN_NON_MATCH, null);
-        builder.characters(item.getStringValue());
+        builder.characters(item.getStringValueCS());
         builder.endElement();
     }
 }

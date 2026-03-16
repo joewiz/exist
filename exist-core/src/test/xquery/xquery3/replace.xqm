@@ -27,15 +27,16 @@ declare namespace test="http://exist-db.org/xquery/xqsuite";
 
 declare
     %test:args("")
-    %test:assertError("err:FORX0003")
+    %test:assertEquals("")
     %test:args(".?")
-    %test:assertError("err:FORX0003")
+    %test:assertEquals("")
     %test:args(".*")
-    %test:assertError("err:FORX0003")
+    %test:assertEquals("")
     %test:args("(.*)")
-    %test:assertError("err:FORX0003")
-function rt:empty-match-fails($p as xs:string) {
-    replace("",$p,"")
+    %test:assertEquals("")
+function rt:empty-match-allowed($p as xs:string) {
+    (: XQ4: empty-matching regex no longer raises FORX0003 when ! flag is used :)
+    replace("",$p,"","!")
 };
 
 declare
@@ -77,4 +78,30 @@ declare
     %test:assertError("err:FORX0001")
 function rt:invalid-flag($flag as xs:string) {
     replace("",".+","", $flag)
+};
+
+(: XQ4: function replacement :)
+declare
+    %test:assertEquals("C")
+function rt:function-replacement-basic() {
+    replace("c", "c", function($k, $g) { upper-case($k) })
+};
+
+declare
+    %test:assertEquals("")
+function rt:function-replacement-empty() {
+    replace("b", "b", function($k, $g) { })
+};
+
+declare
+    %test:assertEquals("ddee")
+function rt:function-replacement-duplicate() {
+    replace("de", ".", function($k, $g) { $k || $k })
+};
+
+(: XQ4: empty replacement arg :)
+declare
+    %test:assertEquals("")
+function rt:empty-replacement-arg() {
+    replace("abc", "abc", ())
 };
