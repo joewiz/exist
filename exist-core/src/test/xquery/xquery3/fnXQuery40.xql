@@ -1190,3 +1190,15 @@ function t:functionIdentity-array-self-equal() {
     let $a := [ 1, 2, 3 ]
     return function-identity($a) eq function-identity($a)
 };
+
+(: ==================== fn:load-xquery-module content option ==================== :)
+
+declare
+    %test:assertEquals("world")
+function t:load-xquery-module-content() {
+    let $src := "module namespace m = 'http://example.com/test';
+                 declare function m:hello() as xs:string { 'world' };"
+    let $mod := fn:load-xquery-module('http://example.com/test', map { 'content': $src })
+    let $hello := $mod?functions(QName('http://example.com/test', 'hello'))
+    return $hello?0()
+};
