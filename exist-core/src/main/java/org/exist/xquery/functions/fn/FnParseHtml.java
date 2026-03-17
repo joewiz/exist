@@ -21,25 +21,20 @@
  */
 package org.exist.xquery.functions.fn;
 
-import com.evolvedbinary.j8fu.Either;
+import nu.validator.htmlparser.common.XmlViolationPolicy;
+import nu.validator.htmlparser.sax.HtmlParser;
 import org.exist.Namespaces;
 import org.exist.dom.QName;
 import org.exist.dom.memtree.SAXAdapter;
-import org.exist.util.HtmlToXmlParser;
-import org.exist.validation.ValidationReport;
 import org.exist.xquery.*;
 import org.exist.xquery.functions.map.MapType;
 import org.exist.xquery.value.*;
-import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
-import org.xml.sax.XMLReader;
-import org.xml.sax.helpers.XMLFilterImpl;
 
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
-import java.util.Optional;
 
 /**
  * Implements fn:parse-html (XQuery 4.0).
@@ -121,86 +116,28 @@ public class FnParseHtml extends BasicFunction {
     }
 
     private Sequence parseHtml(final String htmlContent, final boolean failOnError) throws XPathException {
-        final ValidationReport report = new ValidationReport();
         final SAXAdapter adapter = new SAXAdapter(this, context);
 
         try {
-            final Optional<Either<Throwable, XMLReader>> maybeReaderInst =
-                    HtmlToXmlParser.getHtmlToXmlParser(context.getBroker().getConfiguration());
+            // Use Validator.nu HTML5 parser — SAX-based, same pipeline as NekoHTML
+            // but follows the WHATWG HTML5 parsing algorithm. Outputs XHTML namespace
+            // by default, handles <template>, <svg>, <math> foreign content.
+            final HtmlParser reader = new HtmlParser(XmlViolationPolicy.ALTER_INFOSET);
 
-            if (maybeReaderInst.isEmpty()) {
-                throw new XPathException(this, ErrorCodes.FODC0006,
-                        "No HTML parser configured in conf.xml");
-            }
-
-            final Either<Throwable, XMLReader> readerInst = maybeReaderInst.get();
-            if (readerInst.isLeft()) {
-                throw new XPathException(this, ErrorCodes.FODC0006,
-                        "Unable to instantiate HTML parser: " + readerInst.left().get().getMessage());
-            }
-
-            final XMLReader xr = readerInst.right().get();
-
-            // Configure for XHTML namespace output
-            try {
-                xr.setFeature("http://cyberneko.org/html/features/insert-namespaces", true);
-            } catch (final SAXException e) {
-                // Feature not supported by this parser — XHTML namespace may be missing
-            }
-
-            // Configure lowercase element names for XHTML compliance
-            try {
-                xr.setProperty("http://cyberneko.org/html/properties/names/elems", "lower");
-            } catch (final SAXException e) {
-                // Property not supported
-            }
-            try {
-                xr.setProperty("http://cyberneko.org/html/properties/names/attrs", "lower");
-            } catch (final SAXException e) {
-                // Property not supported
-            }
-
-            // Use a SAX filter to ensure ALL elements are in XHTML namespace
-            final XMLFilterImpl xhtmlFilter = new XMLFilterImpl(xr) {
-                private static final String XHTML_NS = "http://www.w3.org/1999/xhtml";
-                @Override
-                public void startElement(String uri, String localName, String qName, Attributes atts)
-                        throws SAXException {
-                    if (uri == null || uri.isEmpty()) {
-                        uri = XHTML_NS;
-                    }
-                    super.startElement(uri, localName.isEmpty() ? qName : localName, qName, atts);
-                }
-                @Override
-                public void endElement(String uri, String localName, String qName) throws SAXException {
-                    if (uri == null || uri.isEmpty()) {
-                        uri = XHTML_NS;
-                    }
-                    super.endElement(uri, localName.isEmpty() ? qName : localName, qName);
-                }
-            };
-
-            xhtmlFilter.setErrorHandler(report);
-            xhtmlFilter.setContentHandler(adapter);
-            xr.setProperty(Namespaces.SAX_LEXICAL_HANDLER, adapter);
+            reader.setContentHandler(adapter);
+            reader.setProperty(Namespaces.SAX_LEXICAL_HANDLER, adapter);
 
             final InputSource src = new InputSource(new StringReader(htmlContent));
-            xhtmlFilter.parse(src);
+            reader.parse(src);
 
         } catch (final SAXException e) {
             if (failOnError) {
                 throw new XPathException(this, ErrorCodes.FODC0011,
                         "HTML parsing error: " + e.getMessage());
             }
-            // Non-fatal: return whatever was parsed
         } catch (final IOException e) {
             throw new XPathException(this, ErrorCodes.FODC0006,
                     "Error reading HTML input: " + e.getMessage());
-        }
-
-        if (!report.isValid() && failOnError) {
-            throw new XPathException(this, ErrorCodes.FODC0011,
-                    "HTML parsing error: " + report.toString());
         }
 
         return adapter.getDocument();
