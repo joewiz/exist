@@ -31,12 +31,23 @@ import org.exist.xquery.value.*;
  */
 public class FnCollation extends BasicFunction {
 
-    public static final FunctionSignature FN_COLLATION = new FunctionSignature(
-            new QName("collation", Function.BUILTIN_FUNCTION_NS),
-            "Returns the URI of the default collation.",
-            null,
-            new FunctionReturnSequenceType(Type.STRING, Cardinality.EXACTLY_ONE,
-                    "The default collation URI"));
+    public static final FunctionSignature[] FN_COLLATION = {
+            new FunctionSignature(
+                    new QName("collation", Function.BUILTIN_FUNCTION_NS),
+                    "Returns the URI of the default collation.",
+                    null,
+                    new FunctionReturnSequenceType(Type.STRING, Cardinality.EXACTLY_ONE,
+                            "The default collation URI")),
+            new FunctionSignature(
+                    new QName("collation", Function.BUILTIN_FUNCTION_NS),
+                    "Returns the collation URI if supported, empty sequence otherwise.",
+                    new SequenceType[] {
+                            new FunctionParameterSequenceType("uri", Type.STRING,
+                                    Cardinality.EXACTLY_ONE, "The collation URI to check")
+                    },
+                    new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_ONE,
+                            "The collation URI if supported"))
+    };
 
     public static final FunctionSignature FN_COLLATION_AVAILABLE = new FunctionSignature(
             new QName("collation-available", Function.BUILTIN_FUNCTION_NS),
@@ -55,6 +66,17 @@ public class FnCollation extends BasicFunction {
     @Override
     public Sequence eval(final Sequence[] args, final Sequence contextSequence) throws XPathException {
         if (isCalledAs("collation")) {
+            if (getArgumentCount() == 1) {
+                // 1-arg: check if the named collation is supported
+                final String uri = args[0].getStringValue();
+                try {
+                    context.getCollator(uri);
+                    return new StringValue(this, uri);
+                } catch (final XPathException e) {
+                    return Sequence.EMPTY_SEQUENCE;
+                }
+            }
+            // 0-arg: return default collation
             final String defaultCollation = context.getDefaultCollation();
             return new StringValue(this, defaultCollation != null ? defaultCollation
                     : org.exist.util.Collations.UNICODE_CODEPOINT_COLLATION_URI);
