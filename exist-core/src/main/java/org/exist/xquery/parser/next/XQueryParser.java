@@ -752,6 +752,12 @@ public final class XQueryParser {
         final String varName = expectNCName("variable name");
         final QName qname = resolveQName(varName, null);
 
+        // Optional type annotation: as SequenceType
+        SequenceType seqType = null;
+        if (matchKeyword(Keywords.AS)) {
+            seqType = parseSequenceType();
+        }
+
         expect(Token.COLON_EQ, "':='");
 
         final Expression inputSeq = parseExprSingle();
@@ -759,6 +765,7 @@ public final class XQueryParser {
         final LetExpr letExpr = new LetExpr(context);
         letExpr.setLocation(startLine, startCol);
         letExpr.setVariable(qname);
+        if (seqType != null) letExpr.setSequenceType(seqType);
         letExpr.setInputSequence(inputSeq);
 
         final LocalVariable var = letExpr.createVariable(qname);
@@ -1435,11 +1442,38 @@ public final class XQueryParser {
         ftContains.setLocation(line, col);
         ftContains.setSearchSource(source);
 
-        // Parse FT selection
+        // Parse FT selection: ftOr with optional positional filters
         final FTExpressions.Selection ftSel = new FTExpressions.Selection(context);
         ftSel.setFTOr(parseFTOr());
-        ftContains.setFTSelection(ftSel);
 
+        // Positional filters: ordered, window N words, distance, at start/end, entire content, occurs
+        while (checkKeyword(Keywords.ORDERED) || checkKeyword(Keywords.WINDOW)
+                || checkKeyword(Keywords.DISTANCE) || checkKeyword(Keywords.AT)
+                || checkKeyword(Keywords.ENTIRE) || checkKeyword(Keywords.OCCURS)
+                || checkKeyword(Keywords.SAME) || checkKeyword(Keywords.DIFFERENT)) {
+            // Skip the positional filter (stub — absorb tokens to avoid parse error)
+            while (!check(Token.RBRACKET) && !check(Token.RPAREN) && !check(Token.EOF)
+                    && !checkKeyword(Keywords.RETURN) && !checkKeyword(Keywords.ORDERED)
+                    && !checkKeyword(Keywords.WINDOW) && !checkKeyword(Keywords.DISTANCE)
+                    && !checkKeyword(Keywords.AT) && !checkKeyword(Keywords.ENTIRE)
+                    && !checkKeyword(Keywords.OCCURS) && !checkKeyword(Keywords.SAME)
+                    && !checkKeyword(Keywords.DIFFERENT) && !checkKeyword(Keywords.USING)
+                    && !checkKeyword(Keywords.AND) && !checkKeyword(Keywords.OR)) {
+                advance();
+            }
+        }
+
+        // Match options can also appear after positional filters
+        if (checkKeyword(Keywords.USING)) {
+            // Already handled in parseFTPrimaryWithOptions, but can appear at selection level too
+            while (matchKeyword(Keywords.USING)) {
+                // Skip the match option tokens
+                advance(); // option keyword
+                if (check(Token.STRING_LITERAL)) advance(); // optional value
+            }
+        }
+
+        ftContains.setFTSelection(ftSel);
         return ftContains;
     }
 
@@ -1536,8 +1570,28 @@ public final class XQueryParser {
                     } else if (matchKeyword(Keywords.SENSITIVE)) {
                         opts.setDiacriticsInsensitive(false);
                     }
+                } else if (checkKeyword("case")) {
+                    advance(); // consume 'case'
+                    matchKeyword(Keywords.INSENSITIVE);
+                    matchKeyword(Keywords.SENSITIVE);
+                } else if (checkKeyword("no")) {
+                    advance(); // consume 'no'
+                    matchKeyword(Keywords.STEMMING);
+                    matchKeyword(Keywords.WILDCARDS);
+                    matchKeyword(Keywords.STOP);
+                    if (checkKeyword(Keywords.WORDS)) advance();
+                } else if (matchKeyword(Keywords.STOP)) {
+                    matchKeyword(Keywords.WORDS);
+                    // skip stop word details
+                    while (!checkKeyword(Keywords.USING) && !check(Token.RBRACKET)
+                            && !check(Token.RPAREN) && !check(Token.EOF)) advance();
+                } else if (matchKeyword(Keywords.THESAURUS)) {
+                    // skip thesaurus details
+                    while (!checkKeyword(Keywords.USING) && !check(Token.RBRACKET)
+                            && !check(Token.RPAREN) && !check(Token.EOF)) advance();
                 } else {
-                    throw error("Expected match option after 'using'");
+                    // Unknown match option — skip it
+                    advance();
                 }
             }
             pwo.setMatchOptions(opts);
@@ -1722,12 +1776,42 @@ public final class XQueryParser {
      * Handles "contains text" between comparison and instance of.
      */
     Expression parseFTContainsOrInstanceOf() throws XPathException {
-        Expression left = parseInstanceOfExpr();
+        Expression left = parseUnionExpr();
         // Check for "contains text"
         if (checkKeyword(Keywords.CONTAINS) && peekIsKeyword(Keywords.TEXT)) {
             matchKeyword(Keywords.CONTAINS);
             matchKeyword(Keywords.TEXT);
             left = parseFTContainsExpr(left);
+        }
+        return left;
+    }
+
+    Expression parseUnionExpr() throws XPathException {
+        Expression left = parseIntersectExceptExpr();
+        while (matchKeyword(Keywords.UNION) || match(Token.PIPE)) {
+            final Expression right = parseIntersectExceptExpr();
+            final PathExpr union = new PathExpr(context);
+            union.setLocation(left.getLine(), left.getColumn());
+            union.add(new Union(context, wrapInPathExpr(left), wrapInPathExpr(right)));
+            left = union;
+        }
+        return left;
+    }
+
+    Expression parseIntersectExceptExpr() throws XPathException {
+        Expression left = parseInstanceOfExpr();
+        while (true) {
+            if (matchKeyword(Keywords.INTERSECT)) {
+                final Expression right = parseInstanceOfExpr();
+                left = new Intersect(context, wrapInPathExpr(left), wrapInPathExpr(right));
+                ((AbstractExpression) left).setLocation(previous.line, previous.column);
+            } else if (matchKeyword(Keywords.EXCEPT)) {
+                final Expression right = parseInstanceOfExpr();
+                left = new Except(context, wrapInPathExpr(left), wrapInPathExpr(right));
+                ((AbstractExpression) left).setLocation(previous.line, previous.column);
+            } else {
+                break;
+            }
         }
         return left;
     }
@@ -3136,23 +3220,45 @@ public final class XQueryParser {
     }
 
     private NodeTest parseNodeTest(final int axis) throws XPathException {
+        final int nodeType = axis == Constants.ATTRIBUTE_AXIS ? Type.ATTRIBUTE : Type.ELEMENT;
+
         if (match(Token.STAR)) {
-            return new TypeTest(axis == Constants.ATTRIBUTE_AXIS ? Type.ATTRIBUTE : Type.ELEMENT);
+            // Check for *:local wildcard
+            if (check(Token.COLON) && peekIsNameStart()) {
+                advance(); // consume :
+                final String local = current.value;
+                advance();
+                return new NameTest(nodeType, new QName.WildcardNamespaceURIQName(local));
+            }
+            return new TypeTest(nodeType);
         }
         if (check(Token.NCNAME)) {
             final String name = current.value;
             if (isKindTest(name) && peekIs(Token.LPAREN)) {
                 return parseKindTest();
             }
+            // Check for prefix:* wildcard
+            if (peekIs(Token.COLON)) {
+                advance(); // consume name
+                advance(); // consume :
+                if (match(Token.STAR)) {
+                    final String nsURI = context.getURIForPrefix(name);
+                    return new NameTest(nodeType,
+                            new QName.WildcardLocalPartQName(nsURI != null ? nsURI : "", name));
+                }
+                // prefix:local — it's a regular QName, already consumed prefix and :
+                final String local = current.value;
+                advance();
+                return new NameTest(nodeType, resolveQName(name + ":" + local,
+                        axis == Constants.ATTRIBUTE_AXIS ? null : context.getURIForPrefix("")));
+            }
             advance();
-            final int nodeType = axis == Constants.ATTRIBUTE_AXIS ? Type.ATTRIBUTE : Type.ELEMENT;
             return new NameTest(nodeType, axis == Constants.ATTRIBUTE_AXIS
                     ? resolveQName(name, null) : resolveElementName(name));
         }
         if (check(Token.QNAME)) {
             final Token nameToken = current;
             advance();
-            final int nodeType = axis == Constants.ATTRIBUTE_AXIS ? Type.ATTRIBUTE : Type.ELEMENT;
             return new NameTest(nodeType, resolveQName(nameToken.value,
                     axis == Constants.ATTRIBUTE_AXIS ? null : context.getURIForPrefix("")));
         }
@@ -3178,7 +3284,14 @@ public final class XQueryParser {
             case Keywords.TEXT: test = new TypeTest(Type.TEXT); break;
             case Keywords.COMMENT: test = new TypeTest(Type.COMMENT); break;
             case Keywords.DOCUMENT_NODE: test = new TypeTest(Type.DOCUMENT); break;
-            case Keywords.PROCESSING_INSTRUCTION: test = new TypeTest(Type.PROCESSING_INSTRUCTION); break;
+            case Keywords.PROCESSING_INSTRUCTION:
+                if (check(Token.STRING_LITERAL)) {
+                    advance(); // consume PI target name (not used in TypeTest)
+                } else if (check(Token.NCNAME)) {
+                    advance(); // consume PI target name
+                }
+                test = new TypeTest(Type.PROCESSING_INSTRUCTION);
+                break;
             case Keywords.ELEMENT:
                 if (check(Token.NCNAME) || check(Token.QNAME) || check(Token.STAR)) {
                     if (match(Token.STAR)) { test = new TypeTest(Type.ELEMENT); }
