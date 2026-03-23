@@ -52,6 +52,18 @@ public final class XQueryParser {
     /** The PathExpr that accumulates prolog declarations and the body. */
     private PathExpr rootExpr;
 
+    /** Returns true if the query declares xquery version "4.0". */
+    private boolean isXQ4() {
+        return context.getXQueryVersion() >= 40;
+    }
+
+    /** Throws a helpful error when XQ4 syntax is used in a 3.1 query. */
+    private XPathException xq4Required(final String feature) {
+        return new XPathException(previous.line, previous.column, ErrorCodes.XPST0003,
+                feature + " requires xquery version \"4.0\". " +
+                "Add 'xquery version \"4.0\";' to enable XQuery 4.0 features.");
+    }
+
     public XQueryParser(final XQueryContext context, final String source) {
         this.context = context;
         this.lexer = new XQueryLexer(source);
@@ -425,7 +437,9 @@ public final class XQueryParser {
                 new FunctionParameterSequenceType(paramName, type, card, "");
 
         // XQ4: default parameter value
-        if (match(Token.COLON_EQ)) {
+        if (check(Token.COLON_EQ)) {
+            if (!isXQ4()) throw xq4Required("Default parameter values");
+            advance();
             param.setDefaultValue(parseExprSingle());
         }
 
@@ -628,7 +642,9 @@ public final class XQueryParser {
                     nextClause = parseGroupByClause();
                 } else if (matchKeyword(Keywords.COUNT)) {
                     nextClause = parseCountClause();
-                } else if (matchKeyword(Keywords.WHILE)) {
+                } else if (checkKeyword(Keywords.WHILE)) {
+                    if (!isXQ4()) throw xq4Required("'while' clause");
+                    advance();
                     nextClause = parseWhileClause();
                 } else {
                     throw error("Expected FLWOR clause or 'return'");
@@ -654,7 +670,9 @@ public final class XQueryParser {
     private FLWORClause parseFLWORInitialClause() throws XPathException {
         FLWORClause first;
         if (matchKeyword(Keywords.FOR)) {
-            if (matchKeyword(Keywords.MEMBER)) {
+            if (checkKeyword(Keywords.MEMBER)) {
+                if (!isXQ4()) throw xq4Required("'for member' clause");
+                advance();
                 first = parseForMemberBinding();
             } else {
                 first = parseForBinding();
@@ -904,7 +922,7 @@ public final class XQueryParser {
         expect(Token.RPAREN, "')'");
 
         // XQ4 braced if: if (cond) { expr } — no else clause
-        if (check(Token.LBRACE) && !checkKeyword(Keywords.THEN)) {
+        if (check(Token.LBRACE) && !checkKeyword(Keywords.THEN) && isXQ4()) {
             match(Token.LBRACE);
             final Expression thenExpr = parseExpr();
             expect(Token.RBRACE, "'}'");
@@ -1143,8 +1161,10 @@ public final class XQueryParser {
             }
         }
 
-        // Optional finally clause (XQ4)
-        if (matchKeyword(Keywords.FINALLY)) {
+        // Optional finally clause (XQ4 only)
+        if (checkKeyword(Keywords.FINALLY)) {
+            if (!isXQ4()) throw xq4Required("'finally' clause");
+            advance();
             expect(Token.LBRACE, "'{'");
             final PathExpr finallyExpr = new PathExpr(context);
             finallyExpr.add(parseExpr());
@@ -1982,7 +2002,9 @@ public final class XQueryParser {
 
     Expression parseOtherwiseExpr() throws XPathException {
         Expression left = parseStringConcatExpr();
-        while (matchKeyword(Keywords.OTHERWISE)) {
+        while (checkKeyword(Keywords.OTHERWISE)) {
+            if (!isXQ4()) throw xq4Required("'otherwise' expression");
+            advance();
             final Expression right = parseStringConcatExpr();
             left = new OtherwiseExpression(context, left, right);
             ((AbstractExpression) left).setLocation(previous.line, previous.column);
@@ -2083,9 +2105,9 @@ public final class XQueryParser {
 
     Expression parsePipelineExpr() throws XPathException {
         Expression left = parseArrowExpr();
-        while (match(Token.PIPELINE)) {
-            // Pipeline: LHS becomes first argument to RHS function call
-            // Using ArrowOperator which prepends LHS as first arg
+        while (check(Token.PIPELINE)) {
+            if (!isXQ4()) throw xq4Required("Pipeline operator '->'");
+            advance();
             left = parseArrowCall(left, false);
         }
         return left;
@@ -2097,7 +2119,9 @@ public final class XQueryParser {
         while (check(Token.ARROW) || check(Token.MAPPING_ARROW)) {
             if (match(Token.ARROW)) {
                 left = parseArrowCall(left, false);
-            } else if (match(Token.MAPPING_ARROW)) {
+            } else if (check(Token.MAPPING_ARROW)) {
+                if (!isXQ4()) throw xq4Required("Mapping arrow operator '=!>'");
+                advance();
                 left = parseArrowCall(left, true);
             }
         }
@@ -3041,18 +3065,21 @@ public final class XQueryParser {
             return parseInlineFunction();
         }
 
-        // Focus function: fn { expr }
+        // Focus function: fn { expr } — XQ4 only
         if (checkKeyword(Keywords.FN) && peekIs(Token.LBRACE)) {
+            if (!isXQ4()) throw xq4Required("Focus function 'fn { }'");
             return parseFocusFunction();
         }
 
-        // QName literal: #prefix:local
+        // QName literal: #prefix:local — XQ4 only
         if (check(Token.HASH) && peekIsNameStart()) {
+            if (!isXQ4()) throw xq4Required("QName literal '#name'");
             return parseQNameLiteral();
         }
 
-        // String constructor: ``[content `{expr}` more]``
+        // String constructor: ``[content `{expr}` more]`` — XQ4 only
         if (check(Token.STRING_CONSTRUCTOR_START)) {
+            if (!isXQ4()) throw xq4Required("String constructor '``[...]``'");
             return parseStringConstructor();
         }
 
@@ -3171,8 +3198,8 @@ public final class XQueryParser {
      * Parses a function argument — either a regular expression or a keyword argument (name := value).
      */
     private Expression parseFunctionArg() throws XPathException {
-        // Check for keyword argument: name := value
-        if (check(Token.NCNAME) && peekIs(Token.COLON_EQ)) {
+        // Check for keyword argument: name := value — XQ4 only
+        if (check(Token.NCNAME) && peekIs(Token.COLON_EQ) && isXQ4()) {
             final String keyName = current.value;
             advance(); // consume name
             advance(); // consume :=
