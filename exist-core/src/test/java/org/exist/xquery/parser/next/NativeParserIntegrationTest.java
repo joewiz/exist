@@ -165,6 +165,50 @@ public class NativeParserIntegrationTest {
     }
 
     // ========================================================================
+    // Arrays, maps, and lookups
+    // ========================================================================
+
+    @Test
+    public void squareArrayConstructor() throws Exception {
+        assertQuery("3", "array:size([1, 2, 3])");
+    }
+
+    @Test
+    public void curlyArrayConstructor() throws Exception {
+        assertQuery("5", "array:size(array { 1 to 5 })");
+    }
+
+    @Test
+    public void mapConstructor() throws Exception {
+        assertQuery("eXist", "map { 'name': 'eXist', 'version': 7 }?name");
+    }
+
+    @Test
+    public void emptyMap() throws Exception {
+        assertQuery("0", "map:size(map {})");
+    }
+
+    @Test
+    public void mapLookupVariable() throws Exception {
+        assertQuery("1", "let $m := map { 'a': 1, 'b': 2 } return $m?a");
+    }
+
+    @Test
+    public void arrayLookupByPosition() throws Exception {
+        assertQuery("y", "let $a := ['x', 'y', 'z'] return $a(2)");
+    }
+
+    @Test
+    public void chainedLookup() throws Exception {
+        assertQuery("1 2 3", "let $d := map { 'items': [1, 2, 3] } return $d?items?*");
+    }
+
+    @Test
+    public void arrayInFlwor() throws Exception {
+        assertQuery("2 4 6", "array:flatten(array { for $i in 1 to 3 return $i * 2 })");
+    }
+
+    // ========================================================================
     // Path expression patterns (regression tests for the path fix)
     // ========================================================================
 

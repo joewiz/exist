@@ -2092,8 +2092,10 @@ public final class XQueryParser {
         while (true) {
             if (check(Token.LBRACKET)) {
                 expr = parsePredicate(expr);
+            } else if (check(Token.QUESTION) && !peekIs(Token.QUESTION)) {
+                // Lookup: expr?key, expr?1, expr?(expr), expr?*
+                expr = parseLookup(expr);
             } else if (check(Token.LPAREN) && isDynamicCallContext(expr)) {
-                // Dynamic function call: $func(args) or expr(args)
                 expr = parseDynamicFunctionCall(expr);
             } else {
                 break;
@@ -2112,7 +2114,8 @@ public final class XQueryParser {
                 || expr instanceof DynamicFunctionCall
                 || expr instanceof FilteredExpression
                 || expr instanceof FunctionCall
-                || expr instanceof InternalFunctionCall;
+                || expr instanceof InternalFunctionCall
+                || expr instanceof Lookup;
     }
 
     /**
@@ -2252,6 +2255,14 @@ public final class XQueryParser {
         // NCName or QName — could be name test, function call, keyword, or computed constructor
         if (check(Token.NCNAME) || check(Token.QNAME)) {
             // Computed constructors
+            // Map and array constructors
+            if (checkKeyword(Keywords.MAP) && peekIs(Token.LBRACE)) {
+                return parsePrimaryExpr();
+            }
+            if (checkKeyword(Keywords.ARRAY) && peekIs(Token.LBRACE)) {
+                return parsePrimaryExpr();
+            }
+
             if (checkKeyword(Keywords.ELEMENT) && peekIsConstructorStart()) {
                 return parseComputedElementConstructor();
             }
@@ -2782,6 +2793,132 @@ public final class XQueryParser {
     }
 
     // ========================================================================
+    // ========================================================================
+    // Array constructors, map constructors, and lookup operators
+    // ========================================================================
+
+    /**
+     * Square bracket array constructor: [1, 2, 3]
+     */
+    Expression parseSquareArrayConstructor() throws XPathException {
+        final int line = current.line, col = current.column;
+        expect(Token.LBRACKET, "'['");
+        final org.exist.xquery.functions.array.ArrayConstructor array =
+                new org.exist.xquery.functions.array.ArrayConstructor(context,
+                        org.exist.xquery.functions.array.ArrayConstructor.ConstructorType.SQUARE_ARRAY);
+        array.setLocation(line, col);
+
+        if (!check(Token.RBRACKET)) {
+            final PathExpr arg = new PathExpr(context);
+            arg.add(parseExprSingle());
+            array.addArgument(arg);
+            while (match(Token.COMMA)) {
+                final PathExpr nextArg = new PathExpr(context);
+                nextArg.add(parseExprSingle());
+                array.addArgument(nextArg);
+            }
+        }
+        expect(Token.RBRACKET, "']'");
+        return array;
+    }
+
+    /**
+     * Curly array constructor: array { expr }
+     */
+    Expression parseCurlyArrayConstructor() throws XPathException {
+        final int line = current.line, col = current.column;
+        matchKeyword(Keywords.ARRAY);
+        expect(Token.LBRACE, "'{'");
+        final org.exist.xquery.functions.array.ArrayConstructor array =
+                new org.exist.xquery.functions.array.ArrayConstructor(context,
+                        org.exist.xquery.functions.array.ArrayConstructor.ConstructorType.CURLY_ARRAY);
+        array.setLocation(line, col);
+
+        if (!check(Token.RBRACE)) {
+            final PathExpr arg = new PathExpr(context);
+            arg.add(parseExpr());
+            array.addArgument(arg);
+        }
+        expect(Token.RBRACE, "'}'");
+        return array;
+    }
+
+    /**
+     * Map constructor: map { "key": value, "key2": value2 }
+     */
+    Expression parseMapConstructor() throws XPathException {
+        final int line = current.line, col = current.column;
+        matchKeyword(Keywords.MAP);
+        expect(Token.LBRACE, "'{'");
+        final org.exist.xquery.functions.map.MapExpr mapExpr =
+                new org.exist.xquery.functions.map.MapExpr(context);
+        mapExpr.setLocation(line, col);
+
+        if (!check(Token.RBRACE)) {
+            parseMapEntry(mapExpr);
+            while (match(Token.COMMA)) {
+                parseMapEntry(mapExpr);
+            }
+        }
+        expect(Token.RBRACE, "'}'");
+        return mapExpr;
+    }
+
+    private void parseMapEntry(final org.exist.xquery.functions.map.MapExpr mapExpr)
+            throws XPathException {
+        final PathExpr key = new PathExpr(context);
+        key.add(parseExprSingle());
+        expect(Token.COLON, "':'");
+        final PathExpr value = new PathExpr(context);
+        value.add(parseExprSingle());
+        mapExpr.map(key, value);
+    }
+
+    /**
+     * Lookup operator: expr?key, expr?1, expr?(expr), expr?*
+     */
+    Expression parseLookup(final Expression leftExpr) throws XPathException {
+        final int line = current.line, col = current.column;
+        expect(Token.QUESTION, "'?'");
+
+        Expression result;
+
+        if (match(Token.STAR)) {
+            // Wildcard lookup: expr?*
+            result = new Lookup(context, leftExpr);
+        } else if (check(Token.INTEGER_LITERAL)) {
+            // Integer position lookup: expr?1
+            final int position = Integer.parseInt(current.value);
+            advance();
+            result = new Lookup(context, leftExpr, position);
+        } else if (check(Token.NCNAME)) {
+            // String key lookup: expr?key
+            final String key = current.value;
+            advance();
+            result = new Lookup(context, leftExpr, key);
+        } else if (match(Token.LPAREN)) {
+            // Computed lookup: expr?(expr)
+            final PathExpr keyExpr = new PathExpr(context);
+            keyExpr.add(parseExpr());
+            expect(Token.RPAREN, "')'");
+            result = new Lookup(context, leftExpr, keyExpr);
+        } else {
+            // Bare ? — treat as wildcard
+            result = new Lookup(context, leftExpr);
+        }
+
+        result.setLocation(line, col);
+        return result;
+    }
+
+    /**
+     * Unary lookup: ?key (applied to context item)
+     */
+    Expression parseUnaryLookup() throws XPathException {
+        return parseLookup(null);
+    }
+
+    // ========================================================================
     // Primary expressions
     // ========================================================================
 
@@ -2793,6 +2930,20 @@ public final class XQueryParser {
 
         if (match(Token.DOLLAR)) return parseVariableRef();
         if (match(Token.LPAREN)) return parseParenthesized();
+
+        // Square bracket array constructor: [1, 2, 3]
+        if (check(Token.LBRACKET)) return parseSquareArrayConstructor();
+
+        // Map constructor: map { "key": value }
+        if (checkKeyword(Keywords.MAP) && peekIs(Token.LBRACE)) return parseMapConstructor();
+
+        // Curly array constructor: array { expr }
+        if (checkKeyword(Keywords.ARRAY) && peekIs(Token.LBRACE)) return parseCurlyArrayConstructor();
+
+        // Unary lookup: ?key (context item lookup)
+        if (check(Token.QUESTION) && !peekIs(Token.QUESTION)) {
+            return parseUnaryLookup();
+        }
 
         if (match(Token.DOT)) {
             final ContextItemExpression ctx = new ContextItemExpression(context);
