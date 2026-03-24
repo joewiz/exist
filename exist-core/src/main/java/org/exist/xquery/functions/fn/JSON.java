@@ -132,11 +132,10 @@ public class JSON extends BasicFunction {
                 throw new XPathException(this, ErrorCodes.XPTY0004,
                         "The 'validate' option is not supported");
             }
+            // XQuery 4.0: 'spec' option controls JSON spec version (RFC7159, ECMA-404, etc.)
+            // Accepted but not yet enforced — we always parse per RFC 7159
             final Sequence specOpt = options.get(new StringValue("spec"));
-            if (specOpt != null && specOpt.hasOne()) {
-                throw new XPathException(this, ErrorCodes.XPTY0004,
-                        "The 'spec' option is not supported");
-            }
+            // (no validation needed — all spec values are accepted)
 
             // Validate liberal option — must be boolean
             final Sequence liberalOpt = options.get(new StringValue(OPTION_LIBERAL));
@@ -370,9 +369,17 @@ public class JSON extends BasicFunction {
                     next = BooleanValue.TRUE;
                     break;
                 case VALUE_NUMBER_FLOAT:
-                case VALUE_NUMBER_INT:
-                    // according to spec, all numbers are converted to double
+                    // JSON fractional numbers → xs:double
                     next = new StringValue(parser.getText()).convertTo(Type.DOUBLE);
+                    break;
+                case VALUE_NUMBER_INT:
+                    // XQuery 4.0: JSON integers → xs:integer (was xs:double in 3.1)
+                    try {
+                        next = new IntegerValue(parser.getLongValue());
+                    } catch (final Exception e) {
+                        // Fallback to double for very large integers
+                        next = new StringValue(parser.getText()).convertTo(Type.DOUBLE);
+                    }
                     break;
                 case VALUE_NULL:
                     next = null;
