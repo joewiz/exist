@@ -3077,9 +3077,8 @@ public final class XQueryParser {
             return parseQNameLiteral();
         }
 
-        // String constructor: ``[content `{expr}` more]`` — XQ4 only
+        // String constructor: ``[content `{expr}` more]`` — XQuery 3.1 (W3C §3.11.4)
         if (check(Token.STRING_CONSTRUCTOR_START)) {
-            if (!isXQ4()) throw xq4Required("String constructor '``[...]``'");
             return parseStringConstructor();
         }
 
