@@ -70,6 +70,7 @@ public class ArrayModule extends AbstractInternalModule {
             new FunctionDef(ArrayFunction.signatures[23], ArrayFunction.class),  // trunk
             new FunctionDef(ArrayFunction.signatures[24], ArrayFunction.class),  // items
             new FunctionDef(ArrayFunction.signatures[25], ArrayFunction.class),  // members
+            new FunctionDef(ArrayFunction.signatures[26], ArrayFunction.class),  // get#3 (with default)
             new FunctionDef(ArrayBuild.signatures[0], ArrayBuild.class),
             new FunctionDef(ArrayBuild.signatures[1], ArrayBuild.class),
             new FunctionDef(ArrayIndexOf.signatures[0], ArrayIndexOf.class),

@@ -314,6 +314,18 @@ public class ArrayFunction extends BasicFunction {
                             new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array")
                     },
                     new FunctionReturnSequenceType(Type.ARRAY_ITEM, Cardinality.ZERO_OR_MORE, "A sequence of single-member arrays")
+            ),
+            // [26] XQuery 4.0: array:get with default value
+            new FunctionSignature(
+                    new QName(Fn.GET.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
+                    "Gets the value at the specified position in the supplied array, or returns the default value " +
+                    "if the position is out of range.",
+                    new SequenceType[] {
+                        new FunctionParameterSequenceType("array", Type.ARRAY_ITEM, Cardinality.EXACTLY_ONE, "The array"),
+                        new FunctionParameterSequenceType("index", Type.INTEGER, Cardinality.EXACTLY_ONE, "The index"),
+                        new FunctionParameterSequenceType("default", Type.ITEM, Cardinality.ZERO_OR_MORE, "The default value")
+                    },
+                    new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The value at $index, or $default if out of range")
             )
     };
 
@@ -356,6 +368,13 @@ public class ArrayFunction extends BasicFunction {
                         return BooleanValue.valueOf(array.getSize() == 0);
                     case GET:
                         final IntegerValue index = (IntegerValue) args[1].itemAt(0);
+                        // XQuery 4.0: 3-arg array:get returns default when index out of range
+                        if (args.length > 2) {
+                            final int idx = index.getInt();
+                            if (idx < 1 || idx > array.getSize()) {
+                                return args[2];
+                            }
+                        }
                         return array.get(index);
                     case APPEND:
                         return array.append(args[1]);

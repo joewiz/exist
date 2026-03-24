@@ -116,6 +116,17 @@ public class MapFunction extends BasicFunction {
         new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
     );
 
+    public final static FunctionSignature FNS_GET_DEFAULT = new FunctionSignature(
+        QN_GET,
+        "Returns the value associated with a supplied key in a given map, or a default value if the key is not present.",
+        new SequenceType[] {
+            new FunctionParameterSequenceType(MapModule.PREFIX, Type.MAP_ITEM, Cardinality.EXACTLY_ONE, "The map"),
+            new FunctionParameterSequenceType("key", Type.ANY_ATOMIC_TYPE, Cardinality.EXACTLY_ONE, "The key to look up"),
+            new FunctionParameterSequenceType("default", Type.ITEM, Cardinality.ZERO_OR_MORE, "The default value to return if the key is not present")
+        },
+        new SequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE)
+    );
+
     public final static FunctionSignature FNS_PUT = new FunctionSignature(
         QN_PUT,
         "Returns a map containing all the contents of the supplied map, but with an additional entry, which replaces any existing entry for the same key.",
@@ -221,7 +232,14 @@ public class MapFunction extends BasicFunction {
     private Sequence get(final Sequence[] args) {
         final AbstractMapType map = (AbstractMapType) args[0].itemAt(0);
         final Sequence value = map.get((AtomicValue) args[1].itemAt(0));
-        return Objects.requireNonNullElse(value, Sequence.EMPTY_SEQUENCE);
+        if (value != null) {
+            return value;
+        }
+        // XQuery 4.0: 3-arg map:get returns default when key is absent
+        if (args.length > 2) {
+            return args[2];
+        }
+        return Sequence.EMPTY_SEQUENCE;
     }
 
     private Sequence put(final Sequence[] args) throws XPathException {
