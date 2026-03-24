@@ -201,6 +201,10 @@ public class FloatValue extends NumericValue {
             case Type.STRING:
                 return new StringValue(getExpression(), getStringValue());
             case Type.DECIMAL:
+                if (Float.isNaN(value) || Float.isInfinite(value)) {
+                    throw new XPathException(getExpression(), ErrorCodes.FOCA0002,
+                            "cannot convert xs:float('" + getStringValue() + "') to xs:decimal");
+                }
                 return new DecimalValue(getExpression(), value);
             case Type.INTEGER:
             case Type.NON_POSITIVE_INTEGER:

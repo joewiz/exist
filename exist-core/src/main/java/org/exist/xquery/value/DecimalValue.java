@@ -256,7 +256,7 @@ public class DecimalValue extends NumericValue {
             case Type.UNSIGNED_SHORT:
             case Type.UNSIGNED_BYTE:
             case Type.POSITIVE_INTEGER:
-                return new IntegerValue(getExpression(), value.longValue(), requiredType);
+                return new IntegerValue(getExpression(), value.toBigInteger(), requiredType);
             case Type.BOOLEAN:
                 return value.signum() == 0 ? BooleanValue.FALSE : BooleanValue.TRUE;
             default:
@@ -293,6 +293,13 @@ public class DecimalValue extends NumericValue {
 
     @Override
     protected @Nullable IntSupplier createComparisonWith(final NumericValue other) {
+        // Handle NaN/INF before attempting BigDecimal conversion
+        if (other.isNaN()) {
+            return null;
+        }
+        if (other.isInfinite()) {
+            return other.isPositiveInfinity() ? () -> Constants.INFERIOR : () -> Constants.SUPERIOR;
+        }
         return switch (other) {
             case IntegerValue integerValue -> () -> value.compareTo(new BigDecimal(integerValue.value));
             case DecimalValue decimalValue -> () -> value.compareTo(decimalValue.value);

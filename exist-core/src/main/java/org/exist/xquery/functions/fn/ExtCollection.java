@@ -77,13 +77,11 @@ public class ExtCollection extends BasicFunction {
 
     @Override
     public Sequence eval(final Sequence[] args, final Sequence contextSequence) throws XPathException {
-        final URI collectionUri;
         if (args.length == 0 || args[0].isEmpty()) {
-            collectionUri = null;
-        } else {
-            collectionUri = asUri(args[0].itemAt(0).getStringValue());
+            return getDefaultCollectionItems();
         }
 
+        final URI collectionUri = asUri(args[0].itemAt(0).getStringValue());
         return getCollectionItems(new URI[] { collectionUri });
     }
 

@@ -23,6 +23,7 @@ package org.exist.xquery.value;
 
 import com.ibm.icu.text.Collator;
 import org.exist.util.ByteConversion;
+import org.exist.xquery.Constants;
 import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
@@ -261,6 +262,13 @@ public class IntegerValue extends NumericValue {
 
     @Override
     protected @Nullable IntSupplier createComparisonWith(final NumericValue other) {
+        // Handle NaN/INF before attempting BigDecimal conversion
+        if (other.isNaN()) {
+            return null;
+        }
+        if (other.isInfinite()) {
+            return other.isPositiveInfinity() ? () -> Constants.INFERIOR : () -> Constants.SUPERIOR;
+        }
         return switch (other) {
             case IntegerValue integerValue -> () -> value.compareTo(integerValue.value);
             case DecimalValue decimalValue -> () -> new BigDecimal(value).compareTo(decimalValue.value);
