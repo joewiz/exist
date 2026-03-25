@@ -50,6 +50,7 @@ public class MapFunction extends BasicFunction {
     private static final QName QN_REMOVE = new QName("remove", MapModule.NAMESPACE_URI, MapModule.PREFIX);
     private static final QName QN_FOR_EACH = new QName("for-each", MapModule.NAMESPACE_URI, MapModule.PREFIX);
     private static final QName QN_FIND = new QName("find", MapModule.NAMESPACE_URI, MapModule.PREFIX);
+    private static final QName QN_EMPTY = new QName("empty", MapModule.NAMESPACE_URI, MapModule.PREFIX);
 
     private static final FunctionParameterSequenceType FS_PARAM_MAPS = optManyParam("maps", Type.MAP_ITEM, "Existing maps to merge to create a new map.");
 
@@ -76,6 +77,14 @@ public class MapFunction extends BasicFunction {
             returns(Type.ARRAY_ITEM, "An array containing the found values with the input key"),
             optManyParam("input", Type.ITEM, "The sequence of maps to search"),
             param("key", Type.ANY_ATOMIC_TYPE, "The key to match")
+    );
+
+    // XQuery 4.0: map:empty()
+    public final static FunctionSignature FNS_EMPTY = new FunctionSignature(
+        QN_EMPTY,
+        "Returns an empty map.",
+        FunctionSignature.NO_ARGS,
+        new SequenceType(Type.MAP_ITEM, Cardinality.EXACTLY_ONE)
     );
 
     public final static FunctionSignature FNS_SIZE = new FunctionSignature(
@@ -203,6 +212,8 @@ public class MapFunction extends BasicFunction {
             return forEach(args);
         } else if (isCalledAs(QN_FIND.getLocalPart())) {
             return find(args);
+        } else if (isCalledAs(QN_EMPTY.getLocalPart())) {
+            return new MapType(context);
         }
         throw new XPathException(this, "No function: " + getName() + "#" + getSignature().getArgumentCount());
     }
