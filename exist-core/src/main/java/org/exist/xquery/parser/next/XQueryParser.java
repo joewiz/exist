@@ -152,7 +152,7 @@ public final class XQueryParser {
     private void parseModuleDecl() throws XPathException {
         matchKeyword(Keywords.MODULE);
         expectKeyword(Keywords.NAMESPACE);
-        final String prefix = expectNCName("module prefix");
+        final String prefix = expectName("module prefix");
         expect(Token.EQ, "'='");
         if (!check(Token.STRING_LITERAL)) throw error("Expected module namespace URI");
         final String uri = current.value;
@@ -422,7 +422,7 @@ public final class XQueryParser {
 
     private void parseFunctionParam(final List<FunctionParameterSequenceType> params) throws XPathException {
         expect(Token.DOLLAR, "'$'");
-        final String paramName = expectNCName("parameter name");
+        final String paramName = expectName("parameter name");
 
         int type = Type.ITEM;
         Cardinality card = Cardinality.ZERO_OR_MORE;
@@ -517,7 +517,7 @@ public final class XQueryParser {
 
     private void parseModuleImport() throws XPathException {
         expectKeyword(Keywords.NAMESPACE);
-        final String prefix = expectNCName("module prefix");
+        final String prefix = expectName("module prefix");
         expect(Token.EQ, "'='");
 
         if (!check(Token.STRING_LITERAL)) throw error("Expected module namespace URI");
@@ -593,16 +593,18 @@ public final class XQueryParser {
         if (checkKeyword(Keywords.COPY)) {
             return parseTransformExpr();
         }
-        if (checkKeyword(Keywords.INSERT)) {
+        // XQUF keywords — only treat as update expressions when NOT followed by (
+        // (insert/delete/replace/rename are also valid function names)
+        if (checkKeyword(Keywords.INSERT) && !peekIs(Token.LPAREN)) {
             return parseInsertExpr();
         }
-        if (checkKeyword(Keywords.DELETE)) {
+        if (checkKeyword(Keywords.DELETE) && !peekIs(Token.LPAREN)) {
             return parseDeleteExpr();
         }
-        if (checkKeyword(Keywords.REPLACE)) {
+        if (checkKeyword(Keywords.REPLACE) && !peekIs(Token.LPAREN)) {
             return parseReplaceExpr();
         }
-        if (checkKeyword(Keywords.RENAME)) {
+        if (checkKeyword(Keywords.RENAME) && !peekIs(Token.LPAREN)) {
             return parseRenameExpr();
         }
         // eXist legacy update syntax: update insert/replace/delete/rename/value
@@ -656,9 +658,9 @@ public final class XQueryParser {
                 lastClause = findLastInChain(nextClause);
             }
 
-            // 'return'
+            // 'return' — uses parseExpr to allow comma-separated sequences
             expectKeyword(Keywords.RETURN);
-            final Expression returnExpr = parseExprSingle();
+            final Expression returnExpr = parseExpr();
             lastClause.setReturnExpression(new DebuggableExpression(returnExpr));
 
             return firstClause;
@@ -700,14 +702,14 @@ public final class XQueryParser {
         final int startCol = previous.column;
 
         expect(Token.DOLLAR, "'$'");
-        final String varName = expectNCName("variable name");
+        final String varName = expectName("variable name");
         final QName qname = resolveQName(varName, null);
 
         // Optional positional variable: at $pos
         QName posVar = null;
         if (matchKeyword(Keywords.AT)) {
             expect(Token.DOLLAR, "'$'");
-            posVar = resolveQName(expectNCName("positional variable name"), null);
+            posVar = resolveQName(expectName("positional variable name"), null);
         }
 
         expectKeyword(Keywords.IN);
@@ -745,7 +747,7 @@ public final class XQueryParser {
         final int startCol = previous.column;
 
         expect(Token.DOLLAR, "'$'");
-        final String varName = expectNCName("variable name");
+        final String varName = expectName("variable name");
         final QName qname = resolveQName(varName, null);
 
         expectKeyword(Keywords.IN);
@@ -767,7 +769,7 @@ public final class XQueryParser {
         final int startCol = previous.column;
 
         expect(Token.DOLLAR, "'$'");
-        final String varName = expectNCName("variable name");
+        final String varName = expectName("variable name");
         final QName qname = resolveQName(varName, null);
 
         // Optional type annotation: as SequenceType
@@ -859,7 +861,7 @@ public final class XQueryParser {
         final List<GroupSpec> specs = new ArrayList<>();
         do {
             expect(Token.DOLLAR, "'$'");
-            final String varName = expectNCName("grouping variable");
+            final String varName = expectName("grouping variable");
             final QName qname = resolveQName(varName, null);
 
             Expression groupExpr = null;
@@ -880,7 +882,7 @@ public final class XQueryParser {
         final int line = previous.line;
         final int col = previous.column;
         expect(Token.DOLLAR, "'$'");
-        final String varName = expectNCName("count variable");
+        final String varName = expectName("count variable");
         final QName qname = resolveQName(varName, null);
         final CountClause clause = new CountClause(context, qname);
         clause.setLocation(line, col);
@@ -956,7 +958,7 @@ public final class XQueryParser {
         final LocalVariable mark = context.markLocalVariables(false);
         try {
             expect(Token.DOLLAR, "'$'");
-            final String varName = expectNCName("variable name");
+            final String varName = expectName("variable name");
             final QName qname = resolveQName(varName, null);
 
             expectKeyword(Keywords.IN);
@@ -1088,7 +1090,7 @@ public final class XQueryParser {
         QName defaultVar = null;
         if (check(Token.DOLLAR)) {
             match(Token.DOLLAR);
-            defaultVar = resolveQName(expectNCName("default variable"), null);
+            defaultVar = resolveQName(expectName("default variable"), null);
         }
 
         expectKeyword(Keywords.RETURN);
@@ -1273,7 +1275,7 @@ public final class XQueryParser {
             final List<XQUFExpressions.CopyBinding> bindings = new ArrayList<>();
             do {
                 expect(Token.DOLLAR, "'$'");
-                final String varName = expectNCName("copy variable name");
+                final String varName = expectName("copy variable name");
                 final QName qname = resolveQName(varName, null);
                 expect(Token.COLON_EQ, "':='");
                 final Expression sourceExpr = parseExprSingle();
@@ -1428,9 +1430,15 @@ public final class XQueryParser {
             }
         }
 
-        // Second expression (not for delete)
+        // Separator keyword and second expression (not for delete)
         Expression p2 = null;
         if (type != 3) {
+            // replace/value use 'with', rename uses 'as', insert has no separator (position keyword already consumed)
+            if (type == 0 || type == 1) {
+                matchKeyword(Keywords.WITH); // consume 'with' between expressions
+            } else if (type == 4) {
+                matchKeyword(Keywords.AS); // consume 'as' between expressions
+            }
             p2 = parseExprSingle();
         }
 
