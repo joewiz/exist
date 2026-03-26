@@ -113,37 +113,102 @@ Separates compilation from execution to identify where module overhead lives.
 *Negative delta = full is faster (JIT warmth from running after minimal)
 
 Compilation dominates query cost at **~80-94 µs** per query. Execution of
-a trivial expression is **< 3 µs**. Module count has no measurable effect
-on compilation speed — the XQuery parser and compiler do not scale with
-the number of registered modules.
+a trivial expression is **< 3 µs**.
+
+### Benchmark 8: Module Instantiation — Code-Level Analysis
+
+**⚠ CONFIRMED: Modules ARE re-instantiated per XQueryContext — not shared.**
+
+Every `new XQueryContext(pool)` creates fresh module instances via reflection:
+- `XQueryContext.loadDefaults()` iterates ALL built-in modules from conf.xml
+- For each module, `addBuiltInModuleOrDeclareNamespace()` checks `getModules()` on the fresh empty map
+- Finding nothing, it calls `instantiateModule()` which does:
+  1. `Class.getConstructor()` — reflection lookup
+  2. `constructor.newInstance()` — creates new module instance
+  3. `module.prepare(ctx)` — module-specific initialization
+
+| Metric | Value |
+|---|---|
+| Configured modules | 14 |
+| Modules in fresh context | 14 |
+| Module instances **shared** between contexts | **0** |
+| Module instances **re-created** per context | **14** |
+
+Context creation with 14 modules: **avg 11 µs** (median 10.5 µs).
+
+### Benchmark 9: Per-Module Instantiation Cost
+
+| Module | Constructor | prepare() | Total |
+|---|---|---|---|
+| MapModule | 621 ns | 65 ns | 686 ns |
+| UtilModule | 614 ns | 223 ns | 837 ns |
+| ResponseModule | 550 ns | 37 ns | 587 ns |
+| SecurityManagerModule | 577 ns | 39 ns | 616 ns |
+| TransformModule | 547 ns | 40 ns | 587 ns |
+| XMLDBModule | 617 ns | 36 ns | 653 ns |
+| ArrayModule | 545 ns | 44 ns | 589 ns |
+| MathModule | 557 ns | 38 ns | 595 ns |
+| InspectionModule | 559 ns | 36 ns | 595 ns |
+| SessionModule | 518 ns | 32 ns | 550 ns |
+| SystemModule | 574 ns | 36 ns | 610 ns |
+| ValidationModule | 536 ns | 126 ns | 662 ns |
+| FnModule | 550 ns | 27 ns | 577 ns |
+| RequestModule | 549 ns | 30 ns | 579 ns |
+| **GRAND TOTAL** | | | **8,723 ns** |
+
+**Per-module cost: ~623 ns** (constructor ~560 ns + prepare ~63 ns).
+
+For a 44-module production config: **~27 µs per context creation** from module
+instantiation alone. The `prepare()` cost is minimal for these core modules.
+Extension modules (Lucene, mail, scheduler) might have heavier `prepare()` calls.
+
+### Benchmark 10: Compilation vs. Function Count
+
+| Query | Functions | Avg compile (ns) |
+|---|---|---|
+| `count(1 to 10)` | 1 fn: call | 171,364 |
+| `util:uuid()` | 1 module call | 96,009 |
+| `util:uuid() + system:get-version()` | 2 module calls | 235,837 |
+| 9 fn: calls (count, sum, etc.) | 9 fn: calls | 932,667 |
+
+Compilation time scales with **number of function calls in the query**, not
+with the number of modules in scope. The 14 loaded modules don't add overhead
+to queries that don't use them.
 
 ## Interpretation
 
 ### For PR #4481 (Lazy Module Loading)
 
-**Adam's claim (issue #1848) is not supported by current data.**
+**Adam's claim is PARTIALLY confirmed at the code level.**
 
 The claim: "For every query, we compile every module loaded in conf.xml."
 
-Our measurement: 10,000 queries show **no per-query overhead** from extra
-modules. Full config (14 modules) runs at the same speed as minimal (4 modules):
-~83 µs/query vs ~85 µs/query (Benchmark 5).
+**What we found:**
+1. **Module re-instantiation is real**: Every `new XQueryContext()` calls
+   `instantiateModule()` for ALL built-in modules — doing reflection
+   (`Class.getConstructor`, `newInstance()`) and `prepare()` for each one.
+   Module instances are NOT shared between contexts.
 
-XQueryContext creation does scale with module count, but at only **~260 ns
-per module** — for a 44-module production config that's ~10 µs per context,
-which is ~12% of compilation time (80 µs). Measurable but not the "compile
-every module" cost described in the issue.
+2. **The cost is measurable but small**: ~623 ns per module, totaling ~8.7 µs
+   for 14 modules and extrapolating to ~27 µs for 44 production modules.
+   This is ~30% of compilation time (80-90 µs) — not negligible, but also
+   not the dominating factor.
 
-Startup savings from lazy loading: at most **~40 ms** on a 44-module system.
-Total BrokerPool startup is 5-10 seconds, so module loading is **< 1%**.
+3. **The per-query benchmark (10k queries) shows no aggregate effect** because
+   the 27 µs per-context overhead is dwarfed by query compilation (80-90 µs)
+   and other per-query costs. At scale (millions of queries), the overhead
+   adds up: 27 µs × 1M queries = 27 seconds of CPU time.
 
-Memory overhead per module is negligible — modules share state through the
-BrokerPool registry.
+4. **Heavy extension modules could be worse**: Our test only covers 14 core
+   modules with lightweight `prepare()` calls (~63 ns average). Production
+   modules like Lucene, scheduler, and mail might have heavier initialization.
 
-**Recommendation**: The data does not justify lazy loading for performance
-reasons. The existing eager loading approach has negligible per-query and
-per-startup cost. If PR #4481 is pursued, it should be motivated by
-**startup time for embedded/minimal applications**, not per-query performance.
+**Recommendation**: Lazy loading would eliminate the per-query reflection +
+instantiation cost for unused modules. For a 44-module production config,
+this could save ~27 µs per query for queries that only use core functions.
+The optimization is justified for **high-throughput deployments** (>10k
+queries/sec) where microsecond-level savings compound. For typical
+interactive use, the benefit is marginal.
 
 ### For PR #6182 (Module Discovery / registered-functions)
 
@@ -204,10 +269,22 @@ for users.
 
 ### Key finding: Adam's per-query claim (issue #1848)
 
+**Partially confirmed.** Modules ARE re-instantiated per context via reflection,
+but the per-query cost (~623 ns/module, ~27 µs for 44 modules) is small
+relative to compilation (~80-170 µs) and doesn't show up in aggregate
+query-level benchmarks.
+
+| What Adam claimed | What we measured | Verdict |
+|---|---|---|
+| "Compile every module per query" | Modules re-instantiated per context via reflection | **Confirmed** |
+| Per-query cost proportional to modules | ~623 ns/module (27 µs for 44 modules) | **Real but small** |
+| This is inefficient and slows things down | Not visible in aggregate benchmarks (85 µs/query) | **Marginal impact** |
+
 | Operation | Minimal (4 mod) | Full (14 mod) | Delta | Per-module |
 |---|---|---|---|---|
 | Query (compile+execute) | 85 µs | 84 µs | **~0** | ~0 |
 | XQueryContext creation | 15.5 µs | 18.1 µs | **+2.6 µs** | 260 ns |
+| Module instantiation (direct) | — | 8.7 µs | — | 623 ns |
 | Compile only | 94 µs | 79 µs | **~0*** | ~0 |
 
 *Full config faster than minimal due to JIT warmth — run order artifact
