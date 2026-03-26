@@ -418,13 +418,14 @@ public class FunDeepEqual extends CollatingFunction {
                 if (getEffectiveNodeType(na) != getEffectiveNodeType(nb)) {
                     return Constants.INFERIOR;
                 }
+                if (getEffectiveNodeType(na) != getEffectiveNodeType(nb)) {
+                    return Constants.INFERIOR;
+                }
                 if (getEffectiveNodeType(na) == Node.ELEMENT_NODE) {
                     final int cmp = compareElements(na, nb, collator);
                     if (cmp != Constants.EQUAL) {
                         return cmp;
                     }
-                } else {
-                    throw new RuntimeException("unexpected node type " + getEffectiveNodeType(na));
                 }
             } else {
                 return Constants.INFERIOR;
@@ -434,32 +435,23 @@ public class FunDeepEqual extends CollatingFunction {
     }
 
     /**
-     * Collect significant children (text + element nodes), merging adjacent
-     * text nodes that result from skipping comments/PIs.
+     * Collect significant children for deep-equal comparison.
+     * Per XQ3.1 spec §15.3.1: "children are compared after removing all
+     * comment and processing-instruction nodes" — but text nodes are
+     * NOT merged (elements with split text nodes differ from single text).
      */
-    private static List<Object> mergeTextNodes(final Node parent) {
+    static List<Object> mergeTextNodes(final Node parent) {
         final List<Object> result = new ArrayList<>();
-        StringBuilder currentText = null;
         Node child = parent.getFirstChild();
         while (child != null) {
             final int nodeType = getEffectiveNodeType(child);
             if (nodeType == Node.TEXT_NODE) {
-                if (currentText == null) {
-                    currentText = new StringBuilder();
-                }
-                currentText.append(getNodeValue(child));
+                result.add(getNodeValue(child));
             } else if (nodeType == Node.ELEMENT_NODE) {
-                if (currentText != null) {
-                    result.add(currentText.toString());
-                    currentText = null;
-                }
                 result.add(child);
             }
-            // Skip comments, PIs, and other non-significant nodes
+            // Skip comments and PIs per spec
             child = child.getNextSibling();
-        }
-        if (currentText != null) {
-            result.add(currentText.toString());
         }
         return result;
     }
