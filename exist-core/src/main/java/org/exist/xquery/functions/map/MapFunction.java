@@ -169,6 +169,22 @@ public class MapFunction extends BasicFunction {
             )
     );
 
+    // --- XQuery 4.0 map functions ---
+    public static final FunctionSignature FNS_EMPTY = functionSignature(
+            Fn.EMPTY.fname,
+            "Returns an empty map.",
+            RETURN_MAP
+    );
+
+    public static final FunctionSignature FNS_GET_DEFAULT = functionSignature(
+            Fn.GET_DEFAULT.fname,
+            "Returns the value associated with a key, or a default value if the key is not present.",
+            RETURN_OPT_MANY_ITEM,
+            PARAM_INPUT_MAP,
+            PARAM_KEY,
+            optManyParam("default", Type.ITEM, "The default value")
+    );
+
     private AnalyzeContextInfo cachedContextInfo;
 
     public MapFunction(final XQueryContext context, final FunctionSignature signature) {
@@ -239,6 +255,8 @@ public class MapFunction extends BasicFunction {
             case ENTRY -> entry(args);
             case REMOVE -> remove(args);
             case FOR_EACH -> forEach(args);
+            case EMPTY -> new MapType(this, this.context);
+            case GET_DEFAULT -> getDefault(args);
         };
     }
 
@@ -433,6 +451,16 @@ public class MapFunction extends BasicFunction {
         }
     }
 
+    private Sequence getDefault(final Sequence[] args) throws XPathException {
+        final AbstractMapType map = (AbstractMapType) args[0].itemAt(0);
+        final AtomicValue key = (AtomicValue) args[1].itemAt(0);
+        final Sequence value = map.get(key);
+        if (value == null || value.isEmpty()) {
+            return args[2];
+        }
+        return value;
+    }
+
     private enum Fn {
         SIZE("size"),
         ENTRY("entry"),
@@ -443,7 +471,10 @@ public class MapFunction extends BasicFunction {
         KEYS("keys"),
         REMOVE("remove"),
         FOR_EACH("for-each"),
-        FIND("find");
+        FIND("find"),
+        // --- XQuery 4.0 ---
+        EMPTY("empty"),
+        GET_DEFAULT("get-default");
 
         final static Map<String, MapFunction.Fn> fnMap = new HashMap<>();
 
