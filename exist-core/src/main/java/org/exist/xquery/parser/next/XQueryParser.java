@@ -2346,10 +2346,20 @@ public final class XQueryParser {
             return ctx;
         }
 
-        // * (wildcard child step)
+        // * (wildcard child step) or *:local
         if (check(Token.STAR) && !isBinaryOperatorContext()) {
             match(Token.STAR);
-            final LocationStep step = new LocationStep(context, Constants.CHILD_AXIS, new TypeTest(Type.ELEMENT));
+            NodeTest wildTest;
+            if (check(Token.COLON) && peekIsNameStart()) {
+                // *:local wildcard
+                advance(); // consume :
+                final String local = current.value;
+                advance();
+                wildTest = new NameTest(Type.ELEMENT, new QName.WildcardNamespaceURIQName(local));
+            } else {
+                wildTest = new TypeTest(Type.ELEMENT);
+            }
+            final LocationStep step = new LocationStep(context, Constants.CHILD_AXIS, wildTest);
             step.setLocation(previous.line, previous.column);
             while (check(Token.LBRACKET)) parsePredicate(step);
             return step;
@@ -2420,12 +2430,23 @@ public final class XQueryParser {
                 return parsePrimaryExpr();
             }
 
-            // Name test (abbreviated child::name)
+            // Name test (abbreviated child::name) — handle prefix:* wildcards
             final Token nameToken = current;
             advance();
-            final QName nameQN = resolveElementName(nameToken.value);
-            final NameTest test = new NameTest(Type.ELEMENT, nameQN);
-            final LocationStep step = new LocationStep(context, Constants.CHILD_AXIS, test);
+
+            NodeTest nameTest;
+            if (check(Token.COLON) && peekIs(Token.STAR)) {
+                // prefix:* wildcard
+                advance(); // consume :
+                advance(); // consume *
+                final String nsURI = context.getURIForPrefix(nameToken.value);
+                nameTest = new NameTest(Type.ELEMENT,
+                        new QName.WildcardLocalPartQName(nsURI != null ? nsURI : "", nameToken.value));
+            } else {
+                nameTest = new NameTest(Type.ELEMENT, resolveElementName(nameToken.value));
+            }
+
+            final LocationStep step = new LocationStep(context, Constants.CHILD_AXIS, nameTest);
             step.setLocation(nameToken.line, nameToken.column);
             while (check(Token.LBRACKET)) parsePredicate(step);
             return step;
@@ -2556,20 +2577,29 @@ public final class XQueryParser {
         final int line = current.line, col = current.column;
         advance(); // consume 'processing-instruction'
 
-        // PI target name
-        final String target = expectName("PI target");
+        final DynamicPIConstructor pi = new DynamicPIConstructor(context);
+        pi.setLocation(line, col);
 
+        // PI target: static name or { expr }
+        if (match(Token.LBRACE)) {
+            final PathExpr nameExpr = new PathExpr(context);
+            nameExpr.add(parseExpr());
+            expect(Token.RBRACE, "'}'");
+            pi.setNameExpr(nameExpr);
+        } else {
+            final String target = expectName("PI target");
+            pi.setNameExpr(new LiteralValue(context, new StringValue(target)));
+        }
+
+        // Content: { expr }
         expect(Token.LBRACE, "'{'");
         final PathExpr contentExpr = new PathExpr(context);
         if (!check(Token.RBRACE)) {
             contentExpr.add(parseExpr());
         }
         expect(Token.RBRACE, "'}'");
-
-        final DynamicPIConstructor pi = new DynamicPIConstructor(context);
-        pi.setLocation(line, col);
-        pi.setNameExpr(new LiteralValue(context, new StringValue(target)));
         pi.setContentExpr(contentExpr);
+
         return pi;
     }
 
