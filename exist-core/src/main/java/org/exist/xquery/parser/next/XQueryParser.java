@@ -52,6 +52,9 @@ public final class XQueryParser {
     /** The PathExpr that accumulates prolog declarations and the body. */
     private PathExpr rootExpr;
 
+    /** Track whether we're inside a function body (declared or inline) for XPDY0002 */
+    private boolean inFunctionBody = false;
+
     /** Returns true if the query declares xquery version "4.0". */
     private boolean isXQ4() {
         return context.getXQueryVersion() >= 40;
@@ -407,11 +410,17 @@ public final class XQueryParser {
         } else {
             expect(Token.LBRACE, "'{'");
             final PathExpr body = new PathExpr(context);
-            if (!check(Token.RBRACE)) {
-                body.add(parseExpr());
+            final boolean savedInFunctionBody = inFunctionBody;
+            inFunctionBody = true;
+            try {
+                if (!check(Token.RBRACE)) {
+                    body.add(parseExpr());
+                }
+                expect(Token.RBRACE, "'}'");
+                func.setFunctionBody(body);
+            } finally {
+                inFunctionBody = savedInFunctionBody;
             }
-            expect(Token.RBRACE, "'}'");
-            func.setFunctionBody(body);
         }
 
         expect(Token.SEMICOLON, "';'");
@@ -1333,6 +1342,8 @@ public final class XQueryParser {
         // Function body
         expect(Token.LBRACE, "'{'");
         final LocalVariable mark = context.markLocalVariables(false);
+        final boolean savedInFunctionBody = inFunctionBody;
+        inFunctionBody = true;
         try {
             // Declare parameter variables in scope
             for (final FunctionParameterSequenceType param : params) {
@@ -1348,6 +1359,7 @@ public final class XQueryParser {
 
             func.setFunctionBody(body);
         } finally {
+            inFunctionBody = savedInFunctionBody;
             context.popLocalVariables(mark);
         }
 
@@ -1755,12 +1767,15 @@ public final class XQueryParser {
 
         // Parse body with context item in scope
         final LocalVariable mark = context.markLocalVariables(false);
+        final boolean savedInFunctionBody = inFunctionBody;
+        inFunctionBody = true;
         try {
             final PathExpr body = new PathExpr(context);
             body.add(parseExpr());
             expect(Token.RBRACE, "'}'");
             func.setFunctionBody(body);
         } finally {
+            inFunctionBody = savedInFunctionBody;
             context.popLocalVariables(mark);
         }
 
@@ -2027,9 +2042,9 @@ public final class XQueryParser {
         }
         final QName qname = resolveQName(typeName, context.getDefaultFunctionNamespace());
         final int type = Type.getType(qname);
-        if (type == Type.ITEM) {
+        if (type == Type.ITEM || !Type.subTypeOf(type, Type.ANY_ATOMIC_TYPE)) {
             throw new XPathException(previous.line, previous.column, ErrorCodes.XPST0051,
-                    "Unknown atomic type: " + typeName);
+                    "Unknown simple type " + typeName);
         }
         return type;
     }
@@ -2451,6 +2466,10 @@ public final class XQueryParser {
 
     Expression parsePathExpr() throws XPathException {
         if (match(Token.SLASH)) {
+            if (inFunctionBody) {
+                throw new XPathException(previous.line, previous.column, ErrorCodes.XPDY0002,
+                        "Leading '/' selects nothing, ContextItem is absent in function body");
+            }
             final PathExpr path = new PathExpr(context);
             path.setLocation(previous.line, previous.column);
             path.add(new RootNode(context));
@@ -2461,6 +2480,10 @@ public final class XQueryParser {
             return path;
         }
         if (match(Token.DSLASH)) {
+            if (inFunctionBody) {
+                throw new XPathException(previous.line, previous.column, ErrorCodes.XPDY0002,
+                        "Leading '//' selects nothing, ContextItem is absent in function body");
+            }
             final PathExpr path = new PathExpr(context);
             path.setLocation(previous.line, previous.column);
             path.add(new RootNode(context));
@@ -2546,6 +2569,25 @@ public final class XQueryParser {
             step.setLocation(previous.line, previous.column);
             while (check(Token.LBRACKET)) parsePredicate(step);
             return step;
+        }
+
+        // Direct XML comment constructor: <!-- content -->
+        if (check(Token.XML_COMMENT)) {
+            final String content = current.value;
+            advance();
+            final CommentConstructor comment = new CommentConstructor(context, content);
+            comment.setLocation(previous.line, previous.column);
+            return comment;
+        }
+
+        // Direct processing instruction: <?target content?>
+        if (check(Token.XML_PI)) {
+            final String piData = current.value;
+            final int piLine = current.line, piCol = current.column;
+            advance();
+            final PIConstructor pi = new PIConstructor(context, piData);
+            pi.setLocation(piLine, piCol);
+            return pi;
         }
 
         // Direct element constructor: <elem ...>
@@ -3001,7 +3043,11 @@ public final class XQueryParser {
                             "Unexpected '}' in element content");
                 }
             } else if (ch == '&') {
-                text.append(scanXMLReference());
+                // Keep entity reference in raw form for proper boundary-space detection.
+                // TextConstructor.StringValue.expand() handles expansion at runtime.
+                // If we pre-expand, &#32; → ' ' would be wrongly classified as
+                // strippable whitespace by TextConstructor.isWhitespaceOnly.
+                text.append(scanXMLReferenceRaw());
             } else {
                 text.appendCodePoint(ch);
                 if (ch == '\n') { xln++; xcl = 1; } else { xcl++; }
@@ -3063,6 +3109,18 @@ public final class XQueryParser {
      * Scans an XML entity/character reference at position xp (which is at '&').
      * Updates xp/xcl past the reference.
      */
+    /**
+     * Scans an XML reference (&amp;...;) and returns the RAW text including &amp; and ;
+     * Used in element content where TextConstructor.StringValue.expand() handles expansion.
+     */
+    private String scanXMLReferenceRaw() throws XPathException {
+        final int start = xp;
+        // Validate the reference (advances xp past it)
+        scanXMLReference();
+        // Return the raw text from '&' to ';' inclusive
+        return lexer.substring(start, xp);
+    }
+
     private String scanXMLReference() throws XPathException {
         final int refStart = xp;
         xp++; xcl++; // skip &
@@ -3434,9 +3492,68 @@ public final class XQueryParser {
     // Node tests and axes
     // ========================================================================
 
+    /** Saves parser + lexer state for backtracking. */
+    private int[] saveParserState() {
+        return new int[]{ lexer.getPosition() };
+    }
+
+    /** Restores parser + lexer state for backtracking. */
+    private void restoreParserState(final Token savedCurrent, final Token savedPrevious,
+                                     final Token savedBuffered, final int[] lexerState) {
+        current = savedCurrent;
+        previous = savedPrevious;
+        bufferedNext = savedBuffered;
+        lexer.setPosition(lexerState[0]);
+    }
+
     private int matchAxis() {
         if (current.type != Token.NCNAME) return -1;
-        final int axis = axisFromName(current.value);
+
+        final String name = current.value;
+
+        // Handle hyphenated axis names: following-sibling, preceding-sibling,
+        // descendant-or-self, ancestor-or-self
+        if (("following".equals(name) || "preceding".equals(name) || "descendant".equals(name)
+                || "ancestor".equals(name)) && peekIs(Token.MINUS)) {
+            // Save full state for backtrack
+            final Token savedCurrent = current;
+            final Token savedPrevious = previous;
+            final Token savedBuffered = bufferedNext;
+            final int[] lexerState = saveParserState();
+
+            advance(); // consume axis-start (e.g., "following")
+            advance(); // consume MINUS
+
+            if (current.type == Token.NCNAME) {
+                final String suffix = current.value;
+                if ("sibling".equals(suffix)) {
+                    // following-sibling or preceding-sibling
+                    final String compound = name + "-sibling";
+                    if (peekIs(Token.COLONCOLON)) {
+                        advance(); // consume "sibling"
+                        return axisFromName(compound);
+                    }
+                } else if ("or".equals(suffix)) {
+                    // descendant-or-self or ancestor-or-self
+                    advance(); // consume "or"
+                    if (current.type == Token.MINUS) {
+                        advance(); // consume "-"
+                        if (current.type == Token.NCNAME && "self".equals(current.value)) {
+                            final String compound = name + "-or-self";
+                            if (peekIs(Token.COLONCOLON)) {
+                                advance(); // consume "self"
+                                return axisFromName(compound);
+                            }
+                        }
+                    }
+                }
+            }
+            // Backtrack — not a valid axis
+            restoreParserState(savedCurrent, savedPrevious, savedBuffered, lexerState);
+            return -1;
+        }
+
+        final int axis = axisFromName(name);
         if (axis < 0) return -1;
         if (peekIs(Token.COLONCOLON)) {
             advance();
