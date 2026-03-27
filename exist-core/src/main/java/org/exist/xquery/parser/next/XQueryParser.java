@@ -2589,7 +2589,10 @@ public final class XQueryParser {
 
         // Direct XML comment constructor: <!-- content -->
         if (check(Token.XML_COMMENT)) {
-            final String content = current.value;
+            String content = current.value;
+            // Strip <!-- and --> delimiters — CommentConstructor expects just the content
+            if (content.startsWith("<!--")) content = content.substring(4);
+            if (content.endsWith("-->")) content = content.substring(0, content.length() - 3);
             advance();
             final CommentConstructor comment = new CommentConstructor(context, content);
             comment.setLocation(previous.line, previous.column);
@@ -2598,7 +2601,11 @@ public final class XQueryParser {
 
         // Direct processing instruction: <?target content?>
         if (check(Token.XML_PI)) {
-            final String piData = current.value;
+            String piData = current.value;
+            // Strip <? and ?> delimiters — PIConstructor expects "target content"
+            if (piData.startsWith("<?")) piData = piData.substring(2);
+            if (piData.endsWith("?>")) piData = piData.substring(0, piData.length() - 2);
+            piData = piData.trim();
             final int piLine = current.line, piCol = current.column;
             advance();
             final PIConstructor pi = new PIConstructor(context, piData);
