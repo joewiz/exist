@@ -930,6 +930,25 @@ public class XQueryParserTest {
                 "``[`{1 + 1}` plus `{2 + 2}` equals `{(1+1) + (2+2)}`]``");
     }
 
+    @Test
+    public void stringConstructorWithXmlPi() throws Exception {
+        // Regression test for eXist-db/exist#4104: <? inside string constructor
+        // must be treated as literal text, not as PI start
+        assertEval("<?xml version=\"1.0\"?>", "``[<?xml version=\"1.0\"?>]``");
+    }
+
+    @Test
+    public void stringConstructorWithXmlComment() throws Exception {
+        // <!-- inside string constructor must be literal text, not comment
+        assertEval("<!-- not a comment -->", "``[<!-- not a comment -->]``");
+    }
+
+    @Test
+    public void stringConstructorWithCdata() throws Exception {
+        // <![CDATA[ inside string constructor must be literal text
+        assertEval("<![CDATA[data]]>", "``[<![CDATA[data]]>]``");
+    }
+
     // ---- Test gate queries ----
 
     @Test
