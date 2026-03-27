@@ -109,6 +109,18 @@
         <servlet-class>org.exist.http.servlets.XSLTServlet</servlet-class>
     </servlet>
 
+    <!-- Jackrabbit WebDAV servlet (proof-of-concept) -->
+    <servlet>
+        <servlet-name>jackrabbit-webdav</servlet-name>
+        <servlet-class>org.exist.webdav.ExistWebdavServlet</servlet-class>
+    </servlet>
+
+    <!-- Direct mapping for Jackrabbit WebDAV PoC -->
+    <servlet-mapping>
+        <servlet-name>jackrabbit-webdav</servlet-name>
+        <url-pattern>/webdav/*</url-pattern>
+    </servlet-mapping>
+
     <servlet-mapping>
         <servlet-name>XQueryURLRewrite</servlet-name>
         <url-pattern>/*</url-pattern>

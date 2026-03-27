@@ -61,6 +61,12 @@
             <version>1.11.0</version>
         </dependency>
 
+        <!-- Jackrabbit WebDAV (Jakarta EE 10 transformed) -->
+        <dependency>
+            <groupId>org.exist-db.thirdparty.org.apache.jackrabbit</groupId>
+            <artifactId>jackrabbit-webdav</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.exist-db.thirdparty.com.ettrema</groupId>
             <artifactId>milton-api</artifactId>
