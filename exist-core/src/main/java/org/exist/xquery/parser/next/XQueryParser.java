@@ -1599,25 +1599,8 @@ public final class XQueryParser {
         final org.exist.xquery.ft.FTSelection ftSel = new org.exist.xquery.ft.FTSelection(context);
         ftSel.setFTOr(parseFTOr());
 
-        // Positional filters: ordered, window N words, distance, at start/end, entire content, occurs
-        // Absorb positional filter tokens — skip until we hit ], ), EOF, or a non-FT keyword
-        while (check(Token.NCNAME) && !check(Token.EOF)) {
-            final String kw = current.value;
-            if ("ordered".equals(kw) || "window".equals(kw) || "distance".equals(kw)
-                    || "at".equals(kw) || "entire".equals(kw) || "occurs".equals(kw)
-                    || "same".equals(kw) || "different".equals(kw) || "using".equals(kw)) {
-                advance(); // consume the keyword
-                // Absorb tokens until next FT keyword, ], ), or expression boundary
-                while (!check(Token.RBRACKET) && !check(Token.RPAREN) && !check(Token.EOF)
-                        && !check(Token.COMMA) && !checkKeyword(Keywords.RETURN)
-                        && !checkKeyword(Keywords.AND) && !checkKeyword(Keywords.OR)
-                        && !(check(Token.NCNAME) && isFTPositionalKeyword(current.value))) {
-                    advance();
-                }
-            } else {
-                break;
-            }
-        }
+        // Positional filters: ordered, window, distance, at start/end, entire content, occurs, scope
+        parseFTPositionalFilters(ftSel);
 
         ftContains.setFTSelection(ftSel);
         return ftContains;
@@ -3694,6 +3677,96 @@ public final class XQueryParser {
         ext.setLocation(line, col);
         ext.setExpression(body);
         return ext;
+    }
+
+    /**
+     * Parses FT positional filters and match options, adding them to the selection.
+     */
+    private void parseFTPositionalFilters(final org.exist.xquery.ft.FTSelection ftSel)
+            throws XPathException {
+        while (check(Token.NCNAME)) {
+            final String kw = current.value;
+            if ("ordered".equals(kw)) {
+                advance();
+                ftSel.addPosFilter(new org.exist.xquery.ft.FTOrder(context));
+            } else if ("window".equals(kw)) {
+                advance();
+                final org.exist.xquery.ft.FTWindow win = new org.exist.xquery.ft.FTWindow(context);
+                win.setWindowExpr(parseExprSingle());
+                win.setUnit(parseFTUnit());
+                ftSel.addPosFilter(win);
+            } else if ("distance".equals(kw)) {
+                advance();
+                final org.exist.xquery.ft.FTDistance dist = new org.exist.xquery.ft.FTDistance(context);
+                dist.setRange(parseFTRange());
+                dist.setUnit(parseFTUnit());
+                ftSel.addPosFilter(dist);
+            } else if ("at".equals(kw)) {
+                advance();
+                final org.exist.xquery.ft.FTContent content = new org.exist.xquery.ft.FTContent(context);
+                if (matchKeyword("start")) {
+                    content.setContentType(org.exist.xquery.ft.FTContent.ContentType.AT_START);
+                } else if (matchKeyword("end")) {
+                    content.setContentType(org.exist.xquery.ft.FTContent.ContentType.AT_END);
+                }
+                ftSel.addPosFilter(content);
+            } else if ("entire".equals(kw)) {
+                advance();
+                matchKeyword("content");
+                final org.exist.xquery.ft.FTContent content = new org.exist.xquery.ft.FTContent(context);
+                content.setContentType(org.exist.xquery.ft.FTContent.ContentType.ENTIRE_CONTENT);
+                ftSel.addPosFilter(content);
+            } else if ("occurs".equals(kw) || "exactly".equals(kw) || "from".equals(kw)) {
+                // FTTimes: "occurs" FTRange "times"
+                if ("occurs".equals(kw)) advance(); // consume "occurs"
+                final org.exist.xquery.ft.FTRange range = parseFTRange();
+                matchKeyword("times");
+                // times is modeled as range on selection
+                ftSel.addPosFilter(range);
+            } else if ("same".equals(kw) || "different".equals(kw)) {
+                // FTScope: "same"/"different" ("sentence"|"paragraph")
+                advance();
+                final org.exist.xquery.ft.FTScope scope = new org.exist.xquery.ft.FTScope(context);
+                if (matchKeyword("sentence")) { /* default */ }
+                else matchKeyword("paragraph");
+                ftSel.addPosFilter(scope);
+            } else if ("using".equals(kw)) {
+                // Match options handled separately
+                break;
+            } else {
+                break;
+            }
+        }
+    }
+
+    private org.exist.xquery.ft.FTUnit parseFTUnit() {
+        if (matchKeyword("words")) return org.exist.xquery.ft.FTUnit.WORDS;
+        if (matchKeyword("sentences")) return org.exist.xquery.ft.FTUnit.SENTENCES;
+        if (matchKeyword("paragraphs")) return org.exist.xquery.ft.FTUnit.PARAGRAPHS;
+        return org.exist.xquery.ft.FTUnit.WORDS; // default
+    }
+
+    private org.exist.xquery.ft.FTRange parseFTRange() throws XPathException {
+        final org.exist.xquery.ft.FTRange range = new org.exist.xquery.ft.FTRange(context);
+        if (matchKeyword("exactly")) {
+            range.setMode(org.exist.xquery.ft.FTRange.RangeMode.EXACTLY);
+            range.setExpr1(parseExprSingle());
+        } else if (checkKeyword("at")) {
+            advance();
+            if (matchKeyword("least")) {
+                range.setMode(org.exist.xquery.ft.FTRange.RangeMode.AT_LEAST);
+                range.setExpr1(parseExprSingle());
+            } else if (matchKeyword("most")) {
+                range.setMode(org.exist.xquery.ft.FTRange.RangeMode.AT_MOST);
+                range.setExpr1(parseExprSingle());
+            }
+        } else if (matchKeyword("from")) {
+            range.setMode(org.exist.xquery.ft.FTRange.RangeMode.FROM_TO);
+            range.setExpr1(parseExprSingle());
+            matchKeyword("to");
+            range.setExpr2(parseExprSingle());
+        }
+        return range;
     }
 
     private boolean isFTPositionalKeyword(final String name) {
