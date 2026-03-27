@@ -1954,9 +1954,25 @@ public final class XQueryParser {
     }
 
     /**
-     * Parses an ItemType: AtomicType | KindTest | 'item()'
+     * Parses an ItemType: AtomicType | KindTest | 'item()' | 'function(...)' | 'map(...)' | 'array(...)'
+     * Also handles parenthesized types: (function(...) as type)
      */
     private int parseItemType() throws XPathException {
+        // Parenthesized type: (ItemType)
+        if (check(Token.LPAREN)) {
+            advance(); // consume (
+            final int innerType = parseItemType();
+            // Skip any nested content until closing )
+            int depth = 1;
+            while (depth > 0 && !check(Token.EOF)) {
+                if (check(Token.LPAREN)) depth++;
+                if (check(Token.RPAREN)) depth--;
+                if (depth > 0) advance();
+            }
+            if (check(Token.RPAREN)) advance();
+            return innerType;
+        }
+
         // item()
         if (checkKeyword(Keywords.ITEM) && peekIs(Token.LPAREN)) {
             advance(); advance();
@@ -1964,24 +1980,57 @@ public final class XQueryParser {
             return Type.ITEM;
         }
 
+        // function(*) or function(type, type) as returnType
+        if (checkKeyword(Keywords.FUNCTION) && peekIs(Token.LPAREN)) {
+            advance(); advance(); // consume 'function' '('
+            int depth = 1;
+            while (depth > 0 && !check(Token.EOF)) {
+                if (match(Token.LPAREN)) depth++;
+                else if (match(Token.RPAREN)) depth--;
+                else advance();
+            }
+            if (matchKeyword(Keywords.AS)) {
+                parseSequenceType();
+            }
+            return Type.FUNCTION;
+        }
+
+        // map(KeyType, ValueType) or map(*)
+        if (checkKeyword(Keywords.MAP) && peekIs(Token.LPAREN)) {
+            advance(); advance(); // consume 'map' '('
+            int depth = 1;
+            while (depth > 0 && !check(Token.EOF)) {
+                if (check(Token.LPAREN)) depth++;
+                if (check(Token.RPAREN)) { depth--; if (depth == 0) break; }
+                advance();
+            }
+            expect(Token.RPAREN, "')'");
+            return Type.MAP_ITEM;
+        }
+
+        // array(MemberType) or array(*)
+        if (checkKeyword(Keywords.ARRAY) && peekIs(Token.LPAREN)) {
+            advance(); advance(); // consume 'array' '('
+            int depth = 1;
+            while (depth > 0 && !check(Token.EOF)) {
+                if (check(Token.LPAREN)) depth++;
+                if (check(Token.RPAREN)) { depth--; if (depth == 0) break; }
+                advance();
+            }
+            expect(Token.RPAREN, "')'");
+            return Type.ARRAY_ITEM;
+        }
+
         // node(), element(), attribute(), text(), comment(), etc.
         if (check(Token.NCNAME) && isKindTest(current.value) && peekIs(Token.LPAREN)) {
             final String kind = current.value;
-            advance(); // kind name
-            advance(); // (
-            // For now, skip content of kind test
-            if (!check(Token.RPAREN)) {
-                // Skip type name inside, e.g. element(name)
-                if (check(Token.NCNAME) || check(Token.QNAME) || check(Token.STAR)) {
-                    advance();
-                }
-                // Skip optional second arg, e.g. element(name, type)
-                if (match(Token.COMMA)) {
-                    if (check(Token.NCNAME) || check(Token.QNAME)) {
-                        advance();
-                    }
-                    if (match(Token.QUESTION)) { /* nillable */ }
-                }
+            advance(); advance(); // kind name + (
+            // Skip content with depth tracking (handles nested parens)
+            int depth = 1;
+            while (depth > 0 && !check(Token.EOF)) {
+                if (check(Token.LPAREN)) depth++;
+                if (check(Token.RPAREN)) { depth--; if (depth == 0) break; }
+                advance();
             }
             expect(Token.RPAREN, "')'");
             return kindNameToType(kind);
