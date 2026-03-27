@@ -2202,6 +2202,17 @@ public final class XQueryParser {
             // Variable reference as function
             funcExpr = new PathExpr(context);
             funcExpr.add(parseVariableRef());
+        } else if (check(Token.LPAREN)) {
+            // Parenthesized expression as function: => (function($s){...})()
+            funcExpr = new PathExpr(context);
+            funcExpr.add(parsePrimaryExpr());
+            // The parenthesized expr might be followed by () for invocation
+            // which gets consumed below as the argument list
+        } else if (checkKeyword(Keywords.FUNCTION) && peekIs(Token.LPAREN)) {
+            // Inline function: => function($x) { ... }()
+            funcExpr = new PathExpr(context);
+            advance(); // consume 'function'
+            funcExpr.add(parseInlineFunction());
         } else {
             throw error("Expected function name after arrow operator");
         }
@@ -2262,6 +2273,13 @@ public final class XQueryParser {
                 expr = parseLookup(expr);
             } else if (check(Token.LPAREN) && isDynamicCallContext(expr)) {
                 expr = parseDynamicFunctionCall(expr);
+            } else if (check(Token.SLASH) || check(Token.DSLASH)) {
+                // Path continuation after postfix: $f()/path, $arr[1]/child, etc.
+                final PathExpr path = new PathExpr(context);
+                path.setLocation(expr.getLine(), expr.getColumn());
+                path.add(expr);
+                parseRelativePathSteps(path);
+                expr = path;
             } else {
                 break;
             }
@@ -2280,7 +2298,9 @@ public final class XQueryParser {
                 || expr instanceof FilteredExpression
                 || expr instanceof FunctionCall
                 || expr instanceof InternalFunctionCall
-                || expr instanceof Lookup;
+                || expr instanceof Lookup
+                || expr instanceof org.exist.xquery.functions.array.ArrayConstructor
+                || expr instanceof PathExpr;  // parenthesized expressions, sequences
     }
 
     /**
