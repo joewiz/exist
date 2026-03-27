@@ -163,6 +163,10 @@ public final class XQueryParser {
         expect(Token.SEMICOLON, "';'");
 
         try {
+            // Set the module namespace on the context (critical for library modules)
+            if (context instanceof ModuleContext) {
+                ((ModuleContext) context).setModuleNamespace(prefix, uri);
+            }
             context.declareNamespace(prefix, uri);
         } catch (final XPathException e) {
             throw error("Error declaring module namespace: " + e.getMessage());
