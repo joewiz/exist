@@ -1668,10 +1668,17 @@ public final class XQueryParser {
     private Expression parseFTPrimaryWithOptions() throws XPathException {
         final org.exist.xquery.ft.FTPrimaryWithOptions pwo = new org.exist.xquery.ft.FTPrimaryWithOptions(context);
 
-        // FT primary: string literal or parenthesized FT expression
-        if (check(Token.STRING_LITERAL)) {
+        // FT primary: string literal, {expr}, or parenthesized FT expression
+        if (check(Token.STRING_LITERAL) || check(Token.LBRACE)) {
             final org.exist.xquery.ft.FTWords words = new org.exist.xquery.ft.FTWords(context);
-            words.setWordsValue(parseStringLiteral());
+            if (check(Token.LBRACE)) {
+                // Enclosed expression: { expr }
+                advance(); // consume {
+                words.setWordsValue(parseExpr());
+                expect(Token.RBRACE, "'}'");
+            } else {
+                words.setWordsValue(parseStringLiteral());
+            }
 
             // Optional any/all/phrase mode
             if (matchKeyword(Keywords.ANY)) {
@@ -1695,7 +1702,7 @@ public final class XQueryParser {
             pwo.setPrimary(parseFTOr());
             expect(Token.RPAREN, "')'");
         } else {
-            throw error("Expected string literal or '(' in full-text expression");
+            throw error("Expected string literal, '{', or '(' in full-text expression");
         }
 
         // Match options: using stemming, using language "en", using wildcards, etc.
