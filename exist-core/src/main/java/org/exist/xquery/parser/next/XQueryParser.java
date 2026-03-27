@@ -1588,29 +1588,22 @@ public final class XQueryParser {
         ftSel.setFTOr(parseFTOr());
 
         // Positional filters: ordered, window N words, distance, at start/end, entire content, occurs
-        while (checkKeyword(Keywords.ORDERED) || checkKeyword(Keywords.WINDOW)
-                || checkKeyword(Keywords.DISTANCE) || checkKeyword(Keywords.AT)
-                || checkKeyword(Keywords.ENTIRE) || checkKeyword(Keywords.OCCURS)
-                || checkKeyword(Keywords.SAME) || checkKeyword(Keywords.DIFFERENT)) {
-            // Skip the positional filter (stub — absorb tokens to avoid parse error)
-            while (!check(Token.RBRACKET) && !check(Token.RPAREN) && !check(Token.EOF)
-                    && !checkKeyword(Keywords.RETURN) && !checkKeyword(Keywords.ORDERED)
-                    && !checkKeyword(Keywords.WINDOW) && !checkKeyword(Keywords.DISTANCE)
-                    && !checkKeyword(Keywords.AT) && !checkKeyword(Keywords.ENTIRE)
-                    && !checkKeyword(Keywords.OCCURS) && !checkKeyword(Keywords.SAME)
-                    && !checkKeyword(Keywords.DIFFERENT) && !checkKeyword(Keywords.USING)
-                    && !checkKeyword(Keywords.AND) && !checkKeyword(Keywords.OR)) {
-                advance();
-            }
-        }
-
-        // Match options can also appear after positional filters
-        if (checkKeyword(Keywords.USING)) {
-            // Already handled in parseFTPrimaryWithOptions, but can appear at selection level too
-            while (matchKeyword(Keywords.USING)) {
-                // Skip the match option tokens
-                advance(); // option keyword
-                if (check(Token.STRING_LITERAL)) advance(); // optional value
+        // Absorb positional filter tokens — skip until we hit ], ), EOF, or a non-FT keyword
+        while (check(Token.NCNAME) && !check(Token.EOF)) {
+            final String kw = current.value;
+            if ("ordered".equals(kw) || "window".equals(kw) || "distance".equals(kw)
+                    || "at".equals(kw) || "entire".equals(kw) || "occurs".equals(kw)
+                    || "same".equals(kw) || "different".equals(kw) || "using".equals(kw)) {
+                advance(); // consume the keyword
+                // Absorb tokens until next FT keyword, ], ), or expression boundary
+                while (!check(Token.RBRACKET) && !check(Token.RPAREN) && !check(Token.EOF)
+                        && !check(Token.COMMA) && !checkKeyword(Keywords.RETURN)
+                        && !checkKeyword(Keywords.AND) && !checkKeyword(Keywords.OR)
+                        && !(check(Token.NCNAME) && isFTPositionalKeyword(current.value))) {
+                    advance();
+                }
+            } else {
+                break;
             }
         }
 
@@ -3297,6 +3290,11 @@ public final class XQueryParser {
             return parseQNameLiteral();
         }
 
+        // Pragma / extension expression: (# name content #) { expr }
+        if (check(Token.PRAGMA_START)) {
+            return parsePragmaExpr();
+        }
+
         // String constructor: ``[content `{expr}` more]`` — XQuery 3.1 (W3C §3.11.4)
         if (check(Token.STRING_CONSTRUCTOR_START)) {
             return parseStringConstructor();
@@ -3509,6 +3507,41 @@ public final class XQueryParser {
                     axis == Constants.ATTRIBUTE_AXIS ? null : context.getURIForPrefix("")));
         }
         throw error("Expected node test");
+    }
+
+    /**
+     * Parses a pragma/extension expression: (# name content #) { expr }
+     * For eXist's (#exist:optimize#) pragma, the expression inside { } is returned.
+     */
+    private Expression parsePragmaExpr() throws XPathException {
+        final int line = current.line, col = current.column;
+        advance(); // consume PRAGMA_START (#
+
+        // Skip pragma content until #)
+        while (!check(Token.PRAGMA_END) && !check(Token.EOF)) {
+            advance();
+        }
+        if (check(Token.PRAGMA_END)) advance(); // consume #)
+
+        // Parse the pragma body: { expr }
+        expect(Token.LBRACE, "'{'");
+        final Expression body = parseExpr();
+        expect(Token.RBRACE, "'}'");
+
+        // Return an ExtensionExpression wrapping the body
+        final ExtensionExpression ext = new ExtensionExpression(context);
+        ext.setLocation(line, col);
+        ext.setExpression(body);
+        return ext;
+    }
+
+    private boolean isFTPositionalKeyword(final String name) {
+        switch (name) {
+            case "ordered": case "window": case "distance": case "at":
+            case "entire": case "occurs": case "same": case "different": case "using":
+                return true;
+            default: return false;
+        }
     }
 
     private boolean isKindTest(final String name) {
