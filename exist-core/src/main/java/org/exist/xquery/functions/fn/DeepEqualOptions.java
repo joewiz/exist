@@ -710,8 +710,9 @@ public class DeepEqualOptions {
                     result.add(child);
                     break;
                 case org.w3c.dom.Node.TEXT_NODE:
-                    if (whitespace == WhitespaceMode.STRIP && !preserveWS) {
-                        // Strip whitespace-only text nodes (unless xml:space="preserve")
+                    if (whitespace == WhitespaceMode.STRIP) {
+                        // Strip whitespace-only text nodes (deep-equal strip option
+                        // overrides xml:space="preserve" per XQ4 spec)
                         final String value = getNodeValue(child);
                         if (value != null && !value.trim().isEmpty()) {
                             result.add(child);
