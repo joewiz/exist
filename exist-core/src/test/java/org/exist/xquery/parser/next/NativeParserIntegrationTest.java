@@ -208,6 +208,16 @@ public class NativeParserIntegrationTest {
         assertQuery("2 4 6", "array:flatten(array { for $i in 1 to 3 return $i * 2 })");
     }
 
+    @Test
+    public void arrayGetThreeArgs() throws Exception {
+        assertQuery("2", "array:get([1,2,3], 2, ())");
+    }
+
+    @Test
+    public void fnParseXml() throws Exception {
+        assertQuery("true", "parse-xml('<a/>') instance of document-node()");
+    }
+
     // ========================================================================
     // Path expression patterns (regression tests for the path fix)
     // ========================================================================
