@@ -462,27 +462,48 @@ public final class XQueryParser {
 
         // Value or external
         Expression valueExpr = null;
+        boolean isExternal = false;
         if (match(Token.COLON_EQ)) {
             valueExpr = parseExprSingle();
         } else if (matchKeyword(Keywords.EXTERNAL)) {
-            // External variable
+            isExternal = true;
+            // Optional default value for external: external := expr
+            if (match(Token.COLON_EQ)) {
+                valueExpr = parseExprSingle();
+            }
         } else {
             throw error("Expected ':=' or 'external' in variable declaration");
         }
 
         expect(Token.SEMICOLON, "';'");
 
-        final PathExpr enclosed = new PathExpr(context);
-        if (valueExpr != null) {
+        if (isExternal) {
+            // Try to resolve the variable from the static context (pre-declared externals)
+            Variable external = null;
+            try {
+                external = context.resolveVariable(qname);
+                if (external != null && type != null) {
+                    external.setSequenceType(type);
+                }
+            } catch (final XPathException ignored) {
+            }
+            // Only add VariableDeclaration if the variable wasn't pre-declared
+            if (external == null) {
+                final PathExpr enclosed = new PathExpr(context);
+                if (valueExpr != null) enclosed.add(valueExpr);
+                final VariableDeclaration decl = new VariableDeclaration(context, qname, enclosed);
+                decl.setLocation(line, col);
+                if (type != null) decl.setSequenceType(type);
+                rootExpr.add(decl);
+            }
+        } else {
+            final PathExpr enclosed = new PathExpr(context);
             enclosed.add(valueExpr);
+            final VariableDeclaration decl = new VariableDeclaration(context, qname, enclosed);
+            decl.setLocation(line, col);
+            if (type != null) decl.setSequenceType(type);
+            rootExpr.add(decl);
         }
-
-        final VariableDeclaration decl = new VariableDeclaration(context, qname, enclosed);
-        decl.setLocation(line, col);
-        if (type != null) {
-            decl.setSequenceType(type);
-        }
-        rootExpr.add(decl);
     }
 
     private void parseOptionDecl() throws XPathException {
