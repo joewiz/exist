@@ -697,6 +697,8 @@ public final class XQueryParser {
                 if (!isXQ4()) throw xq4Required("'for member' clause");
                 advance();
                 first = parseForMemberBinding();
+            } else if (checkKeyword(Keywords.TUMBLING) || checkKeyword(Keywords.SLIDING)) {
+                first = parseWindowClause();
             } else {
                 first = parseForBinding();
             }
@@ -726,6 +728,19 @@ public final class XQueryParser {
         final String varName = expectName("variable name");
         final QName qname = resolveQName(varName, null);
 
+        // Optional type annotation: as SequenceType
+        SequenceType forType = null;
+        if (matchKeyword(Keywords.AS)) {
+            forType = parseSequenceType();
+        }
+
+        // Optional allowing empty (XQ 3.0)
+        boolean allowingEmpty = false;
+        if (matchKeyword(Keywords.ALLOWING)) {
+            matchKeyword(Keywords.EMPTY);
+            allowingEmpty = true;
+        }
+
         // Optional positional variable: at $pos
         QName posVar = null;
         if (matchKeyword(Keywords.AT)) {
@@ -736,7 +751,7 @@ public final class XQueryParser {
         expectKeyword(Keywords.IN);
         final Expression inputSeq = parseExprSingle();
 
-        final ForExpr forExpr = new ForExpr(context, false);
+        final ForExpr forExpr = new ForExpr(context, allowingEmpty);
         forExpr.setLocation(startLine, startCol);
         forExpr.setVariable(qname);
         forExpr.setInputSequence(inputSeq);
@@ -761,6 +776,83 @@ public final class XQueryParser {
         }
 
         return forExpr;
+    }
+
+    /**
+     * Parses a tumbling/sliding window clause:
+     * for tumbling/sliding window $w in EXPR start ... end ... return EXPR
+     */
+    private FLWORClause parseWindowClause() throws XPathException {
+        final int line = previous.line, col = previous.column;
+        final boolean tumbling = matchKeyword(Keywords.TUMBLING);
+        if (!tumbling) matchKeyword(Keywords.SLIDING);
+        expectKeyword(Keywords.WINDOW);
+
+        expect(Token.DOLLAR, "'$'");
+        final String varName = expectName("window variable");
+        final QName qname = resolveQName(varName, null);
+
+        // Optional type
+        if (matchKeyword(Keywords.AS)) {
+            parseSequenceType(); // consume type but not used for WindowExpr construction
+        }
+
+        expectKeyword(Keywords.IN);
+        final Expression inputSeq = parseExprSingle();
+
+        // Parse window conditions: start when/end when with variables
+        // For now, absorb the window condition tokens to avoid parse errors
+        final WindowCondition startCond = parseWindowCondition(Keywords.START);
+        final WindowCondition endCond = checkKeyword(Keywords.END) || checkKeyword(Keywords.ONLY) ?
+                parseWindowCondition(Keywords.END) : null;
+
+        final WindowExpr window = new WindowExpr(context,
+                tumbling ? WindowExpr.WindowType.TUMBLING_WINDOW : WindowExpr.WindowType.SLIDING_WINDOW,
+                startCond, endCond);
+        window.setLocation(line, col);
+        window.setVariable(qname);
+        window.setInputSequence(inputSeq);
+
+        final LocalVariable var = window.createVariable(qname);
+        context.declareVariableBinding(var);
+
+        return window;
+    }
+
+    private WindowCondition parseWindowCondition(final String keyword) throws XPathException {
+        boolean only = false;
+        if (matchKeyword(Keywords.ONLY)) {
+            only = true;
+        }
+        matchKeyword(keyword); // start or end
+
+        // Optional variable bindings: $var at $pos previous $prev next $next
+        QName condVar = null;
+        QName posVar = null;
+        QName prevVar = null;
+        QName nextVar = null;
+
+        if (check(Token.DOLLAR)) {
+            advance();
+            condVar = resolveQName(expectName("window condition variable"), null);
+        }
+        if (matchKeyword(Keywords.AT)) {
+            expect(Token.DOLLAR, "'$'");
+            posVar = resolveQName(expectName("position variable"), null);
+        }
+        if (matchKeyword(Keywords.PREVIOUS)) {
+            expect(Token.DOLLAR, "'$'");
+            prevVar = resolveQName(expectName("previous variable"), null);
+        }
+        if (matchKeyword(Keywords.NEXT)) {
+            expect(Token.DOLLAR, "'$'");
+            nextVar = resolveQName(expectName("next variable"), null);
+        }
+
+        expectKeyword(Keywords.WHEN);
+        final Expression whenExpr = parseExprSingle();
+
+        return new WindowCondition(context, only, condVar, posVar, prevVar, nextVar, whenExpr);
     }
 
     private FLWORClause parseForMemberBinding() throws XPathException {
