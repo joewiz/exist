@@ -1412,11 +1412,11 @@ public class XQueryContext implements BinaryValueManager, Context {
             // Fall back to global collection write lock on /db
             preclaimedLocks.add(lockManager.acquireCollectionWriteLock(XmldbURI.ROOT_COLLECTION_URI));
         } else {
-            // Acquire collection write locks first (sorted order)
-            for (final XmldbURI collectionUri : preclaimCollectionTargets) {
-                preclaimedLocks.add(lockManager.acquireCollectionWriteLock(collectionUri));
-            }
-            // Then acquire document write locks (sorted order)
+            // Only preclaim document-level write locks (sorted order).
+            // Collection-level locks are NOT preclaimed — they are handled
+            // internally by NativeBroker operations (move, remove, store).
+            // Preclaiming collection write locks causes deadlock with
+            // concurrent collection operations (see MoveResourceTest hang).
             for (final XmldbURI docUri : preclaimDocumentTargets) {
                 preclaimedLocks.add(lockManager.acquireDocumentWriteLock(docUri));
             }
