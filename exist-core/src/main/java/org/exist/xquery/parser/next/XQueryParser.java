@@ -2992,34 +2992,55 @@ public final class XQueryParser {
                                         + ">' but found '</" + closeName + ">'");
                     return;
                 } else if (xpeek(1) == '!' && xpeek(2) == '-' && xpeek(3) == '-') {
-                    // <!-- comment -->
+                    // <!-- comment --> — create CommentConstructor
+                    flushText(content, text);
+                    final int cmtLine = xln, cmtCol = xcl;
                     xp += 4; xcl += 4;
+                    final StringBuilder cmtData = new StringBuilder();
                     while (xp + 2 < lexer.getLength()
                             && !(xchar() == '-' && xpeek(1) == '-' && xpeek(2) == '>')) {
+                        cmtData.appendCodePoint(xchar());
                         if (xchar() == '\n') { xln++; xcl = 1; } else { xcl++; }
                         xp++;
                     }
                     if (xp + 2 < lexer.getLength()) { xp += 3; xcl += 3; }
+                    final CommentConstructor cmt = new CommentConstructor(context, cmtData.toString());
+                    cmt.setLocation(cmtLine, cmtCol);
+                    content.add(cmt);
                 } else if (xp + 8 < lexer.getLength()
                         && lexer.substring(xp + 1, xp + 9).equals("![CDATA[")) {
-                    // <![CDATA[...]]>
+                    // <![CDATA[...]]> — use CDATAConstructor, not TextConstructor
+                    // CDATA content must NOT go through StringValue.expand()
+                    flushText(content, text);
+                    final int cdataLine = xln, cdataCol = xcl;
                     xp += 9; xcl += 9;
+                    final StringBuilder cdataText = new StringBuilder();
                     while (xp + 2 < lexer.getLength()
                             && !(xchar() == ']' && xpeek(1) == ']' && xpeek(2) == '>')) {
-                        text.appendCodePoint(xchar());
+                        cdataText.appendCodePoint(xchar());
                         if (xchar() == '\n') { xln++; xcl = 1; } else { xcl++; }
                         xp++;
                     }
                     if (xp + 2 < lexer.getLength()) { xp += 3; xcl += 3; }
+                    final CDATAConstructor cdata = new CDATAConstructor(context, cdataText.toString());
+                    cdata.setLocation(cdataLine, cdataCol);
+                    content.add(cdata);
                 } else if (xpeek(1) == '?') {
-                    // <?PI?>
+                    // <?target content?> — create PIConstructor
+                    flushText(content, text);
+                    final int piLine = xln, piCol = xcl;
                     xp += 2; xcl += 2;
+                    final StringBuilder piData = new StringBuilder();
                     while (xp + 1 < lexer.getLength()
                             && !(xchar() == '?' && xpeek(1) == '>')) {
+                        piData.appendCodePoint(xchar());
                         if (xchar() == '\n') { xln++; xcl = 1; } else { xcl++; }
                         xp++;
                     }
                     if (xp + 1 < lexer.getLength()) { xp += 2; xcl += 2; }
+                    final PIConstructor pi = new PIConstructor(context, piData.toString());
+                    pi.setLocation(piLine, piCol);
+                    content.add(pi);
                 } else if (XQueryLexer.isNameStartChar(xpeek(1))) {
                     // Nested element — fully recursive, stays in character mode
                     xp++; xcl++; // skip '<'
