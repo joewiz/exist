@@ -977,7 +977,7 @@ public class XQueryParserTest {
                 "copy $c := <root><item>old</item></root>\n" +
                 "modify replace value of node $c/item with 'new'\n" +
                 "return $c");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -986,7 +986,7 @@ public class XQueryParserTest {
                 "copy $c := <root/>\n" +
                 "modify insert node <child/> into $c\n" +
                 "return $c");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -995,7 +995,7 @@ public class XQueryParserTest {
                 "copy $c := <root/>\n" +
                 "modify delete node $c/b\n" +
                 "return $c");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1004,7 +1004,7 @@ public class XQueryParserTest {
                 "copy $c := <old/>\n" +
                 "modify rename node $c as 'new'\n" +
                 "return $c");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1013,7 +1013,7 @@ public class XQueryParserTest {
                 "copy $c := <root/>\n" +
                 "modify replace node $c with <newitem/>\n" +
                 "return $c");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1022,7 +1022,7 @@ public class XQueryParserTest {
                 "copy $a := <x/>, $b := <y/>\n" +
                 "modify (insert node <child/> into $a, insert node <child/> into $b)\n" +
                 "return ($a, $b)");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1042,25 +1042,25 @@ public class XQueryParserTest {
     @Test
     public void ftContainsBasic() throws Exception {
         final Expression expr = parseExpr("'hello world' contains text 'hello'");
-        assertInstanceOf(FTExpressions.ContainsExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
     @Test
     public void ftContainsFTAnd() throws Exception {
         final Expression expr = parseExpr("'XML database' contains text 'XML' ftand 'database'");
-        assertInstanceOf(FTExpressions.ContainsExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
     @Test
     public void ftContainsFTOr() throws Exception {
         final Expression expr = parseExpr("'eXist' contains text 'eXist' ftor 'BaseX'");
-        assertInstanceOf(FTExpressions.ContainsExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
     @Test
     public void ftContainsFTNot() throws Exception {
         final Expression expr = parseExpr("'open source' contains text 'open' ftnot 'closed'");
-        assertInstanceOf(FTExpressions.ContainsExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
     @Test
@@ -1100,7 +1100,7 @@ public class XQueryParserTest {
                 "copy $c := <root/>\n" +
                 "modify replace value of node $c with 'new'\n" +
                 "return string($c)");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1109,7 +1109,7 @@ public class XQueryParserTest {
                 "copy $c := <root/>\n" +
                 "modify (insert node <c/> into $c, delete node $c)\n" +
                 "return count($c)");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
@@ -1118,13 +1118,13 @@ public class XQueryParserTest {
                 "copy $c := <old/>\n" +
                 "modify rename node $c as 'new'\n" +
                 "return local-name($c)");
-        assertInstanceOf(XQUFExpressions.TransformExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.xquf.XQUFTransformExpr.class, expr);
     }
 
     @Test
     public void testGateFTContains() throws Exception {
         final Expression expr = parseExpr("'hello world' contains text 'hello'");
-        assertInstanceOf(FTExpressions.ContainsExpr.class, expr);
+        assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
     @Test
