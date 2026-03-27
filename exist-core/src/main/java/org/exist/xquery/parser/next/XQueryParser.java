@@ -207,6 +207,10 @@ public final class XQueryParser {
         } else if (checkKeyword(Keywords.CONTEXT)) {
             // declare context item := expr;
             skipToSemicolon();
+        } else if (checkKeyword("ft-option")) {
+            // declare ft-option using ... ;
+            advance(); // consume "ft-option"
+            parseFTOptionDecl();
         } else if (checkKeyword(Keywords.BOUNDARY_SPACE)) {
             // declare boundary-space preserve|strip;
             advance(); // consume boundary-space
@@ -761,6 +765,13 @@ public final class XQueryParser {
             posVar = resolveQName(expectName("positional variable name"), null);
         }
 
+        // Optional FT score variable: score $s
+        QName scoreVar = null;
+        if (matchKeyword("score")) {
+            expect(Token.DOLLAR, "'$'");
+            scoreVar = resolveQName(expectName("score variable name"), null);
+        }
+
         expectKeyword(Keywords.IN);
         final Expression inputSeq = parseExprSingle();
 
@@ -770,6 +781,9 @@ public final class XQueryParser {
         forExpr.setInputSequence(inputSeq);
         if (posVar != null) {
             forExpr.setPositionalVariable(posVar);
+        }
+        if (scoreVar != null) {
+            forExpr.setScoreVariable(scoreVar);
         }
 
         // Register the variable so it's visible in subsequent clauses/return
@@ -894,13 +908,16 @@ public final class XQueryParser {
         final int startLine = previous.line;
         final int startCol = previous.column;
 
+        // XQFT 3.0: let score $s := expr
+        final boolean isScore = matchKeyword("score");
+
         expect(Token.DOLLAR, "'$'");
         final String varName = expectName("variable name");
         final QName qname = resolveQName(varName, null);
 
-        // Optional type annotation: as SequenceType
+        // Optional type annotation: as SequenceType (not for score bindings)
         SequenceType seqType = null;
-        if (matchKeyword(Keywords.AS)) {
+        if (!isScore && matchKeyword(Keywords.AS)) {
             seqType = parseSequenceType();
         }
 
@@ -913,6 +930,7 @@ public final class XQueryParser {
         letExpr.setVariable(qname);
         if (seqType != null) letExpr.setSequenceType(seqType);
         letExpr.setInputSequence(inputSeq);
+        if (isScore) letExpr.setScoreBinding(true);
 
         final LocalVariable var = letExpr.createVariable(qname);
         context.declareVariableBinding(var);
@@ -1634,7 +1652,9 @@ public final class XQueryParser {
 
     private Expression parseFTMildNot() throws XPathException {
         Expression left = parseFTUnaryNot();
-        while (matchKeyword(Keywords.FTNOT)) {
+        while (checkKeyword(Keywords.NOT) && peekIsKeyword(Keywords.IN)) {
+            advance(); // consume "not"
+            advance(); // consume "in"
             final org.exist.xquery.ft.FTMildNot mildNot = new org.exist.xquery.ft.FTMildNot(context);
             mildNot.addOperand(left);
             mildNot.addOperand(parseFTUnaryNot());
@@ -1644,7 +1664,7 @@ public final class XQueryParser {
     }
 
     private Expression parseFTUnaryNot() throws XPathException {
-        if (matchKeyword(Keywords.NOT)) {
+        if (matchKeyword(Keywords.FTNOT)) {
             final org.exist.xquery.ft.FTUnaryNot unaryNot = new org.exist.xquery.ft.FTUnaryNot(context);
             unaryNot.setOperand(parseFTPrimaryWithOptions());
             return unaryNot;
@@ -1682,6 +1702,15 @@ public final class XQueryParser {
                 }
             } else if (matchKeyword(Keywords.PHRASE)) {
                 words.setMode(org.exist.xquery.ft.FTWords.AnyallMode.PHRASE);
+            }
+
+            // Optional FTTimes: "occurs" FTRange "times"
+            if (checkKeyword("occurs")) {
+                advance(); // consume "occurs"
+                final org.exist.xquery.ft.FTTimes ftTimes = new org.exist.xquery.ft.FTTimes(context);
+                ftTimes.setRange(parseFTRange());
+                matchKeyword("times");
+                words.setFTTimes(ftTimes);
             }
 
             pwo.setPrimary(words);
@@ -3720,12 +3749,9 @@ public final class XQueryParser {
                 final org.exist.xquery.ft.FTContent content = new org.exist.xquery.ft.FTContent(context);
                 content.setContentType(org.exist.xquery.ft.FTContent.ContentType.ENTIRE_CONTENT);
                 ftSel.addPosFilter(content);
-            } else if ("occurs".equals(kw) || "exactly".equals(kw) || "from".equals(kw)) {
-                // FTTimes: "occurs" FTRange "times"
-                if ("occurs".equals(kw)) advance(); // consume "occurs"
+            } else if ("exactly".equals(kw) || "from".equals(kw)) {
+                // FTRange used as positional filter (rare)
                 final org.exist.xquery.ft.FTRange range = parseFTRange();
-                matchKeyword("times");
-                // times is modeled as range on selection
                 ftSel.addPosFilter(range);
             } else if ("same".equals(kw) || "different".equals(kw)) {
                 // FTScope: "same"/"different" ("sentence"|"paragraph")
@@ -3771,6 +3797,46 @@ public final class XQueryParser {
             range.setExpr2(parseExprSingle());
         }
         return range;
+    }
+
+    /**
+     * Parses: declare ft-option using ... ;
+     * Sets default match options on the context.
+     */
+    private void parseFTOptionDecl() throws XPathException {
+        final org.exist.xquery.ft.FTMatchOptions opts = new org.exist.xquery.ft.FTMatchOptions();
+        while (matchKeyword(Keywords.USING)) {
+            if (matchKeyword(Keywords.STEMMING)) {
+                opts.setStemming(true);
+            } else if (matchKeyword(Keywords.WILDCARDS)) {
+                opts.setWildcards(true);
+            } else if (matchKeyword(Keywords.LANGUAGE)) {
+                if (check(Token.STRING_LITERAL)) { opts.setLanguage(current.value); advance(); }
+            } else if (matchKeyword(Keywords.DIACRITICS)) {
+                if (matchKeyword(Keywords.INSENSITIVE)) {
+                    opts.setDiacriticsMode(org.exist.xquery.ft.FTMatchOptions.DiacriticsMode.INSENSITIVE);
+                } else { matchKeyword(Keywords.SENSITIVE);
+                    opts.setDiacriticsMode(org.exist.xquery.ft.FTMatchOptions.DiacriticsMode.SENSITIVE);
+                }
+            } else if (checkKeyword("case")) {
+                advance();
+                if (matchKeyword(Keywords.INSENSITIVE)) {
+                    opts.setCaseMode(org.exist.xquery.ft.FTMatchOptions.CaseMode.INSENSITIVE);
+                } else if (matchKeyword(Keywords.SENSITIVE)) {
+                    opts.setCaseMode(org.exist.xquery.ft.FTMatchOptions.CaseMode.SENSITIVE);
+                }
+            } else if (checkKeyword("no")) {
+                advance();
+                if (matchKeyword(Keywords.STEMMING)) opts.setStemming(false);
+                else if (matchKeyword(Keywords.WILDCARDS)) opts.setWildcards(false);
+                else if (matchKeyword("stop")) { matchKeyword(Keywords.WORDS); }
+                else if (matchKeyword("thesaurus")) { /* skip */ }
+            } else {
+                advance(); // skip unknown option
+            }
+        }
+        expect(Token.SEMICOLON, "';'");
+        context.setDefaultFTMatchOptions(opts);
     }
 
     private boolean isFTPositionalKeyword(final String name) {
