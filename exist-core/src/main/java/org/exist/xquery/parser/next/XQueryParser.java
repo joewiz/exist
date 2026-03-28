@@ -727,10 +727,10 @@ public final class XQueryParser {
         if (checkKeyword(Keywords.IF)) {
             return parseIfExpr();
         }
-        if (checkKeyword(Keywords.SOME)) {
+        if (checkKeyword(Keywords.SOME) && peekIs(Token.DOLLAR)) {
             return parseQuantified(QuantifiedExpression.SOME);
         }
-        if (checkKeyword(Keywords.EVERY)) {
+        if (checkKeyword(Keywords.EVERY) && peekIs(Token.DOLLAR)) {
             return parseQuantified(QuantifiedExpression.EVERY);
         }
         if (checkKeyword(Keywords.SWITCH)) {
@@ -1220,6 +1220,11 @@ public final class XQueryParser {
             final String varName = expectName("variable name");
             final QName qname = resolveQName(varName, null);
 
+            // Optional type annotation: as SequenceType
+            if (matchKeyword(Keywords.AS)) {
+                parseSequenceType(); // consume type but not used
+            }
+
             expectKeyword(Keywords.IN);
             final Expression inputSeq = parseExprSingle();
 
@@ -1383,17 +1388,14 @@ public final class XQueryParser {
             // Error code list: * or QName (| QName)*
             final List<QName> errorCodes = new ArrayList<>();
             if (match(Token.STAR)) {
-                // Catch all errors
                 errorCodes.add(QName.WildcardQName.getInstance());
             } else {
-                final String errorName = expectName("error code");
-                errorCodes.add(resolveQName(errorName, Namespaces.XPATH_FUNCTIONS_NS));
+                errorCodes.add(parseErrorCodeQName());
                 while (match(Token.PIPE)) {
                     if (match(Token.STAR)) {
                         errorCodes.add(QName.WildcardQName.getInstance());
                     } else {
-                        final String nextError = expectName("error code");
-                        errorCodes.add(resolveQName(nextError, Namespaces.XPATH_FUNCTIONS_NS));
+                        errorCodes.add(parseErrorCodeQName());
                     }
                 }
             }
@@ -1513,6 +1515,17 @@ public final class XQueryParser {
      * Parses a named function reference: name#arity
      * e.g., fn:count#1, local:greet#1
      */
+    /** Parses an error code QName — handles NCName, QName, and EQName (Q{uri}local). */
+    private QName parseErrorCodeQName() throws XPathException {
+        if (check(Token.BRACED_URI_LITERAL)) {
+            final String eqname = parseEQName();
+            final int braceEnd = eqname.indexOf('}');
+            return new QName(eqname.substring(braceEnd + 1), eqname.substring(2, braceEnd));
+        }
+        final String errorName = expectName("error code");
+        return resolveQName(errorName, Namespaces.XPATH_FUNCTIONS_NS);
+    }
+
     Expression parseNamedFunctionRef(final String name) throws XPathException {
         final int line = previous.line, col = previous.column;
         // # already consumed, expect integer arity
@@ -2873,11 +2886,13 @@ public final class XQueryParser {
         final ElementConstructor elem = new ElementConstructor(context);
         elem.setLocation(line, col);
 
-        // Name: QName or { expr }
+        // Name: QName, EQName (Q{uri}local), or { expr }
         final PathExpr nameExpr = new PathExpr(context);
         if (match(Token.LBRACE)) {
             nameExpr.add(parseExpr());
             expect(Token.RBRACE, "'}'");
+        } else if (check(Token.BRACED_URI_LITERAL)) {
+            nameExpr.add(new LiteralValue(context, new StringValue(parseEQName())));
         } else {
             final String name = expectName("element name");
             nameExpr.add(new LiteralValue(context, new StringValue(name)));
@@ -2915,12 +2930,14 @@ public final class XQueryParser {
         final DynamicAttributeConstructor attr = new DynamicAttributeConstructor(context);
         attr.setLocation(line, col);
 
-        // Name: QName or { expr }
+        // Name: QName, EQName (Q{uri}local), or { expr }
         if (match(Token.LBRACE)) {
             final PathExpr nameExpr = new PathExpr(context);
             nameExpr.add(parseExpr());
             expect(Token.RBRACE, "'}'");
             attr.setNameExpr(nameExpr);
+        } else if (check(Token.BRACED_URI_LITERAL)) {
+            attr.setNameExpr(new LiteralValue(context, new StringValue(parseEQName())));
         } else {
             final String name = expectName("attribute name");
             attr.setNameExpr(new LiteralValue(context, new StringValue(name)));
