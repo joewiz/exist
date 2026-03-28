@@ -324,6 +324,12 @@
         </dependency>
 
         <dependency>
+            <groupId>org.rocksdb</groupId>
+            <artifactId>rocksdbjni</artifactId>
+            <version>9.8.4</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.apache.ws.commons.util</groupId>
             <artifactId>ws-commons-util</artifactId>
             <version>1.0.2</version>
