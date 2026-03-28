@@ -140,6 +140,11 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
      */
     private final String instanceName;
 
+    /**
+     * The default database instance, holding all per-database state.
+     */
+    private final DefaultDatabaseInstance defaultInstance;
+
     private final int concurrencyLevel;
     private LockManager lockManager;
 
@@ -397,6 +402,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
         this.classLoader = Thread.currentThread().getContextClassLoader();
         this.instanceName = instanceName;
+        this.defaultInstance = new DefaultDatabaseInstance(instanceName);
         this.instanceThreadGroup = new ThreadGroup(nameInstanceThreadGroup(instanceName));
 
         this.maxShutdownWait = conf.getProperty(BrokerPool.PROPERTY_SHUTDOWN_DELAY, DEFAULT_MAX_SHUTDOWN_WAIT);
@@ -457,6 +463,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
     private void _initialize() throws EXistException, DatabaseConfigurationException {
         this.lockManager = new LockManager(conf, concurrencyLevel);
+        defaultInstance.lockManager = this.lockManager;
 
         //Flag to indicate that we are initializing
         status.process(Event.INITIALIZE);
@@ -474,37 +481,51 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         this.securityManager = servicesManager.register(new SecurityManagerImpl(this));
 
         this.cacheManager = servicesManager.register(new DefaultCacheManager(this));
+        defaultInstance.cacheManager = this.cacheManager;
         this.xQueryPool = servicesManager.register(new XQueryPool());
+        defaultInstance.xQueryPool = this.xQueryPool;
         this.processMonitor = servicesManager.register(new ProcessMonitor());
+        defaultInstance.processMonitor = this.processMonitor;
         this.xqueryStats = servicesManager.register(new PerformanceStatsService());
+        defaultInstance.xqueryStats = this.xqueryStats;
         final XMLReaderObjectFactory xmlReaderObjectFactory = servicesManager.register(new XMLReaderObjectFactory());
         this.xmlReaderPool = servicesManager.register(new XMLReaderPool(xmlReaderObjectFactory, maxBrokers, 0));
+        defaultInstance.xmlReaderPool = this.xmlReaderPool;
         final int bufferSize = Optional.of(conf.getInteger(PROPERTY_COLLECTION_CACHE_SIZE))
                 .filter(size -> size != -1)
                 .orElse(DEFAULT_COLLECTION_BUFFER_SIZE);
         this.collectionCache = servicesManager.register(new CollectionCache());
+        defaultInstance.collectionCache = this.collectionCache;
         this.notificationService = servicesManager.register(new NotificationService());
+        defaultInstance.notificationService = this.notificationService;
 
         this.journalManager = recoveryEnabled ? Optional.of(new JournalManager()) : Optional.empty();
         journalManager.ifPresent(servicesManager::register);
+        defaultInstance.journalManager = this.journalManager;
 
         final SystemTaskManager systemTaskManager = servicesManager.register(new SystemTaskManager(this));
         this.transactionManager = servicesManager.register(new TransactionManager(this, journalManager, systemTaskManager));
+        defaultInstance.transactionManager = this.transactionManager;
 
         this.blobStoreService = servicesManager.register(new BlobStoreImplService());
+        defaultInstance.blobStoreService = this.blobStoreService;
 
         this.symbols = servicesManager.register(new SymbolTable());
+        defaultInstance.symbols = this.symbols;
 
         this.expathRepo = Optional.of(new ExistRepository());
         expathRepo.ifPresent(servicesManager::register);
         servicesManager.register(new ClasspathHelper());
 
         this.indexManager = servicesManager.register(new IndexManager(this));
+        defaultInstance.indexManager = this.indexManager;
 
         //Get a manager to handle further collections configuration
         this.collectionConfigurationManager = servicesManager.register(new CollectionConfigurationManager(this));
+        defaultInstance.collectionConfigurationManager = this.collectionConfigurationManager;
 
         this.startupTriggersManager = servicesManager.register(new StartupTriggersManager());
+        defaultInstance.startupTriggersManager = this.startupTriggersManager;
 
         // this is just used for unit tests
         final BrokerPoolService testBrokerPoolService = (BrokerPoolService) conf.getProperty("exist.testBrokerPoolService");
@@ -524,6 +545,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         final long maxMem = rt.maxMemory();
         final long minFree = maxMem / 5;
         reservedMem = cacheManager.getTotalMem() + collectionCache.getMaxCacheSize() + minFree;
+        defaultInstance.reservedMem = this.reservedMem;
         LOG.debug("Reserved memory: {}; max: {}; min: {}", reservedMem, maxMem, minFree);
 
         //prepare the registered services, before entering system (single-user) mode
@@ -839,6 +861,19 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         return instanceName;
     }
 
+    /**
+     * Returns the default database instance.
+     *
+     * <p>In a single-database deployment, this is the only instance.
+     * All per-database state (storage, locks, indexes, caches) is
+     * accessed through this instance.
+     *
+     * @return the default DatabaseInstance
+     */
+    public DatabaseInstance getDefaultInstance() {
+        return defaultInstance;
+    }
+
     @Override
     public ThreadGroup getThreadGroup() {
         return instanceThreadGroup;
@@ -984,6 +1019,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
     public void setReadOnly() {
         if (readOnly.compareAndSet(false, true)) {
+            defaultInstance.readOnly.set(true);
             LOG.warn("Switched database into read-only mode!");
         }
     }
