@@ -2219,6 +2219,9 @@ public final class XQueryParser {
             case Keywords.COMMENT: return Type.COMMENT;
             case Keywords.DOCUMENT_NODE: return Type.DOCUMENT;
             case Keywords.PROCESSING_INSTRUCTION: return Type.PROCESSING_INSTRUCTION;
+            case "namespace-node": return Type.NAMESPACE;
+            case "schema-element": return Type.ELEMENT;
+            case "schema-attribute": return Type.ATTRIBUTE;
             default: return Type.ITEM;
         }
     }
@@ -2723,6 +2726,9 @@ public final class XQueryParser {
             if (checkKeyword(Keywords.PROCESSING_INSTRUCTION) && peekIsConstructorStart()) {
                 return parseComputedPIConstructor();
             }
+            if (checkKeyword(Keywords.NAMESPACE) && peekIsConstructorStart()) {
+                return parseComputedNamespaceConstructor();
+            }
 
             // Kind test: text(), node(), element(), attribute(), comment(), etc.
             // Must check BEFORE function call since text() looks like a function call
@@ -2867,6 +2873,36 @@ public final class XQueryParser {
         final DynamicTextConstructor text = new DynamicTextConstructor(context, contentExpr);
         text.setLocation(line, col);
         return text;
+    }
+
+        Expression parseComputedNamespaceConstructor() throws XPathException {
+        final int line = current.line, col = current.column;
+        advance(); // consume 'namespace'
+
+        final NamespaceConstructor ns = new NamespaceConstructor(context);
+        ns.setLocation(line, col);
+
+        // Namespace prefix: static name or { expr }
+        if (match(Token.LBRACE)) {
+            final PathExpr nameExpr = new PathExpr(context);
+            nameExpr.add(parseExpr());
+            expect(Token.RBRACE, "'}'");
+            ns.setNameExpr(nameExpr);
+        } else {
+            final String prefix = expectName("namespace prefix");
+            ns.setNameExpr(new LiteralValue(context, new StringValue(prefix)));
+        }
+
+        // URI: { expr }
+        expect(Token.LBRACE, "'{'");
+        final PathExpr uriExpr = new PathExpr(context);
+        if (!check(Token.RBRACE)) {
+            uriExpr.add(parseExpr());
+        }
+        expect(Token.RBRACE, "'}'");
+        ns.setContentExpr(uriExpr);
+
+        return ns;
     }
 
     Expression parseComputedCommentConstructor() throws XPathException {
@@ -3917,6 +3953,7 @@ public final class XQueryParser {
             case Keywords.NODE: case Keywords.TEXT: case Keywords.ELEMENT:
             case Keywords.ATTRIBUTE: case Keywords.COMMENT:
             case Keywords.DOCUMENT_NODE: case Keywords.PROCESSING_INSTRUCTION:
+            case "namespace-node": case "schema-element": case "schema-attribute":
                 return true;
             default: return false;
         }
@@ -3951,6 +3988,13 @@ public final class XQueryParser {
                     else { final Token n = current; advance(); test = new NameTest(Type.ATTRIBUTE, resolveQName(n.value, null)); }
                 } else { test = new TypeTest(Type.ATTRIBUTE); }
                 break;
+            case "namespace-node": test = new TypeTest(Type.NAMESPACE); break;
+            case "schema-element":
+                if (check(Token.NCNAME) || check(Token.QNAME)) { advance(); }
+                test = new TypeTest(Type.ELEMENT); break;
+            case "schema-attribute":
+                if (check(Token.NCNAME) || check(Token.QNAME)) { advance(); }
+                test = new TypeTest(Type.ATTRIBUTE); break;
             default: throw error("Unknown kind test: " + kind);
         }
         expect(Token.RPAREN, "')'");
