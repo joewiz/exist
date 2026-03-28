@@ -1098,7 +1098,7 @@ public class XQueryParserTest {
 
     @Test
     public void ftContainsFTNot() throws Exception {
-        final Expression expr = parseExpr("'open source' contains text 'open' ftnot 'closed'");
+        final Expression expr = parseExpr("'open source' contains text ftnot 'closed'");
         assertInstanceOf(org.exist.xquery.ft.FTContainsExpr.class, expr);
     }
 
@@ -1173,7 +1173,7 @@ public class XQueryParserTest {
 
     @Test
     public void testGateFTNot() throws Exception {
-        parseExpr("'open source' contains text 'open' ftnot 'closed'");
+        parseExpr("'open source' contains text ftnot 'closed'");
     }
 
     @Test

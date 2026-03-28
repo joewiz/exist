@@ -2313,7 +2313,11 @@ public final class XQueryParser {
         Expression left = parsePipelineExpr();
         while (match(Token.BANG)) {
             final PathExpr leftPath = wrapInPathExpr(left);
+            // Simple map creates a new context — allow absolute paths on RHS
+            final boolean savedInFunctionBody = inFunctionBody;
+            inFunctionBody = false;
             final PathExpr rightPath = wrapInPathExpr(parsePipelineExpr());
+            inFunctionBody = savedInFunctionBody;
             left = new OpSimpleMap(context, leftPath, rightPath);
             ((AbstractExpression) left).setLocation(previous.line, previous.column);
         }
@@ -2792,11 +2796,11 @@ public final class XQueryParser {
 
         // Content: { expr }
         expect(Token.LBRACE, "'{'");
+        final PathExpr contentExpr = new PathExpr(context);
         if (!check(Token.RBRACE)) {
-            final PathExpr contentExpr = new PathExpr(context);
             contentExpr.add(parseExpr());
-            attr.setContentExpr(contentExpr);
         }
+        attr.setContentExpr(contentExpr);
         expect(Token.RBRACE, "'}'");
 
         return attr;
