@@ -1470,6 +1470,16 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqsuiteFilterPattern() throws Exception {
+        // Reproduces xqsuite.xql line 113 pattern — filter with function-name comparison
+        assertBothParsers("xqsuite filter",
+            "let $funcs := (true#0, false#0) " +
+            "return filter($funcs, function($f) { " +
+            "  namespace-uri-from-QName(function-name($f)) = 'http://www.w3.org/2005/xpath-functions' " +
+            "}) => count()");
+    }
+
+    @Test
     public void functxPatternDocumentOrder() throws Exception {
         // Document ordering after path steps — tests node identity and dedup
         assertBothParsers("document order",
