@@ -142,6 +142,7 @@ public class Diagnostics extends BasicFunction {
     private void compile(final XQueryContext pContext, final String expr,
             final List<Sequence> diagnostics) throws XPathException {
         try {
+            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
             final XQueryLexer lexer = new XQueryLexer(pContext, new StringReader(expr));
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(pContext);

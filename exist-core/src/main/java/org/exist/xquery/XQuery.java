@@ -203,7 +203,7 @@ public class XQuery {
      */
     public static final String PROPERTY_PARSER = "exist.parser";
 
-    private static boolean useNativeParser() {
+    public static boolean useRdParser() {
         return "rd".equalsIgnoreCase(System.getProperty(PROPERTY_PARSER, "antlr2"));
     }
 
@@ -215,8 +215,8 @@ public class XQuery {
         }
 
         // Feature flag: use hand-written recursive descent parser if enabled
-        if (useNativeParser() && !xpointer) {
-            return compileWithNativeParser(context, reader);
+        if (useRdParser() && !xpointer) {
+            return compileWithRdParser(context, reader);
         }
         
         
@@ -333,15 +333,15 @@ public class XQuery {
      *
      * @return true if this is a library module, false otherwise
      */
-    private CompiledXQuery compileWithNativeParser(final XQueryContext context, final Reader reader)
+    private CompiledXQuery compileWithRdParser(final XQueryContext context, final Reader reader)
             throws XPathException {
         final long start = System.currentTimeMillis();
         try {
             final String source = readFully(reader);
-            final org.exist.xquery.parser.next.XQueryParser nativeParser =
+            final org.exist.xquery.parser.next.XQueryParser rdParser =
                     new org.exist.xquery.parser.next.XQueryParser(context, source);
 
-            final Expression rootExpr = nativeParser.parse();
+            final Expression rootExpr = rdParser.parse();
 
             // Set root expression on context — required for resetState() during concurrent execution
             context.setRootExpression(rootExpr);

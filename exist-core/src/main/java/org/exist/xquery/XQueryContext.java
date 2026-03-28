@@ -3010,6 +3010,12 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
+            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
+            // An initial implementation was reverted (ab46e48c14 / 01729ed334) because
+            // it caused a runtime stack overflow when compiling modules with recursive
+            // functions (e.g., test.xq). The overflow occurs during actual function
+            // execution, not during analysis — the rd parser's expression tree has a
+            // subtle difference in recursive function handling that needs investigation.
             final XQueryLexer lexer = new XQueryLexer(modContext, reader);
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(modContext, modExternal);

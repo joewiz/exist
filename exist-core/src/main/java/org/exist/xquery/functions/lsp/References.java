@@ -164,6 +164,7 @@ public class References extends BasicFunction {
 
     private PathExpr compile(final XQueryContext pContext, final String expr) {
         try {
+            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
             final XQueryLexer lexer = new XQueryLexer(pContext, new StringReader(expr));
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(pContext);
