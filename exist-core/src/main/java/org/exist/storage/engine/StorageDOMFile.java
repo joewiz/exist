@@ -116,7 +116,7 @@ public class StorageDOMFile {
      * Create a key from document ID and node ID.
      * Format: docId (4 bytes big-endian) | nodeId (variable bytes)
      */
-    static byte[] makeKey(final int docId, final byte[] nodeId) {
+    public static byte[] makeKey(final int docId, final byte[] nodeId) {
         final byte[] key = new byte[4 + nodeId.length];
         key[0] = (byte) (docId >> 24);
         key[1] = (byte) (docId >> 16);
@@ -129,7 +129,7 @@ public class StorageDOMFile {
     /**
      * Create a prefix for all keys belonging to a document.
      */
-    static byte[] makeDocPrefix(final int docId) {
+    public static byte[] makeDocPrefix(final int docId) {
         return new byte[] {
                 (byte) (docId >> 24),
                 (byte) (docId >> 16),
@@ -141,7 +141,7 @@ public class StorageDOMFile {
     /**
      * Extract the node ID bytes from a key.
      */
-    static byte[] extractNodeId(final byte[] key) {
+    public static byte[] extractNodeId(final byte[] key) {
         final byte[] nodeId = new byte[key.length - 4];
         System.arraycopy(key, 4, nodeId, 0, nodeId.length);
         return nodeId;
@@ -150,7 +150,7 @@ public class StorageDOMFile {
     /**
      * Extract the document ID from a key.
      */
-    static int extractDocId(final byte[] key) {
+    public static int extractDocId(final byte[] key) {
         return ((key[0] & 0xFF) << 24) | ((key[1] & 0xFF) << 16)
                 | ((key[2] & 0xFF) << 8) | (key[3] & 0xFF);
     }
