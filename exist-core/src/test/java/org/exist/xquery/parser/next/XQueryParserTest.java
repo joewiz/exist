@@ -972,6 +972,18 @@ public class XQueryParserTest {
     // ---- Test gate queries ----
 
     @Test
+    public void positionalPredicateSimple() throws Exception {
+        // //item[1] should select the first item only
+        assertModuleEval("1", "count((<a/>,<b/>,<c/>,<d/>)[1])");
+    }
+
+    @Test
+    public void positionalPredicateComputed() throws Exception {
+        // [count(('a','b')) - 1] = [1] should select position 1
+        assertModuleEval("1", "count((<a/>,<b/>,<c/>,<d/>)[count(('a','b')) - 1])");
+    }
+
+    @Test
     public void testGatePipeline() throws Exception {
         assertModuleEval("5", "xquery version '4.0';\n(1, 2, 3, 4, 5) -> count()");
     }

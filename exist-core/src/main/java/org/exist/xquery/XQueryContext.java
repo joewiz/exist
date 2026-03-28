@@ -3024,6 +3024,8 @@ public class XQueryContext implements BinaryValueManager, Context {
                             new org.exist.xquery.parser.next.XQueryParser(modContext, source2);
                     final Expression rootExpr = nativeParser.parse();
                     modContext.setRootExpression(rootExpr);
+                    // Note: do NOT call resolveForwardReferences here — function
+                    // resolution happens when the importing module resolves its references
 
                     // Register declared functions on the external module
                     for (final Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
