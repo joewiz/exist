@@ -343,6 +343,8 @@ public class XQuery {
 
             final Expression rootExpr = nativeParser.parse();
 
+            // Set root expression on context — required for resetState() during concurrent execution
+            context.setRootExpression(rootExpr);
             context.getRootContext().resolveForwardReferences();
 
             if (rootExpr instanceof PathExpr) {
