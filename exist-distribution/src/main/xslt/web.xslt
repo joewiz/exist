@@ -31,47 +31,11 @@
     
     <xsl:template match="jee:servlet[jee:servlet-name eq 'JMXServlet']" exclude-result-prefixes="jee">
         <xsl:copy-of select="."/>
-        
-        <xsl:comment>
-            Milton provides the WebDAV interface
-        </xsl:comment>
-        <servlet>
-            <servlet-name>milton</servlet-name>
-            <servlet-class>org.exist.webdav.MiltonWebDAVServlet</servlet-class>
 
-            <init-param>
-                <param-name>resource.factory.class</param-name>
-                <param-value>org.exist.webdav.ExistResourceFactory</param-value>
-            </init-param>
-            
-            <xsl:comment>
-                Some WebDAV clients send a "Expect: 100-continue" header before 
-                uploading body data. Servlet containers (like tomcat and jetty) handle 
-                the header in a wrong way, making a client not work OK.
-                Set value to TRUE to restore old behavior (FALSE is the new default 
-                value, hardcoded in MiltonWebDAVServlet).       
-            </xsl:comment>
-            <xsl:text disable-output-escaping="yes">
-      &lt;!-- </xsl:text>
-            <init-param>
-                <param-name>enable.expect.continue</param-name>
-                <param-value>false</param-value>
-            </init-param>
-            <xsl:text disable-output-escaping="yes">
-      --&gt;    
-    </xsl:text>
-            <xsl:comment>
-                Uncomment to enable debugging
-            </xsl:comment>
-            <xsl:text disable-output-escaping="yes">
-      &lt;!-- </xsl:text>
-            <init-param>
-                <param-name>filter_0</param-name>
-                <param-value>com.bradmcevoy.http.DebugFilter</param-value>
-            </init-param>
-            <xsl:text disable-output-escaping="yes">
-      --&gt;
-    </xsl:text>
+        <xsl:comment> Jackrabbit provides the WebDAV interface </xsl:comment>
+        <servlet>
+            <servlet-name>webdav</servlet-name>
+            <servlet-class>org.exist.webdav.ExistWebdavServlet</servlet-class>
         </servlet>
     </xsl:template>
     

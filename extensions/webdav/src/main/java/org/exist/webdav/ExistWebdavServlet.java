@@ -235,7 +235,13 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
 
         @Override
         public String getHref(final boolean isCollection) {
-            final String href = getPrefix() + resourcePath.substring("/db".length());
+            // The serverPrefix (from AbstractWebdavServlet) already includes
+            // the context path and servlet path. The href should be just the
+            // database path mapped to the WebDAV namespace.
+            final String path = resourcePath.startsWith("/db")
+                    ? resourcePath.substring("/db".length())
+                    : resourcePath;
+            final String href = path.isEmpty() ? "/" : path;
             if (isCollection && !href.endsWith("/")) {
                 return href + "/";
             }
