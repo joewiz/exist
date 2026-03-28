@@ -116,6 +116,7 @@ public class XIncludeFilter implements Receiver {
     private boolean inFallback = false;
     private int inIncludeDepth = 0; // depth of non-XInclude elements inside xi:include (for suppressing non-fallback children)
     private boolean suppressIncludeChildren = false; // true while processing xi:include's own children (not expanded content)
+    private int fallbackCount = 0; // count of xi:fallback children in current xi:include
     private @Nullable ResourceError error = null;
 
     public XIncludeFilter(final Serializer serializer, @Nullable final Receiver receiver) {
@@ -138,6 +139,7 @@ public class XIncludeFilter implements Receiver {
         this.inFallback = false;
         this.inIncludeDepth = 0;
         this.suppressIncludeChildren = false;
+        this.fallbackCount = 0;
         this.error = null;
     }
 
@@ -257,12 +259,18 @@ public class XIncludeFilter implements Receiver {
                 }
                 inIncludeDepth++;
 
+                // Validate parse attribute (per spec 4.1: must be "xml" or "text")
+                final String parseMode = attribs.getValue(PARSE_ATTRIB);
+                if (parseMode != null && !"xml".equals(parseMode) && !"text".equals(parseMode)) {
+                    throw new SAXException("Invalid value for parse attribute: '" + parseMode +
+                            "'. Must be 'xml' or 'text'.");
+                }
+
                 // processXInclude will serialize included content through this filter;
                 // suppress only the xi:include's own children (not the expanded content)
                 final boolean prevSuppress = suppressIncludeChildren;
                 suppressIncludeChildren = false; // allow expanded content through
 
-                final String parseMode = attribs.getValue(PARSE_ATTRIB);
                 final String encoding = attribs.getValue(ENCODING_ATTRIB);
                 final Optional<ResourceError> maybeResourceError = processXInclude(
                         attribs.getValue(HREF_ATTRIB), attribs.getValue(XPOINTER_ATTRIB),
