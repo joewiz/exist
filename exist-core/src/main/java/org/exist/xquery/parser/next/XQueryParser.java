@@ -1520,7 +1520,16 @@ public final class XQueryParser {
         final int arity = Integer.parseInt(current.value);
         advance();
 
-        final QName qname = resolveQName(name, context.getDefaultFunctionNamespace());
+        final QName qname;
+        if (name.startsWith("Q{")) {
+            // EQName: Q{uri}local
+            final int braceEnd = name.indexOf('}');
+            final String uri = name.substring(2, braceEnd);
+            final String local = name.substring(braceEnd + 1);
+            qname = new QName(local, uri);
+        } else {
+            qname = resolveQName(name, context.getDefaultFunctionNamespace());
+        }
         final NamedFunctionReference ref = new NamedFunctionReference(context, qname, arity);
         ref.setLocation(line, col);
         return ref;
@@ -2760,6 +2769,11 @@ public final class XQueryParser {
             return parseDirectElementConstructor();
         }
 
+        // EQName: Q{uri}local — dispatch to parsePrimaryExpr for function call/reference
+        if (check(Token.BRACED_URI_LITERAL)) {
+            return parsePrimaryExpr();
+        }
+
         // NCName or QName — could be name test, function call, keyword, or computed constructor
         if (check(Token.NCNAME) || check(Token.QNAME)) {
             // Computed constructors
@@ -3581,6 +3595,20 @@ public final class XQueryParser {
             return parseStringConstructor();
         }
 
+        // EQName: Q{uri}local — function call, function reference, or variable
+        if (check(Token.BRACED_URI_LITERAL)) {
+            final String eqname = parseEQName();
+            if (match(Token.HASH)) {
+                // Q{uri}name#arity — named function reference
+                return parseNamedFunctionRef(eqname);
+            }
+            if (match(Token.LPAREN)) {
+                // Q{uri}name(args) — function call
+                return parseEQNameFunctionCall(eqname);
+            }
+            throw error("Expected '(' or '#' after EQName '" + eqname + "'");
+        }
+
         // Function call or function reference: name(args) or name#arity
         if (check(Token.NCNAME) || check(Token.QNAME)) {
             // Function reference: name#arity
@@ -3663,6 +3691,72 @@ public final class XQueryParser {
         final Expression expr = parseExpr();
         expect(Token.RPAREN, "')'");
         return expr;
+    }
+
+    /**
+     * Parses a Q{uri}local EQName — returns the combined string for QName resolution.
+     * Consumes BRACED_URI_LITERAL + NCNAME tokens.
+     */
+    private String parseEQName() throws XPathException {
+        final String bracedUri = current.value; // Q{...}
+        advance(); // consume BRACED_URI_LITERAL
+        if (!check(Token.NCNAME)) throw error("Expected local name after braced URI");
+        final String local = current.value;
+        advance(); // consume local name
+        // Return in a format QName.parse can handle
+        return bracedUri + local;
+    }
+
+    /**
+     * Parses a function call with an EQName (Q{uri}local(args)).
+     * LPAREN already consumed.
+     */
+    private Expression parseEQNameFunctionCall(final String eqname) throws XPathException {
+        final Token nameToken = previous; // the local name token
+        final List<Expression> args = new ArrayList<>();
+        if (!check(Token.RPAREN)) {
+            args.add(parseFunctionArg());
+            while (match(Token.COMMA)) {
+                args.add(parseFunctionArg());
+            }
+        }
+        expect(Token.RPAREN, "')'");
+
+        final XQueryAST ast = new XQueryAST(0, eqname);
+        ast.setLine(nameToken.line);
+        ast.setColumn(nameToken.column);
+
+        // Parse Q{uri}local into namespace URI + local name
+        final int braceEnd = eqname.indexOf('}');
+        final String uri = eqname.substring(2, braceEnd); // skip Q{
+        final String local = eqname.substring(braceEnd + 1);
+        final QName qname = new QName(local, uri);
+        final PathExpr parent = new PathExpr(context);
+        Expression fn = FunctionFactory.createFunction(context, qname, ast, parent, args);
+        if (fn instanceof AbstractExpression) {
+            ((AbstractExpression) fn).setLocation(nameToken.line, nameToken.column);
+        }
+
+        // Check for partial application
+        boolean isPartial = false;
+        for (final Expression arg : args) {
+            if (arg instanceof Function.Placeholder) {
+                isPartial = true;
+                break;
+            }
+        }
+        if (isPartial) {
+            if (!(fn instanceof FunctionCall)) {
+                if (fn instanceof CastExpression) {
+                    fn = ((CastExpression) fn).toFunction();
+                }
+                fn = FunctionFactory.wrap(context, (Function) fn);
+            }
+            fn = new PartialFunctionApplication(context, (FunctionCall) fn);
+            ((AbstractExpression) fn).setLocation(nameToken.line, nameToken.column);
+        }
+
+        return fn;
     }
 
     Expression parseFunctionCall() throws XPathException {

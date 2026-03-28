@@ -1470,6 +1470,20 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void eqnameFunctionReference() throws Exception {
+        // EQName function reference: Q{uri}name#arity
+        assertBothParsers("EQName function ref",
+            "exists(Q{http://www.w3.org/2005/xpath-functions}abs#1)");
+    }
+
+    @Test
+    public void eqnameFunctionCall() throws Exception {
+        // EQName function call: Q{uri}name(args)
+        assertBothParsers("EQName function call",
+            "Q{http://www.w3.org/2005/xpath-functions}abs(-42)");
+    }
+
+    @Test
     public void xqsuiteFilterPattern() throws Exception {
         // Reproduces xqsuite.xql line 113 pattern — filter with function-name comparison
         assertBothParsers("xqsuite filter",
