@@ -2645,8 +2645,8 @@ public final class XQueryParser {
             final PathExpr path = new PathExpr(context);
             path.setLocation(previous.line, previous.column);
             path.add(new RootNode(context));
-            final Expression step = parseStepExpr();
-            applyDSlashOptimization(path, step);
+            path.add(new LocationStep(context, Constants.DESCENDANT_SELF_AXIS, new AnyNodeTest()));
+            path.add(parseStepExpr());
             parseRelativePathSteps(path);
             return path;
         }
@@ -2667,50 +2667,11 @@ public final class XQueryParser {
             if (match(Token.SLASH)) {
                 path.add(parseStepExpr());
             } else if (match(Token.DSLASH)) {
-                final Expression step = parseStepExpr();
-                applyDSlashOptimization(path, step);
+                path.add(new LocationStep(context, Constants.DESCENDANT_SELF_AXIS, new AnyNodeTest()));
+                path.add(parseStepExpr());
             } else {
                 break;
             }
-        }
-    }
-
-    /**
-     * Applies the // axis optimization from ANTLR 2's tree walker.
-     * Instead of descendant-or-self::node()/child::X (two steps),
-     * combines into descendant-or-self::X (one step) when possible.
-     * This is critical for correct contextId propagation in predicates.
-     */
-    private void applyDSlashOptimization(final PathExpr path, final Expression step) {
-        if (step instanceof LocationStep) {
-            final LocationStep ls = (LocationStep) step;
-            if (ls.getAxis() == Constants.ATTRIBUTE_AXIS ||
-                    (ls.getTest().getType() == Type.ATTRIBUTE && ls.getAxis() == Constants.CHILD_AXIS)) {
-                ls.setAxis(Constants.DESCENDANT_ATTRIBUTE_AXIS);
-                path.add(ls);
-            } else if (ls.getAxis() == Constants.CHILD_AXIS && ls.getTest().isWildcardTest()) {
-                ls.setAxis(Constants.DESCENDANT_AXIS);
-                path.add(ls);
-            } else if (ls.getAxis() == Constants.SELF_AXIS) {
-                ls.setAxis(Constants.DESCENDANT_SELF_AXIS);
-                path.add(ls);
-            } else if (ls.getAxis() <= Constants.PRECEDING_SIBLING_AXIS) {
-                // Reverse axis: insert explicit descendant-or-self::node() step
-                final LocationStep descStep = new LocationStep(context, Constants.DESCENDANT_SELF_AXIS,
-                        new TypeTest(Type.NODE));
-                descStep.setAbbreviated(true);
-                path.add(descStep);
-                path.add(step);
-            } else {
-                // Default: combine into descendant-or-self
-                ls.setAxis(Constants.DESCENDANT_SELF_AXIS);
-                ls.setAbbreviated(true);
-                path.add(ls);
-            }
-        } else {
-            // Non-LocationStep after // — add explicit descendant-or-self::node()
-            path.add(new LocationStep(context, Constants.DESCENDANT_SELF_AXIS, new AnyNodeTest()));
-            path.add(step);
         }
     }
 

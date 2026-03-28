@@ -116,7 +116,6 @@ public class Predicate extends PathExpr {
         // Case 3: all other cases, boolean evaluation (that can be "promoted" later)
         else {
             executionMode = BOOLEAN;
-            // Predicate is in BOOLEAN mode
         }
         if (executionMode == BOOLEAN) {
             // need to re-analyze:
