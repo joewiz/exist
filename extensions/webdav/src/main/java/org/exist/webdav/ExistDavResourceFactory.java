@@ -99,12 +99,18 @@ public class ExistDavResourceFactory implements DavResourceFactory {
     public DavResource createResource(final DavResourceLocator locator,
             final DavServletRequest request, final DavServletResponse response)
             throws DavException {
-        return createResource(locator, request.getDavSession());
+        return createResource(locator, request.getDavSession(),
+                "MKCOL".equalsIgnoreCase(request.getMethod()));
     }
 
     @Override
     public DavResource createResource(final DavResourceLocator locator,
             final DavSession session) throws DavException {
+        return createResource(locator, session, false);
+    }
+
+    private DavResource createResource(final DavResourceLocator locator,
+            final DavSession session, final boolean forMkcol) throws DavException {
 
         final String path = locator.getResourcePath();
         if (path == null) {
@@ -144,12 +150,19 @@ public class ExistDavResourceFactory implements DavResourceFactory {
                 yield document;
             }
             case NOT_EXISTING -> {
-                // For PUT/MKCOL, we return a non-existing resource
-                // The caller (AbstractWebdavServlet) will handle creation
-                final ExistDavDocument document = new ExistDavDocument(
-                        webDavOptions, xmldbUri, brokerPool, subject, locator, session, this);
-                document.addLockManager(lockManager);
-                yield document;
+                if (forMkcol) {
+                    // MKCOL: create a non-existing collection resource
+                    final ExistDavCollection collection = new ExistDavCollection(
+                            webDavOptions, xmldbUri, brokerPool, subject, locator, session, this);
+                    collection.addLockManager(lockManager);
+                    yield collection;
+                } else {
+                    // PUT: create a non-existing document resource
+                    final ExistDavDocument document = new ExistDavDocument(
+                            webDavOptions, xmldbUri, brokerPool, subject, locator, session, this);
+                    document.addLockManager(lockManager);
+                    yield document;
+                }
             }
         };
     }

@@ -52,6 +52,15 @@
         </servlet>
     </xsl:template>
     
+    <!-- Map WebDAV servlet directly — bypasses XQueryURLRewrite -->
+    <xsl:template match="jee:servlet-mapping[jee:servlet-name eq 'XQueryURLRewrite']" exclude-result-prefixes="jee">
+        <servlet-mapping>
+            <servlet-name>webdav</servlet-name>
+            <url-pattern>/webdav/*</url-pattern>
+        </servlet-mapping>
+        <xsl:copy-of select="."/>
+    </xsl:template>
+
     <xsl:template match="node()|@*">
         <xsl:copy>
             <xsl:apply-templates select="node()|@*"/>

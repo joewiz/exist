@@ -81,10 +81,9 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
             final jakarta.servlet.http.HttpServletResponse response)
             throws jakarta.servlet.ServletException, java.io.IOException {
         if (LOG.isDebugEnabled()) {
-            LOG.debug("WebDAV {} {} (contextPath={}, servletPath={}, pathInfo={}, forward.request_uri={})",
+            LOG.debug("WebDAV {} {} (servletPath={}, pathInfo={})",
                     request.getMethod(), request.getRequestURI(),
-                    request.getContextPath(), request.getServletPath(), request.getPathInfo(),
-                    request.getAttribute("jakarta.servlet.forward.request_uri"));
+                    request.getServletPath(), request.getPathInfo());
         }
         try {
             super.service(request, response);
