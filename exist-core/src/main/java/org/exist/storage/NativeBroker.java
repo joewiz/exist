@@ -161,6 +161,9 @@ public class NativeBroker implements DBBroker {
 
     private BrokerPool pool;
 
+    /** Per-database state (storage, locks, indexes, caches). */
+    private final DatabaseInstance database;
+
     private Deque<Subject> subject = new ArrayDeque<>();
 
     /**
@@ -222,9 +225,10 @@ public class NativeBroker implements DBBroker {
     public NativeBroker(final BrokerPool pool, final Configuration config) throws EXistException {
         this.config = config;
         this.pool = pool;
+        this.database = pool;  // BrokerPool implements DatabaseInstance
         this.preserveOnCopy = config.getProperty(PRESERVE_ON_COPY_PROPERTY, PreserveType.NO_PRESERVE);
 
-        this.lockManager = pool.getLockManager();
+        this.lockManager = database.getLockManager();
         LOG.debug("Initializing broker {}", hashCode());
 
         this.dataDir = config.getProperty(BrokerPool.PROPERTY_DATA_DIR, Paths.get(DEFAULT_DATA_DIR));
@@ -258,7 +262,7 @@ public class NativeBroker implements DBBroker {
             }
             if(domDb.isReadOnly()) {
                 LOG.warn("{} is read-only!", FileUtils.fileName(domDb.getFile()));
-                pool.setReadOnly();
+                database.setReadOnly();
             }
 
             //Initialize collections storage
@@ -270,7 +274,7 @@ public class NativeBroker implements DBBroker {
             }
             if(collectionsDb.isReadOnly()) {
                 LOG.warn("{} is read-only!", FileUtils.fileName(collectionsDb.getFile()));
-                pool.setReadOnly();
+                database.setReadOnly();
             }
 
             this.valueIndex = new NativeValueIndex(this, VALUES_DBX_ID, dataDir, config);
@@ -546,7 +550,7 @@ public class NativeBroker implements DBBroker {
 
     @Override
     public boolean isReadOnly() {
-        return pool.isReadOnly();
+        return database.isReadOnly();
     }
 
     public DOMFile getDOMFile() {
@@ -589,9 +593,9 @@ public class NativeBroker implements DBBroker {
                 backup.closeEntry();
             }
         }
-        pool.getSymbols().backupToArchive(backup);
-        pool.getBlobStore().backupToArchive(backup);
-        pool.getIndexManager().backupToArchive(backup);
+        database.getSymbols().backupToArchive(backup);
+        database.getBlobStore().backupToArchive(backup);
+        database.getIndexManager().backupToArchive(backup);
         //TODO backup counters
         //TODO USE zip64 or tar to create snapshots larger then 4Gb
     }
@@ -781,7 +785,7 @@ public class NativeBroker implements DBBroker {
         final XmldbURI collectionUri = prepend(path.toCollectionPathURI().normalizeCollectionPath());
         final XmldbURI parentCollectionUri = collectionUri.removeLastSegment();
 
-        final CollectionCache collectionsCache = pool.getCollectionsCache();
+        final CollectionCache collectionsCache = database.getCollectionsCache();
 
         try {
 
@@ -867,14 +871,14 @@ public class NativeBroker implements DBBroker {
             try {
                 final String initCollectionConfig = readInitCollectionConfig();
                 if(initCollectionConfig != null) {
-                    CollectionConfigurationManager collectionConfigurationManager = pool.getConfigurationManager();
+                    CollectionConfigurationManager collectionConfigurationManager = database.getConfigurationManager();
                     if(collectionConfigurationManager == null) {
-                        if(pool.getConfigurationManager() == null) {
+                        if(database.getConfigurationManager() == null) {
                             throw new IllegalStateException();
                             //might not yet have been initialised
                             //pool.initCollectionConfigurationManager(this, transaction);
                         }
-                        collectionConfigurationManager = pool.getConfigurationManager();
+                        collectionConfigurationManager = database.getConfigurationManager();
                     }
 
                     if(collectionConfigurationManager != null) {
@@ -1007,7 +1011,7 @@ public class NativeBroker implements DBBroker {
             return null;
         }
 
-        final CollectionCache collectionsCache = pool.getCollectionsCache();
+        final CollectionCache collectionsCache = database.getCollectionsCache();
         final Collection collection;
         try {
             // NOTE: getCollectionForOpen will perform the Permission.EXECUTE security check on Collection at collectionUri
@@ -1157,7 +1161,7 @@ public class NativeBroker implements DBBroker {
     public void readCollectionEntry(final SubCollectionEntry entry) throws IOException, LockException {
         final XmldbURI uri = prepend(entry.getUri().toCollectionPathURI());
 
-        final CollectionCache collectionsCache = pool.getCollectionsCache();
+        final CollectionCache collectionsCache = database.getCollectionsCache();
         final Collection collection = collectionsCache.getIfPresent(uri);
         if(collection == null) {
             try(final ManagedLock<ReentrantLock> collectionsDbLock = lockManager.acquireBtreeReadLock(collectionsDb.getLockName())) {
@@ -1234,7 +1238,7 @@ public class NativeBroker implements DBBroker {
          *  we don't need to explicitly lock sub-collections (just documents).
          */
 
-        pool.getProcessMonitor().startJob(ProcessMonitor.ACTION_COPY_COLLECTION, sourceCollection.getURI());
+        database.getProcessMonitor().startJob(ProcessMonitor.ACTION_COPY_COLLECTION, sourceCollection.getURI());
         try {
 
             final XmldbURI sourceCollectionParentUri = sourceCollection.getParentURI();
@@ -1260,7 +1264,7 @@ public class NativeBroker implements DBBroker {
             }
 
         } finally {
-            pool.getProcessMonitor().endJob();
+            database.getProcessMonitor().endJob();
         }
     }
 
@@ -1546,7 +1550,7 @@ public class NativeBroker implements DBBroker {
              *  we don't need to explicitly lock sub-collections (just documents).
              */
 
-            pool.getProcessMonitor().startJob(ProcessMonitor.ACTION_MOVE_COLLECTION, sourceCollection.getURI());
+            database.getProcessMonitor().startJob(ProcessMonitor.ACTION_MOVE_COLLECTION, sourceCollection.getURI());
             try {
                 final CollectionTrigger trigger = new CollectionTriggers(this, transaction, sourceCollectionParent);
                 trigger.beforeMoveCollection(this, transaction, sourceCollection, destinationCollectionUri);
@@ -1562,7 +1566,7 @@ public class NativeBroker implements DBBroker {
                 }
                 trigger.afterMoveCollection(this, transaction, sourceCollection, sourceCollectionUri);
             } finally {
-                pool.getProcessMonitor().endJob();
+                database.getProcessMonitor().endJob();
             }
         }
     }
@@ -1706,7 +1710,7 @@ public class NativeBroker implements DBBroker {
         }
 
         // remove source from cache
-        final CollectionCache collectionsCache = pool.getCollectionsCache();
+        final CollectionCache collectionsCache = database.getCollectionsCache();
         collectionsCache.invalidate(sourceCollection.getURI());
 
         // remove source from disk
@@ -1804,14 +1808,14 @@ public class NativeBroker implements DBBroker {
 
                     //TODO(AR) is this the correct place to invalidate the config?
                     // Notify the collection configuration manager
-                    final CollectionConfigurationManager manager = pool.getConfigurationManager();
+                    final CollectionConfigurationManager manager = database.getConfigurationManager();
                     if(manager != null) {
                         manager.invalidate(collectionUri, getBrokerPool());
                     }
                 }
 
                 // invalidate the cache entry
-                final CollectionCache collectionsCache = pool.getCollectionsCache();
+                final CollectionCache collectionsCache = database.getCollectionsCache();
                 collectionsCache.invalidate(collection.getURI());
             } else {
                 // if this is the root collection we just have to save
@@ -1905,7 +1909,7 @@ public class NativeBroker implements DBBroker {
     }
 
     private void removeCollectionBinary(final Txn transaction, final BinaryDocument doc) throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         blobStore.remove(transaction, doc.getBlobId());
     }
 
@@ -1981,7 +1985,7 @@ public class NativeBroker implements DBBroker {
             throw new IOException(DATABASE_IS_READ_ONLY);
         }
 
-        final CollectionCache collectionsCache = pool.getCollectionsCache();
+        final CollectionCache collectionsCache = database.getCollectionsCache();
         collectionsCache.put(collection);
 
         try(final ManagedLock<ReentrantLock> collectionsDbLock = lockManager.acquireBtreeWriteLock(collectionsDb.getLockName())) {
@@ -2042,12 +2046,12 @@ public class NativeBroker implements DBBroker {
             }
 
             LOG.info("Start indexing collection {}", collection.getURI().toString());
-            pool.getProcessMonitor().startJob(ProcessMonitor.ACTION_REINDEX_COLLECTION, collection.getURI());
+            database.getProcessMonitor().startJob(ProcessMonitor.ACTION_REINDEX_COLLECTION, collection.getURI());
             reindexCollection(transaction, collection, IndexMode.STORE);
         } catch(final PermissionDeniedException | IOException e) {
             LOG.error("An error occurred during reindex: {}", e.getMessage(), e);
         } finally {
-            pool.getProcessMonitor().endJob();
+            database.getProcessMonitor().endJob();
             LOG.info("Finished indexing collection {} in {} ms.", fqUri, System.currentTimeMillis() - start);
         }
     }
@@ -2148,7 +2152,7 @@ public class NativeBroker implements DBBroker {
             pushSubject(pool.getSecurityManager().getSystemSubject());
 
             //start a transaction
-            final TransactionManager transact = pool.getTransactionManager();
+            final TransactionManager transact = database.getTransactionManager();
             //create a name for the temporary document
             final XmldbURI docName = XmldbURI.create(MessageDigester.md5(Thread.currentThread().getName() + System.currentTimeMillis(), false) + ".xml");
 
@@ -2215,7 +2219,7 @@ public class NativeBroker implements DBBroker {
             if (temp == null) {
                 return;
             }
-            final TransactionManager transact = pool.getTransactionManager();
+            final TransactionManager transact = database.getTransactionManager();
             try (final Txn transaction = transact.beginTransaction()) {
                 removeCollection(transaction, temp);
                 transact.commit(transaction);
@@ -2340,7 +2344,7 @@ public class NativeBroker implements DBBroker {
     @Override
     public void storeBinaryResource(final Txn transaction, final BinaryDocument blob, final InputStream is)
             throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         final Tuple2<BlobId, Long> blobIdLen = blobStore.add(transaction, is);
 
         blob.setBlobId(blobIdLen._1);
@@ -2444,7 +2448,7 @@ public class NativeBroker implements DBBroker {
     @Override
     public void readBinaryResource(final Txn transaction, final BinaryDocument blob, final OutputStream os)
             throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         try (final InputStream is = blobStore.get(transaction, blob.getBlobId())) {
             if (is != null) {
                 if (os instanceof UnsynchronizedByteArrayOutputStream) {
@@ -2465,7 +2469,7 @@ public class NativeBroker implements DBBroker {
     @Override
     public MessageDigest getBinaryResourceContentDigest(final Txn transaction, final BinaryDocument binaryDocument,
         final DigestType digestType) throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         return blobStore.getDigest(transaction, binaryDocument.getBlobId(), digestType);
     }
 
@@ -2478,7 +2482,7 @@ public class NativeBroker implements DBBroker {
     @Override
     public <T> T withBinaryFile(final Txn transaction, final BinaryDocument binaryDocument,
             final Function<Path, T> fnFile) throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         return blobStore.with(transaction, binaryDocument.getBlobId(), fnFile);
     }
 
@@ -2500,7 +2504,7 @@ public class NativeBroker implements DBBroker {
     @Override
     public InputStream getBinaryResource(final Txn transaction, final BinaryDocument blob)
             throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         return blobStore.get(transaction, blob.getBlobId());
     }
 
@@ -2732,7 +2736,7 @@ public class NativeBroker implements DBBroker {
 
                 } else {
                     // remove the blob of the old document
-                    final BlobStore blobStore = pool.getBlobStore();
+                    final BlobStore blobStore = database.getBlobStore();
                     blobStore.remove(transaction, ((BinaryDocument)oldDoc).getBlobId());
                 }
 
@@ -2824,7 +2828,7 @@ public class NativeBroker implements DBBroker {
     }
 
     private void copyBinaryResource(final Txn transaction, final BinaryDocument srcDoc, final BinaryDocument dstDoc) throws IOException {
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         final BlobId dstBlobId = blobStore.copy(transaction, srcDoc.getBlobId());
 
         dstDoc.setBlobId(dstBlobId);
@@ -3038,7 +3042,7 @@ public class NativeBroker implements DBBroker {
             return;
         }
 
-        final BlobStore blobStore = pool.getBlobStore();
+        final BlobStore blobStore = database.getBlobStore();
         blobStore.remove(transaction, blob.getBlobId());
 
         // remove the file from the database metadata and indexes
@@ -3096,7 +3100,7 @@ public class NativeBroker implements DBBroker {
                 nextDocId = ByteConversion.byteToInt(data.getData(), 0);
                 ++nextDocId;
                 if(nextDocId == 0x7FFFFFFF) {
-                    pool.setReadOnly();
+                    database.setReadOnly();
                     throw new EXistException("Max. number of document ids reached. Database is set to " +
                         "read-only state. Please do a complete backup/restore to compact the db and " +
                         "free document ids.");
@@ -3398,7 +3402,7 @@ public class NativeBroker implements DBBroker {
         node.setInternalAddress(BFile.UNKNOWN_ADDRESS);
         storeNode(transaction, node, currentPath, null);
         if(defragment && oldNodeId != null) {
-            pool.getNotificationService().notifyMove(oldNodeId, node);
+            database.getNotificationService().notifyMove(oldNodeId, node);
         }
         if(node.getNodeType() == Node.ELEMENT_NODE) {
             //save old value, whatever it is
@@ -3816,7 +3820,7 @@ public class NativeBroker implements DBBroker {
         LOG.info("Removing index files ...");
         try {
             notifyCloseAndRemove();
-            pool.getIndexManager().removeIndexes();
+            database.getIndexManager().removeIndexes();
         } catch(final DBException e) {
             LOG.error("Failed to remove index files during repair: {}", e.getMessage(), e);
         }
@@ -3829,7 +3833,7 @@ public class NativeBroker implements DBBroker {
         }
 
         try {
-            pool.getIndexManager().reopenIndexes();
+            database.getIndexManager().reopenIndexes();
         } catch(final DatabaseConfigurationException e) {
             LOG.error("Failed to reopen index files after repair: {}", e.getMessage(), e);
         }
@@ -3886,7 +3890,7 @@ public class NativeBroker implements DBBroker {
     public void flush() {
         notifyFlush();
         try {
-            pool.getSymbols().flush();
+            database.getSymbols().flush();
         } catch(final EXistException e) {
             LOG.error(e);
         }
@@ -3920,7 +3924,7 @@ public class NativeBroker implements DBBroker {
                     LOG.error("Failed to acquire lock on {}", FileUtils.fileName(collectionsDb.getFile()), e);
                 }
                 notifySync();
-                pool.getIndexManager().sync();
+                database.getIndexManager().sync();
 
                 if (System.currentTimeMillis() > nextReportTS) {
 	                final NumberFormat nf = NumberFormat.getNumberInstance();
@@ -3976,7 +3980,7 @@ public class NativeBroker implements DBBroker {
     public void checkAvailableMemory() {
         if(nodesCountThreshold <= 0) {
             if(nodesCount > DEFAULT_NODES_BEFORE_MEMORY_CHECK) {
-                if(run.totalMemory() >= run.maxMemory() && run.freeMemory() < pool.getReservedMem()) {
+                if(run.totalMemory() >= run.maxMemory() && run.freeMemory() < database.getReservedMem()) {
                     flush();
                 }
                 nodesCount = 0;
@@ -4064,7 +4068,7 @@ public class NativeBroker implements DBBroker {
 //    private <T> T transact(final Function<Txn, T> transactee) throws EXistException {
 //        final Txn existing = getCurrentTransaction();
 //        if(existing == null) {
-//            try(final Txn txn = pool.getTransactionManager().beginTransaction()) {
+//            try(final Txn txn = database.getTransactionManager().beginTransaction()) {
 //                return transactee.apply(txn);
 //            }
 //        } else {
@@ -4291,7 +4295,7 @@ public class NativeBroker implements DBBroker {
          */
         private void checkAvailableMemory() {
             if(indexMode != IndexMode.REMOVE && nodesCount > DEFAULT_NODES_BEFORE_MEMORY_CHECK) {
-                if(run.totalMemory() >= run.maxMemory() && run.freeMemory() < pool.getReservedMem()) {
+                if(run.totalMemory() >= run.maxMemory() && run.freeMemory() < database.getReservedMem()) {
                     flush();
                 }
                 nodesCount = 0;
