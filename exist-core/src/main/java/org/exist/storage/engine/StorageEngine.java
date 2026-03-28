@@ -13,12 +13,16 @@ import java.nio.file.Path;
 public interface StorageEngine extends AutoCloseable {
     void open(Path dataDir, StorageConfig config) throws StorageException;
 
+    default void open(Path dataDir) throws StorageException {
+        open(dataDir, new StorageConfig());
+    }
+
     @Override
     void close() throws StorageException;
 
-    ReadTransaction beginReadTransaction();
+    ReadTransaction beginReadTransaction() throws StorageException;
 
-    WriteTransaction beginWriteTransaction();
+    WriteTransaction beginWriteTransaction() throws StorageException;
 
-    Partition getPartition(String name);
+    Partition getPartition(String name) throws StorageException;
 }

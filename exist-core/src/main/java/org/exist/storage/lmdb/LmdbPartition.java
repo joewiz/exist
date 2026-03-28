@@ -1,8 +1,8 @@
 package org.exist.storage.lmdb;
 
-import org.exist.storage.engine.CloseableIterator;
 import org.exist.storage.engine.Partition;
 import org.exist.storage.engine.ReadTransaction;
+import org.exist.storage.engine.StorageException;
 import org.exist.storage.engine.WriteTransaction;
 import org.lmdbjava.CursorIterable;
 import org.lmdbjava.Dbi;
@@ -12,9 +12,7 @@ import org.lmdbjava.Txn;
 import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.AbstractMap;
+import java.util.function.BiConsumer;
 
 public class LmdbPartition implements Partition {
     private final Dbi<ByteBuffer> dbi;
@@ -51,33 +49,24 @@ public class LmdbPartition implements Partition {
     }
 
     @Override
-    public CloseableIterator scan(final ReadTransaction txn, final byte[] startKey, final byte[] endKey) {
+    public void scan(final ReadTransaction txn, final byte[] startKey, @Nullable final byte[] endKey,
+                     final BiConsumer<byte[], byte[]> visitor) {
         final Txn<ByteBuffer> lmdbTxn = unwrapTxn(txn);
         final ByteBuffer startBuf = toDirectBuffer(startKey);
-        final ByteBuffer endBuf = toDirectBuffer(endKey);
-        final CursorIterable<ByteBuffer> iterable = dbi.iterate(lmdbTxn, KeyRange.closedOpen(startBuf, endBuf));
-        final Iterator<CursorIterable.KeyVal<ByteBuffer>> cursor = iterable.iterator();
 
-        return new CloseableIterator() {
-            @Override
-            public boolean hasNext() {
-                return cursor.hasNext();
-            }
+        final CursorIterable<ByteBuffer> iterable;
+        if (endKey != null) {
+            final ByteBuffer endBuf = toDirectBuffer(endKey);
+            iterable = dbi.iterate(lmdbTxn, KeyRange.closedOpen(startBuf, endBuf));
+        } else {
+            iterable = dbi.iterate(lmdbTxn, KeyRange.atLeast(startBuf));
+        }
 
-            @Override
-            public Map.Entry<byte[], byte[]> next() {
-                final CursorIterable.KeyVal<ByteBuffer> kv = cursor.next();
-                return new AbstractMap.SimpleImmutableEntry<>(
-                        toByteArray(kv.key()),
-                        toByteArray(kv.val())
-                );
+        try (iterable) {
+            for (final CursorIterable.KeyVal<ByteBuffer> kv : iterable) {
+                visitor.accept(toByteArray(kv.key()), toByteArray(kv.val()));
             }
-
-            @Override
-            public void close() {
-                iterable.close();
-            }
-        };
+        }
     }
 
     private static Txn<ByteBuffer> unwrapTxn(final ReadTransaction txn) {

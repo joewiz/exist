@@ -47,7 +47,7 @@ public class RocksDbStorageEngine implements StorageEngine {
     private WriteOptions syncWriteOptions;
 
     @Override
-    public void open(final Path dataDir) throws StorageException {
+    public void open(final Path dataDir, final StorageConfig config) throws StorageException {
         RocksDB.loadLibrary();
 
         try {

@@ -9,9 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -42,7 +40,7 @@ public abstract class StorageEngineTest {
     }
 
     @Test
-    void testStoreAndRetrieveDocument() {
+    void testStoreAndRetrieveDocument() throws Exception {
         final Partition dom = engine.getPartition("dom");
         final byte[] docXml = "<root><child attr=\"val\">text</child></root>".getBytes(StandardCharsets.UTF_8);
 
@@ -65,7 +63,7 @@ public abstract class StorageEngineTest {
     }
 
     @Test
-    void testCollectionCRUD() {
+    void testCollectionCRUD() throws Exception {
         final Partition collections = engine.getPartition("collections");
 
         final byte[] collKey = collectionKey("/db/test");
@@ -93,12 +91,7 @@ public abstract class StorageEngineTest {
             final byte[] scanStart = documentEntryPrefix("/db/test");
             final byte[] scanEnd = documentEntryPrefixEnd("/db/test");
             final List<byte[]> keys = new ArrayList<>();
-            try (final CloseableIterator iter = collections.scan(rtx, scanStart, scanEnd)) {
-                while (iter.hasNext()) {
-                    final Map.Entry<byte[], byte[]> entry = iter.next();
-                    keys.add(entry.getKey());
-                }
-            }
+            collections.scan(rtx, scanStart, scanEnd, (k, v) -> keys.add(k));
             assertEquals(1, keys.size(), "Should find 1 document in collection");
         }
 
@@ -117,7 +110,7 @@ public abstract class StorageEngineTest {
     }
 
     @Test
-    void testSymbolTableRoundTrip() {
+    void testSymbolTableRoundTrip() throws Exception {
         final Partition symbols = engine.getPartition("symbols");
 
         // Forward mapping: "title" → ID 42
@@ -148,7 +141,7 @@ public abstract class StorageEngineTest {
     }
 
     @Test
-    void testReadTransactionIsolation() {
+    void testReadTransactionIsolation() throws Exception {
         final Partition dom = engine.getPartition("dom");
         final byte[] key = makeKey(1, 1);
         final byte[] value = "original".getBytes(StandardCharsets.UTF_8);

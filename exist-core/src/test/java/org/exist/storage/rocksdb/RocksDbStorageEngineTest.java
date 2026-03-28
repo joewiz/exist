@@ -44,7 +44,6 @@ public class RocksDbStorageEngineTest extends StorageEngineTest {
         return new RocksDbStorageEngine();
     }
 
-    @Override
     protected Path getDataDir() {
         return tempDir;
     }
