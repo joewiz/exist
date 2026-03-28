@@ -506,9 +506,16 @@ public final class XQueryParser {
             }
             // Only add VariableDeclaration if the variable wasn't pre-declared
             if (external == null) {
-                final PathExpr enclosed = new PathExpr(context);
-                if (valueExpr != null) enclosed.add(valueExpr);
-                final VariableDeclaration decl = new VariableDeclaration(context, qname, enclosed);
+                // Pass null for no default value, PathExpr for default value
+                final Expression defaultVal;
+                if (valueExpr != null) {
+                    final PathExpr enclosed = new PathExpr(context);
+                    enclosed.add(valueExpr);
+                    defaultVal = enclosed;
+                } else {
+                    defaultVal = null;
+                }
+                final VariableDeclaration decl = new VariableDeclaration(context, qname, defaultVal);
                 decl.setLocation(line, col);
                 if (type != null) decl.setSequenceType(type);
                 rootExpr.add(decl);
@@ -2947,10 +2954,14 @@ public final class XQueryParser {
                 scanAttribute(elem);
             }
 
-            // Scan element content
-            final PathExpr content = new PathExpr(context);
-            scanElementContent(content, elemName);
-            elem.setContent(content);
+            // Scan element content — wrapped in EnclosedExpr > SequenceConstructor
+            // to match ANTLR 2 behavior. EnclosedExpr handles document context,
+            // atomic value spacing, node copying.
+            final SequenceConstructor construct = new SequenceConstructor(context);
+            scanElementContent(construct, elemName);
+            final EnclosedExpr enclosed = new EnclosedExpr(context);
+            enclosed.addPath(construct);
+            elem.setContent(enclosed);
 
             return elem;
         } finally {

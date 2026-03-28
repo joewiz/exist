@@ -949,6 +949,26 @@ public class XQueryParserTest {
         assertEval("<![CDATA[data]]>", "``[<![CDATA[data]]>]``");
     }
 
+    @Test
+    public void elementWithEnclosedExprOnly() throws Exception {
+        assertModuleEval("42", "let $i := 41 return <price>{$i + 1}</price>");
+    }
+
+    @Test
+    public void simpleElementLiteral() throws Exception {
+        assertModuleEval("hello", "<a>hello</a>");
+    }
+
+    @Test
+    public void simpleElementWithVar() throws Exception {
+        assertModuleEval("42", "let $x := 42 return <a>{$x}</a>");
+    }
+
+    @Test
+    public void elementWithEnclosedExprAndText() throws Exception {
+        assertModuleEval("Hello 42 World", "let $i := 42 return <msg>Hello {$i} World</msg>");
+    }
+
     // ---- Test gate queries ----
 
     @Test
