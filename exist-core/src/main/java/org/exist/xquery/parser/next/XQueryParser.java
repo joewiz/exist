@@ -3820,8 +3820,10 @@ public final class XQueryParser {
             }
         }
 
-        // Check for keyword argument: name := value — XQ4 only
-        if (check(Token.NCNAME) && peekIs(Token.COLON_EQ) && isXQ4()) {
+        // Keyword argument: name := value
+        // Accepted regardless of version — no valid XQ3.1 syntax starts with name :=
+        // in a function argument position, and the ANTLR 2 parser accepts them too.
+        if (check(Token.NCNAME) && peekIs(Token.COLON_EQ)) {
             final String keyName = current.value;
             advance(); // consume name
             advance(); // consume :=
