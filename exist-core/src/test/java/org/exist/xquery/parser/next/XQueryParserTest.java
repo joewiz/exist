@@ -1307,6 +1307,229 @@ public class XQueryParserTest {
         }
     }
 
+    // ========================================================================
+    // FunctX-style pattern tests — compare rd vs ANTLR 2
+    // ========================================================================
+
+    /**
+     * Runs a query through both rd and ANTLR 2 parsers and asserts same result.
+     */
+    private void assertBothParsers(final String label, final String query) throws Exception {
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            // rd parser
+            String rdResult;
+            try {
+                final XQueryContext rdCtx = new XQueryContext(pool);
+                final XQueryParser rdParser = new XQueryParser(rdCtx, query);
+                final Expression rdRoot = rdParser.parse();
+                rdCtx.setRootExpression(rdRoot);
+                rdCtx.getRootContext().resolveForwardReferences();
+                if (rdRoot instanceof PathExpr) {
+                    ((PathExpr) rdRoot).analyze(new AnalyzeContextInfo());
+                }
+                final Sequence rdSeq = rdRoot.eval(null, null);
+                final StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < rdSeq.getItemCount(); i++) {
+                    if (i > 0) sb.append(' ');
+                    sb.append(rdSeq.itemAt(i).getStringValue());
+                }
+                rdResult = sb.toString();
+                rdCtx.reset();
+            } catch (final Exception e) {
+                rdResult = "RD_ERROR: " + e.getMessage();
+            }
+
+            // ANTLR 2 parser
+            String antlrResult;
+            try {
+                final XQuery xquery = pool.getXQueryService();
+                final Sequence antlrSeq = xquery.execute(broker, query, null);
+                final StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < antlrSeq.getItemCount(); i++) {
+                    if (i > 0) sb.append(' ');
+                    sb.append(antlrSeq.itemAt(i).getStringValue());
+                }
+                antlrResult = sb.toString();
+            } catch (final Exception e) {
+                antlrResult = "ANTLR_ERROR: " + e.getMessage();
+            }
+
+            assertEquals(label + " — rd parser should match ANTLR 2", antlrResult, rdResult);
+        }
+    }
+
+    @Test
+    public void functxPatternNestedElementConstructors() throws Exception {
+        // FunctX pattern: construct elements with computed content
+        assertBothParsers("nested element constructors",
+            "let $items := ('a', 'b', 'c') " +
+            "return <list>{ for $item in $items return <item value='{$item}'>{upper-case($item)}</item> }</list>");
+    }
+
+    @Test
+    public void functxPatternHigherOrderFunctions() throws Exception {
+        // FunctX pattern: function references and for-each
+        assertBothParsers("higher-order functions",
+            "let $nums := (1, 2, 3, 4, 5) " +
+            "return string-join(for-each($nums, function($n) { $n * $n }), ',')");
+    }
+
+    @Test
+    public void functxPatternStringManipulation() throws Exception {
+        // FunctX pattern: tokenize, string-join, replace
+        assertBothParsers("string manipulation",
+            "let $s := 'hello world foo bar' " +
+            "return string-join(for $w in tokenize($s, '\\s+') " +
+            "return concat(upper-case(substring($w, 1, 1)), substring($w, 2)), ' ')");
+    }
+
+    @Test
+    public void functxPatternTypeswitch() throws Exception {
+        // FunctX pattern: typeswitch for type-dependent processing
+        assertBothParsers("typeswitch",
+            "let $vals := (42, 'hello', 3.14, true()) " +
+            "return string-join(for $v in $vals return " +
+            "typeswitch($v) " +
+            "case xs:integer return 'int' " +
+            "case xs:string return 'str' " +
+            "case xs:double return 'dbl' " +
+            "case xs:decimal return 'dec' " +
+            "case xs:boolean return 'bool' " +
+            "default return 'other', ',')");
+    }
+
+    @Test
+    public void functxPatternRecursiveFunction() throws Exception {
+        // FunctX pattern: recursive function for tree processing
+        assertBothParsers("recursive function",
+            "declare function local:depth($n as node()) as xs:integer { " +
+            "  if ($n/node()) then max(for $c in $n/node() return local:depth($c)) + 1 " +
+            "  else 0 " +
+            "}; " +
+            "let $doc := <a><b><c/></b><d/></a> " +
+            "return local:depth($doc)");
+    }
+
+    @Test
+    public void functxPatternAttributeValueTemplate() throws Exception {
+        // AVT in direct constructors — exercises EnclosedExpr handling
+        assertBothParsers("attribute value template",
+            "let $id := 42 return <div id='item-{$id}' class='{if ($id > 10) then \"big\" else \"small\"}'>" +
+            "{$id}</div>");
+    }
+
+    @Test
+    public void functxPatternNamespaceAxis() throws Exception {
+        // Namespace handling in path expressions — namespace must be declared in prolog
+        assertBothParsers("namespace in path",
+            "declare namespace ns='urn:test'; " +
+            "let $doc := <root xmlns:ns='urn:test'><ns:item>hello</ns:item></root> " +
+            "return $doc/ns:item/string()");
+    }
+
+    @Test
+    public void functxPatternGroupBy() throws Exception {
+        // Group by clause — FLWOR with grouping
+        assertBothParsers("group by",
+            "string-join(for $x in (1,2,3,1,2,1) group by $x order by $x " +
+            "return $x || '=' || count($x), ',')");
+    }
+
+    @Test
+    public void functxPatternMapLookup() throws Exception {
+        // Map construction and lookup
+        assertBothParsers("map lookup",
+            "let $m := map { 'a': 1, 'b': 2, 'c': 3 } " +
+            "return string-join(for $k in map:keys($m) order by $k return $k || ':' || $m($k), ',')");
+    }
+
+    @Test
+    public void functxPatternArrowChain() throws Exception {
+        // Arrow operator chaining
+        assertBothParsers("arrow chain",
+            "'hello world' => upper-case() => tokenize('\\s+') => string-join('-')");
+    }
+
+    @Test
+    public void functxPatternQuantifiedExpr() throws Exception {
+        // Quantified expressions — some/every
+        assertBothParsers("quantified expr",
+            "let $nums := (2, 4, 6, 8) return " +
+            "string-join((" +
+            "  if (every $n in $nums satisfies $n mod 2 = 0) then 'all-even' else 'not-all-even'," +
+            "  if (some $n in $nums satisfies $n > 5) then 'has-gt-5' else 'no-gt-5'" +
+            "), ',')");
+    }
+
+    @Test
+    public void functxPatternFilterPredicate() throws Exception {
+        // Predicate with complex expression on in-memory sequence
+        assertBothParsers("filter predicate",
+            "let $items := for $i in 1 to 10 return <item n='{$i}'>{$i * $i}</item> " +
+            "return string-join($items[@n > 3][@n < 8]/string(), ',')");
+    }
+
+    @Test
+    public void functxPatternSwitchExpr() throws Exception {
+        // Switch expression
+        assertBothParsers("switch expression",
+            "for $day in ('Mon', 'Sat', 'Wed') return " +
+            "switch ($day) " +
+            "case 'Mon' case 'Tue' case 'Wed' case 'Thu' case 'Fri' return 'weekday' " +
+            "case 'Sat' case 'Sun' return 'weekend' " +
+            "default return 'unknown'");
+    }
+
+    @Test
+    public void functxPatternDocumentOrder() throws Exception {
+        // Document ordering after path steps — tests node identity and dedup
+        assertBothParsers("document order",
+            "let $doc := <root><a><b>1</b><b>2</b></a><a><b>3</b></a></root> " +
+            "return string-join($doc//b/string(), ',')");
+    }
+
+    @Test
+    public void functxPatternDslashPredicate() throws Exception {
+        // // with positional predicate — exercises axis optimization
+        assertBothParsers("// with predicate",
+            "let $doc := <root><item>a</item><item>b</item><item>c</item></root> " +
+            "return $doc//item[2]/string()");
+    }
+
+    @Test
+    public void functxPatternComplexFlwor() throws Exception {
+        // Complex FLWOR with let, where, order by, count
+        assertBothParsers("complex FLWOR",
+            "string-join(" +
+            "for $x in (5, 3, 1, 4, 2) " +
+            "let $sq := $x * $x " +
+            "where $sq > 4 " +
+            "order by $x " +
+            "count $pos " +
+            "return $pos || ':' || $x || '=' || $sq, ' ')");
+    }
+
+    @Test
+    public void functxPatternTryCatch() throws Exception {
+        // Try/catch with error variables
+        assertBothParsers("try/catch",
+            "try { 1 div 0 } " +
+            "catch * { 'caught: ' || $err:code }");
+    }
+
+    @Test
+    public void functxPatternConstructedAttribute() throws Exception {
+        // Computed element with constructed attributes — attributes BEFORE content
+        assertBothParsers("constructed attribute",
+            "let $name := 'div' " +
+            "return element { $name } { " +
+            "  attribute id { 'main' }, " +
+            "  attribute class { 'container' }, " +
+            "  'content' " +
+            "}");
+    }
+
     /**
      * Parses a simple expression without evaluating it.
      */
