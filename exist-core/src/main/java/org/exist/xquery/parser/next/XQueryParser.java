@@ -1281,8 +1281,12 @@ public final class XQueryParser {
                 final String errorName = expectName("error code");
                 errorCodes.add(resolveQName(errorName, Namespaces.XPATH_FUNCTIONS_NS));
                 while (match(Token.PIPE)) {
-                    final String nextError = expectName("error code");
-                    errorCodes.add(resolveQName(nextError, Namespaces.XPATH_FUNCTIONS_NS));
+                    if (match(Token.STAR)) {
+                        errorCodes.add(QName.WildcardQName.getInstance());
+                    } else {
+                        final String nextError = expectName("error code");
+                        errorCodes.add(resolveQName(nextError, Namespaces.XPATH_FUNCTIONS_NS));
+                    }
                 }
             }
 
