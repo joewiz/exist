@@ -295,6 +295,8 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnCollation.FN_COLLATION_AVAILABLE, FnCollation.class),
         new FunctionDef(FnHtmlDoc.FN_HTML_DOC, FnHtmlDoc.class),
         new FunctionDef(FnUnparsedBinary.FN_UNPARSED_BINARY, FnUnparsedBinary.class),
+        new FunctionDef(FnSchemaType.FN_SCHEMA_TYPE, FnSchemaType.class),
+        new FunctionDef(FnElementToMapPlan.FN_ELEMENT_TO_MAP_PLAN, FnElementToMapPlan.class),
         new FunctionDef(FnDateTimeParts.FN_BUILD_DATETIME, FnDateTimeParts.class),
         new FunctionDef(FnDateTimeParts.FN_PARTS_OF_DATETIME, FnDateTimeParts.class),
         new FunctionDef(FnReplicate.FN_REPLICATE, FnReplicate.class),
