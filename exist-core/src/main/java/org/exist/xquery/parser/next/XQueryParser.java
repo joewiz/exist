@@ -55,6 +55,11 @@ public final class XQueryParser {
     /** Track whether we're inside a function body (declared or inline) for XPDY0002 */
     private boolean inFunctionBody = false;
 
+    /** True if the query is a library module (starts with 'module namespace'). */
+    private boolean isLibraryModule = false;
+
+    public boolean isLibraryModule() { return isLibraryModule; }
+
     /** Returns true if the query declares xquery version "4.0". */
     private boolean isXQ4() {
         return context.getXQueryVersion() >= 40;
@@ -153,6 +158,7 @@ public final class XQueryParser {
      * Parses: module namespace prefix = "uri";
      */
     private void parseModuleDecl() throws XPathException {
+        isLibraryModule = true;
         matchKeyword(Keywords.MODULE);
         expectKeyword(Keywords.NAMESPACE);
         final String prefix = expectName("module prefix");

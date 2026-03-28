@@ -3010,6 +3010,39 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
+
+            // Use rd parser if enabled via system property
+            if (XQuery.useNativeParser()) {
+                try {
+                    final StringBuilder sb = new StringBuilder(4096);
+                    final char[] buf = new char[4096];
+                    int n;
+                    // Read remaining content (reader may have been partially consumed by isModule check)
+                    while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+                    final String source2 = sb.toString();
+                    final org.exist.xquery.parser.next.XQueryParser nativeParser =
+                            new org.exist.xquery.parser.next.XQueryParser(modContext, source2);
+                    final Expression rootExpr = nativeParser.parse();
+                    modContext.setRootExpression(rootExpr);
+
+                    // Register declared functions on the external module
+                    for (final Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
+                        modExternal.declareFunction(it.next());
+                    }
+                    // Register declared variables on the external module
+                    for (final Variable var : modContext.getVariables().values()) {
+                        if (var.getQName().getNamespaceURI().equals(namespaceURI)) {
+                            modExternal.declareVariable(var);
+                        }
+                    }
+
+                    modExternal.setRootExpression(rootExpr);
+                } catch (final XPathException e) {
+                    e.prependMessage("Error while loading module " + location + ": ");
+                    throw e;
+                }
+            } else {
+
             final XQueryLexer lexer = new XQueryLexer(modContext, reader);
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(modContext, modExternal);
@@ -3034,21 +3067,6 @@ public class XQueryContext implements BinaryValueManager, Context {
                 }
 
                 modExternal.setRootExpression(path);
-
-                if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
-                    throw new XPathException(rootExpression, ErrorCodes.XQST0059, "namespace URI declared by module (" + modExternal.getNamespaceURI() + ") does not match namespace URI in import statement, which was: " + namespaceURI);
-                }
-
-                // Set source information on module context
-//            String sourceClassName = source.getClass().getName();
-//            modContext.setSourceKey(source.getKey().toString());
-                // Extract the source type from the classname by removing the package prefix and the "Source" suffix
-//            modContext.setSourceType( sourceClassName.substring( 17, sourceClassName.length() - 6 ) );
-
-                modExternal.setSource(source);
-                modContext.setSource(source);
-                modExternal.setIsReady(true);
-                return modExternal;
             } catch (final RecognitionException e) {
                 throw new XPathException(e.getLine(), e.getColumn(), ErrorCodes.XPST0003, "error found while loading module from " + location + ": " + e.getMessage());
             } catch (final TokenStreamException e) {
@@ -3057,6 +3075,16 @@ public class XQueryContext implements BinaryValueManager, Context {
                 e.prependMessage("Error while loading module " + location + ": ");
                 throw e;
             }
+            } // end else (ANTLR 2 path)
+
+            if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
+                throw new XPathException(rootExpression, ErrorCodes.XQST0059, "namespace URI declared by module (" + modExternal.getNamespaceURI() + ") does not match namespace URI in import statement, which was: " + namespaceURI);
+            }
+
+            modExternal.setSource(source);
+            modContext.setSource(source);
+            modExternal.setIsReady(true);
+            return modExternal;
         } catch (final IOException e) {
             throw moduleLoadException("IO exception while loading module '" + namespaceURI + "'" + " from '" + source + "'", location, e);
         }
