@@ -138,6 +138,10 @@ public class ExistDavDocument extends ExistDavResource {
         properties.add(new DefaultDavProperty<>(
                 DavPropertyName.GETCONTENTLENGTH, String.valueOf(existDocument.getContentLength())));
 
+        // ETag based on content length and modification time
+        final String etag = "\"" + existDocument.getContentLength() + "-" + getModificationTime() + "\"";
+        properties.add(new DefaultDavProperty<>(DavPropertyName.GETETAG, etag));
+
         return properties;
     }
 
@@ -204,6 +208,12 @@ public class ExistDavDocument extends ExistDavResource {
 
         final XmldbURI destCollectionUri = getDestinationCollectionUri(destination);
         final String destName = getDestinationName(destination);
+
+        // Verify destination collection exists (RFC 4918 §9.8.5)
+        if (destination.getCollection() != null && !destination.getCollection().exists()) {
+            throw new DavException(DavServletResponse.SC_CONFLICT,
+                    "Destination collection does not exist");
+        }
 
         try {
             existDocument.resourceCopyMove(destCollectionUri, destName, ExistResource.Mode.COPY);

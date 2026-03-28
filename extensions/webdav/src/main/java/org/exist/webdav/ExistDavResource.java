@@ -176,6 +176,15 @@ public abstract class ExistDavResource implements DavResource {
         properties.add(new DefaultDavProperty<>(DavPropertyName.ISCOLLECTION,
                 isCollection() ? "1" : "0"));
 
+        // Supported lock types (RFC 4918 §15.10)
+        final SupportedLock supportedLock = new SupportedLock();
+        supportedLock.addEntry(Type.WRITE, Scope.EXCLUSIVE);
+        properties.add(supportedLock);
+
+        // Lock discovery (RFC 4918 §15.8)
+        final ActiveLock[] activeLocks = getLocks();
+        properties.add(new LockDiscovery(activeLocks));
+
         return properties;
     }
 

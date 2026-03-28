@@ -83,6 +83,13 @@ public class ExistLockManager implements LockManager {
                 davDoc.configuration, davDoc.getXmldbUri(), davDoc.getBrokerPool());
         existDoc.setUser(davDoc.getSubject());
 
+        // Check if already locked — eXist's lock() silently replaces existing locks
+        final LockToken currentLock = existDoc.getCurrentLock();
+        if (currentLock != null && currentLock.getOpaqueLockToken() != null) {
+            throw new DavException(DavServletResponse.SC_LOCKED,
+                    "Resource is already locked");
+        }
+
         try {
             final LockToken resultToken = existDoc.lock(inputToken);
             return toActiveLock(resultToken, resource);
@@ -141,9 +148,23 @@ public class ExistLockManager implements LockManager {
                     "Locking is only supported for document resources");
         }
 
+        // Verify the provided token matches the current lock
+        final String cleanToken = stripTokenPrefix(lockToken);
+
         final ExistDocument existDoc = new ExistDocument(
                 davDoc.configuration, davDoc.getXmldbUri(), davDoc.getBrokerPool());
         existDoc.setUser(davDoc.getSubject());
+
+        final LockToken currentLock = existDoc.getCurrentLock();
+        if (currentLock == null || currentLock.getOpaqueLockToken() == null) {
+            throw new DavException(DavServletResponse.SC_PRECONDITION_FAILED,
+                    "Document is not locked");
+        }
+
+        if (!currentLock.getOpaqueLockToken().equals(cleanToken)) {
+            throw new DavException(DavServletResponse.SC_LOCKED,
+                    "Lock token does not match");
+        }
 
         try {
             existDoc.unlock();
@@ -208,10 +229,15 @@ public class ExistLockManager implements LockManager {
      * Convert an eXist-db LockToken to a Jackrabbit ActiveLock.
      */
     private ActiveLock toActiveLock(final LockToken token, final DavResource resource) {
-        final DefaultActiveLock activeLock = new DefaultActiveLock();
+        final ExistActiveLock activeLock = new ExistActiveLock();
         activeLock.setOwner(token.getOwner());
         activeLock.setIsDeep(token.getDepth() == LockToken.LockDepth.INFINITY);
         activeLock.setLockroot(resource.getHref());
+
+        // Set the lock token — critical for If-header matching and UNLOCK
+        if (token.getOpaqueLockToken() != null) {
+            activeLock.setToken("opaquelocktoken:" + token.getOpaqueLockToken());
+        }
 
         if (token.getTimeOut() == LockToken.LOCK_TIMEOUT_INFINITE) {
             activeLock.setTimeout(Long.MAX_VALUE / 2);

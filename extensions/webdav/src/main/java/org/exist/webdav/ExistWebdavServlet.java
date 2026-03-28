@@ -23,6 +23,7 @@ package org.exist.webdav;
 
 import jakarta.servlet.ServletException;
 import org.apache.jackrabbit.webdav.*;
+import org.apache.jackrabbit.webdav.lock.ActiveLock;
 import org.apache.jackrabbit.webdav.server.AbstractWebdavServlet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -96,6 +97,67 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
     @Override
     protected boolean isPreconditionValid(final WebdavRequest request, final DavResource resource) {
         return !resource.exists() || request.matchesIfHeader(resource);
+    }
+
+    /**
+     * Check if a destructive operation on a locked resource has a valid lock
+     * token in the If header. Returns 423 (Locked) if the resource is locked
+     * and no matching token is provided (RFC 4918 §9.4).
+     *
+     * This check uses simple string matching on the If header. Jackrabbit's
+     * matchesIfHeader handles the full If-header grammar; this is a guard
+     * for the case where no If header is present at all.
+     */
+    private void requireLockTokenForWrite(final WebdavRequest request, final DavResource resource)
+            throws DavException {
+        if (!resource.exists()) {
+            return;
+        }
+        final ActiveLock lock = resource.getLock(
+                org.apache.jackrabbit.webdav.lock.Type.WRITE,
+                org.apache.jackrabbit.webdav.lock.Scope.EXCLUSIVE);
+        if (lock == null || lock.getToken() == null) {
+            return;
+        }
+        // Only block when NO If header is present at all.
+        // When an If header IS present, let Jackrabbit's matchesIfHeader
+        // handle the full evaluation (including Not conditions, ETags, etc.)
+        final String ifHeader = request.getHeader("If");
+        if (ifHeader == null || ifHeader.isEmpty()) {
+            throw new DavException(DavServletResponse.SC_LOCKED,
+                    "Resource is locked; provide lock token in If header");
+        }
+    }
+
+    @Override
+    protected void doPut(final WebdavRequest request, final WebdavResponse response,
+            final DavResource resource) throws java.io.IOException, DavException {
+        requireLockTokenForWrite(request, resource);
+        super.doPut(request, response, resource);
+    }
+
+    @Override
+    protected void doDelete(final WebdavRequest request, final WebdavResponse response,
+            final DavResource resource) throws java.io.IOException, DavException {
+        requireLockTokenForWrite(request, resource);
+        super.doDelete(request, response, resource);
+    }
+
+    @Override
+    protected void doCopy(final WebdavRequest request, final WebdavResponse response,
+            final DavResource resource) throws java.io.IOException, DavException {
+        // Check destination lock — COPY onto a locked resource requires the token
+        final DavResource dest = getResourceFactory().createResource(
+                request.getDestinationLocator(), request, response);
+        requireLockTokenForWrite(request, dest);
+        super.doCopy(request, response, resource);
+    }
+
+    @Override
+    protected void doMove(final WebdavRequest request, final WebdavResponse response,
+            final DavResource resource) throws java.io.IOException, DavException {
+        requireLockTokenForWrite(request, resource);
+        super.doMove(request, response, resource);
     }
 
     @Override
@@ -251,12 +313,9 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
         @Override
         public String getHref(final boolean isCollection) {
             // Jackrabbit uses getHref() directly for <D:href> in responses.
-            // Must return the full path relative to the server root:
-            // /webdav/ for /db, /webdav/system/ for /db/system, etc.
-            final String dbRelative = resourcePath.startsWith("/db")
-                    ? resourcePath.substring("/db".length())
-                    : resourcePath;
-            final String href = webdavPath + (dbRelative.isEmpty() ? "/" : dbRelative);
+            // Must return the full path relative to the server root,
+            // including the context path (e.g., /exist/webdav/db/).
+            final String href = hrefPrefix + webdavPath + resourcePath;
             if (isCollection && !href.endsWith("/")) {
                 return href + "/";
             }

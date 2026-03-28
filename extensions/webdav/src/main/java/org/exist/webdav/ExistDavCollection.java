@@ -176,6 +176,11 @@ public class ExistDavCollection extends ExistDavResource {
 
         if (resource.isCollection()) {
             // Create a sub-collection (MKCOL)
+            // RFC 4918 §9.3: MKCOL with unsupported body must return 415
+            if (inputContext != null && inputContext.hasStream()) {
+                throw new DavException(DavServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
+                        "MKCOL with request body is not supported");
+            }
             final String name = getResourceName(resource);
             try {
                 existCollection.createCollection(name);
@@ -252,6 +257,11 @@ public class ExistDavCollection extends ExistDavResource {
         if (!(member instanceof ExistDavResource existMember)) {
             throw new DavException(DavServletResponse.SC_FORBIDDEN,
                     "Cannot remove non-eXist-db resource");
+        }
+
+        if (!member.exists()) {
+            throw new DavException(DavServletResponse.SC_NOT_FOUND,
+                    "Resource does not exist: " + existMember.getXmldbUri());
         }
 
         if (member instanceof ExistDavDocument) {
