@@ -108,7 +108,7 @@ import static org.exist.util.ThreadUtils.newInstanceThread;
  * @author <a href="mailto:adam@exist-db.org">Adam Retter</a>
  */
 @ConfigurationClass("pool")
-public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Database {
+public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Database, DatabaseInstance {
 
     private final static Logger LOG = LogManager.getLogger(BrokerPool.class);
 
@@ -831,6 +831,11 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
      */
     //TODO : rename getInstanceName
     public String getId() {
+        return instanceName;
+    }
+
+    @Override
+    public String getName() {
         return instanceName;
     }
 
