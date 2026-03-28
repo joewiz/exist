@@ -26,7 +26,7 @@
     <forward pattern="/rest" servlet="EXistServlet"/>
 
     <!-- WebDAV interface (Jackrabbit) -->
-    <forward pattern="/webdav/" servlet="jackrabbit-webdav"/>
+    <forward pattern="/webdav/" servlet="webdav"/>
 
     <root pattern="/db.*" path="xmldb:exist:///db"/>
     <root pattern=".*" path="xmldb:exist:///db/apps"/>
