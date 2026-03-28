@@ -3019,7 +3019,21 @@ public class XQueryContext implements BinaryValueManager, Context {
                     while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
                     final org.exist.xquery.parser.next.XQueryParser rdParser =
                             new org.exist.xquery.parser.next.XQueryParser(modContext, sb.toString());
-                    final Expression rootExpr = rdParser.parse();
+                    final Expression parsedExpr = rdParser.parse();
+                    // Wrap in LibraryModuleRoot — required for XQuery.execute() to
+                    // dispatch function calls by name (triggers, fn:load-xquery-module)
+                    final Expression rootExpr;
+                    if (rdParser.isLibraryModule()) {
+                        final LibraryModuleRoot libRoot = new LibraryModuleRoot(modContext);
+                        if (parsedExpr instanceof PathExpr) {
+                            for (int ii = 0; ii < ((PathExpr) parsedExpr).getLength(); ii++) {
+                                libRoot.add(((PathExpr) parsedExpr).getExpression(ii));
+                            }
+                        }
+                        rootExpr = libRoot;
+                    } else {
+                        rootExpr = parsedExpr;
+                    }
                     modContext.setRootExpression(rootExpr);
                     // Resolve forward references — critical for recursive function detection.
                     // Without this, FunctionCall.isRecursive() returns false and recursive

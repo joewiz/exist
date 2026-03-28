@@ -347,21 +347,31 @@ public class XQuery {
             context.setRootExpression(rootExpr);
             context.getRootContext().resolveForwardReferences();
 
-            if (rootExpr instanceof PathExpr) {
-                context.analyzeAndOptimizeIfModulesChanged((PathExpr) rootExpr);
+            // For library modules, return LibraryModuleRoot so execute() can
+            // dispatch function calls by name (triggers, fn:load-xquery-module)
+            final PathExpr result;
+            if (rdParser.isLibraryModule()) {
+                result = new LibraryModuleRoot(context);
+                if (rootExpr instanceof PathExpr) {
+                    for (int i = 0; i < ((PathExpr) rootExpr).getLength(); i++) {
+                        result.add(((PathExpr) rootExpr).getExpression(i));
+                    }
+                }
+            } else if (rootExpr instanceof PathExpr) {
+                result = (PathExpr) rootExpr;
+            } else {
+                result = new PathExpr(context);
+                result.add(rootExpr);
             }
+
+            context.analyzeAndOptimizeIfModulesChanged(result);
 
             if (LOG.isDebugEnabled()) {
                 final NumberFormat nf = NumberFormat.getNumberInstance();
                 LOG.debug("Recursive descent parser compilation took {} ms", nf.format(System.currentTimeMillis() - start));
             }
 
-            if (rootExpr instanceof PathExpr) {
-                return (PathExpr) rootExpr;
-            }
-            final PathExpr wrapper = new PathExpr(context);
-            wrapper.add(rootExpr);
-            return wrapper;
+            return result;
         } catch (final IOException e) {
             throw new XPathException(context.getRootExpression(), "Error reading query source: " + e.getMessage(), e);
         }
