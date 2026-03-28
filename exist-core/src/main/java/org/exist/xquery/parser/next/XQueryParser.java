@@ -58,6 +58,10 @@ public final class XQueryParser {
     /** True if the query is a library module (starts with 'module namespace'). */
     private boolean isLibraryModule = false;
 
+    /** Track declared decimal format names for XQST0097 duplicate detection */
+    private final java.util.Set<String> declaredDecimalFormats = new java.util.HashSet<>();
+    private boolean defaultDecimalFormatDeclared = false;
+
     public boolean isLibraryModule() { return isLibraryModule; }
 
     /** Returns true if the query declares xquery version "4.0". */
@@ -213,6 +217,19 @@ public final class XQueryParser {
         } else if (checkKeyword(Keywords.CONTEXT)) {
             // declare context item := expr;
             skipToSemicolon();
+        } else if (checkKeyword("decimal-format")) {
+            advance(); // consume "decimal-format"
+            // Named decimal format: declare decimal-format name property = value ... ;
+            final String dfName = expectName("decimal format name");
+            final QName dfQName = resolveQName(dfName, null);
+            final String dfKey = dfQName.getNamespaceURI() + ":" + dfQName.getLocalPart();
+            if (!declaredDecimalFormats.add(dfKey)) {
+                throw new XPathException(previous.line, previous.column, ErrorCodes.XQST0097,
+                        "Duplicate decimal format declaration: " + dfName);
+            }
+            final DecimalFormat df = parseDecimalFormatProperties();
+            context.setStaticDecimalFormat(dfQName, df);
+            expect(Token.SEMICOLON, "';'");
         } else if (checkKeyword("ft-option")) {
             // declare ft-option using ... ;
             advance(); // consume "ft-option"
@@ -360,9 +377,94 @@ public final class XQueryParser {
                 throw error("Expected 'greatest' or 'least'");
             }
             expect(Token.SEMICOLON, "';'");
+        } else if (checkKeyword("decimal-format")) {
+            advance(); // consume "decimal-format"
+            if (defaultDecimalFormatDeclared) {
+                throw new XPathException(previous.line, previous.column, ErrorCodes.XQST0097,
+                        "Duplicate default decimal format declaration");
+            }
+            defaultDecimalFormatDeclared = true;
+            final DecimalFormat df = parseDecimalFormatProperties();
+            context.setDefaultStaticDecimalFormat(df);
+            expect(Token.SEMICOLON, "';'");
         } else {
-            throw error("Expected 'element', 'function', 'collation', or 'order' after 'default'");
+            throw error("Expected 'element', 'function', 'collation', 'order', or 'decimal-format' after 'default'");
         }
+    }
+
+    /**
+     * Parses decimal-format property=value pairs.
+     * Returns a DecimalFormat with all specified properties.
+     */
+    private DecimalFormat parseDecimalFormatProperties() throws XPathException {
+        int decimalSeparator = DecimalFormat.UNNAMED.decimalSeparator;
+        int exponentSeparator = DecimalFormat.UNNAMED.exponentSeparator;
+        int groupingSeparator = DecimalFormat.UNNAMED.groupingSeparator;
+        int percent = DecimalFormat.UNNAMED.percent;
+        int perMille = DecimalFormat.UNNAMED.perMille;
+        int zeroDigit = DecimalFormat.UNNAMED.zeroDigit;
+        int digit = DecimalFormat.UNNAMED.digit;
+        int patternSeparator = DecimalFormat.UNNAMED.patternSeparator;
+        String infinity = DecimalFormat.UNNAMED.infinity;
+        String nan = DecimalFormat.UNNAMED.NaN;
+        int minusSign = DecimalFormat.UNNAMED.minusSign;
+
+        while (check(Token.NCNAME) && !check(Token.SEMICOLON)) {
+            final String prop = current.value;
+            advance();
+            expect(Token.EQ, "'='");
+            if (!check(Token.STRING_LITERAL)) throw error("Expected string value for decimal-format property");
+            final String value = current.value;
+            advance();
+            switch (prop) {
+                case "decimal-separator": decimalSeparator = requireSingleChar(prop, value); break;
+                case "grouping-separator": groupingSeparator = requireSingleChar(prop, value); break;
+                case "infinity": infinity = value; break;
+                case "minus-sign": minusSign = requireSingleChar(prop, value); break;
+                case "NaN": nan = value; break;
+                case "percent": percent = requireSingleChar(prop, value); break;
+                case "per-mille": perMille = requireSingleChar(prop, value); break;
+                case "zero-digit":
+                    final int zd = requireSingleChar(prop, value);
+                    if (Character.getType(zd) != Character.DECIMAL_DIGIT_NUMBER || Character.getNumericValue(zd) != 0) {
+                        throw new XPathException(previous.line, previous.column, ErrorCodes.XQST0098,
+                                "zero-digit must be a Unicode digit with numeric value zero, got: \"" + value + "\"");
+                    }
+                    zeroDigit = zd;
+                    break;
+                case "digit": digit = requireSingleChar(prop, value); break;
+                case "pattern-separator": patternSeparator = requireSingleChar(prop, value); break;
+                case "exponent-separator": exponentSeparator = requireSingleChar(prop, value); break;
+                default: break; // unknown property — skip
+            }
+        }
+
+        final DecimalFormat df = new DecimalFormat(decimalSeparator, exponentSeparator, groupingSeparator,
+                percent, perMille, zeroDigit, digit, patternSeparator, infinity, nan, minusSign);
+        // Validate distinct picture-string characters (XQST0098)
+        final int[] chars = { decimalSeparator, groupingSeparator, percent, perMille,
+                              zeroDigit, digit, patternSeparator, exponentSeparator };
+        final String[] names = { "decimal-separator", "grouping-separator", "percent", "per-mille",
+                                 "zero-digit", "digit", "pattern-separator", "exponent-separator" };
+        for (int i = 0; i < chars.length; i++) {
+            for (int j = i + 1; j < chars.length; j++) {
+                if (chars[i] == chars[j]) {
+                    throw new XPathException(previous.line, previous.column, ErrorCodes.XQST0098,
+                            "Decimal-format properties '" + names[i] + "' and '" + names[j] +
+                            "' must have distinct values, but both are: '" +
+                            new String(Character.toChars(chars[i])) + "'");
+                }
+            }
+        }
+        return df;
+    }
+
+    private int requireSingleChar(final String prop, final String value) throws XPathException {
+        if (value.codePointCount(0, value.length()) != 1) {
+            throw new XPathException(previous.line, previous.column, ErrorCodes.XQST0097,
+                    "The value of decimal-format property '" + prop + "' must be a single character, got: \"" + value + "\"");
+        }
+        return value.codePointAt(0);
     }
 
     private void parseFunctionDecl(final List<Annotation> annotations) throws XPathException {
