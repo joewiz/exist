@@ -36,6 +36,7 @@
         <servlet>
             <servlet-name>webdav</servlet-name>
             <servlet-class>org.exist.webdav.ExistWebdavServlet</servlet-class>
+            <load-on-startup>3</load-on-startup>
         </servlet>
     </xsl:template>
     

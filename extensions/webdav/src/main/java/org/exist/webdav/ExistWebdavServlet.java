@@ -80,6 +80,12 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
     protected void service(final jakarta.servlet.http.HttpServletRequest request,
             final jakarta.servlet.http.HttpServletResponse response)
             throws jakarta.servlet.ServletException, java.io.IOException {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("WebDAV {} {} (contextPath={}, servletPath={}, pathInfo={}, forward.request_uri={})",
+                    request.getMethod(), request.getRequestURI(),
+                    request.getContextPath(), request.getServletPath(), request.getPathInfo(),
+                    request.getAttribute("jakarta.servlet.forward.request_uri"));
+        }
         try {
             super.service(request, response);
         } catch (final Throwable t) {
@@ -129,83 +135,93 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
 
     /**
      * DavLocatorFactory implementation that maps WebDAV request URIs
-     * to eXist-db database paths. The prefix (e.g., "/webdav") is stripped
-     * and paths are resolved relative to the database root "/db".
+     * to eXist-db database paths. Strips the "/webdav" prefix from
+     * incoming paths and maps them to "/db/...".
+     *
+     * The locator uses a two-part prefix model:
+     * - hrefPrefix: scheme://host:port/contextPath (from WebdavRequestImpl)
+     * - webdavPath: "/webdav" (the servlet mapping path)
+     *
+     * getPrefix() returns hrefPrefix + webdavPath for href generation.
+     * getHref() returns the db-relative path (e.g., "/system/" for /db/system).
      */
     static class ExistDavLocatorFactory implements DavLocatorFactory {
 
-        private final String prefix;
+        private final String webdavPath;
 
-        ExistDavLocatorFactory(final String prefix) {
-            this.prefix = prefix;
+        ExistDavLocatorFactory(final String webdavPath) {
+            this.webdavPath = webdavPath;
         }
 
         @Override
-        public DavResourceLocator createResourceLocator(final String serverPrefix, final String href) {
-            // href is the full path from the request
-            // Strip the webdav prefix to get the resource path
-            String resourcePath = href;
-            if (resourcePath != null && resourcePath.startsWith(prefix)) {
-                resourcePath = resourcePath.substring(prefix.length());
+        public DavResourceLocator createResourceLocator(final String hrefPrefix, final String href) {
+            // href comes from the request URI minus contextPath
+            // e.g., "/webdav/db/system" or "/webdav/db/"
+            // Strip the webdav path to get the database path
+            String dbPath = href;
+            if (dbPath != null && dbPath.startsWith(webdavPath)) {
+                dbPath = dbPath.substring(webdavPath.length());
             }
-            if (resourcePath == null || resourcePath.isEmpty()) {
-                resourcePath = "/db";
-            }
-            // Ensure path starts with /db
-            if (!resourcePath.startsWith("/db")) {
-                resourcePath = "/db" + resourcePath;
-            }
-            // Strip trailing slash
-            if (resourcePath.length() > 1 && resourcePath.endsWith("/")) {
-                resourcePath = resourcePath.substring(0, resourcePath.length() - 1);
-            }
-            return new ExistDavLocator(serverPrefix, prefix, resourcePath, this);
+            return createLocator(hrefPrefix, dbPath);
         }
 
         @Override
-        public DavResourceLocator createResourceLocator(final String serverPrefix,
+        public DavResourceLocator createResourceLocator(final String hrefPrefix,
                 final String workspacePath, final String resourcePath) {
-            return createResourceLocator(serverPrefix, workspacePath, resourcePath, true);
+            return createResourceLocator(hrefPrefix, workspacePath, resourcePath, true);
         }
 
         @Override
-        public DavResourceLocator createResourceLocator(final String serverPrefix,
+        public DavResourceLocator createResourceLocator(final String hrefPrefix,
                 final String workspacePath, final String path, final boolean isResourcePath) {
-            String resourcePath = path;
-            if (resourcePath == null || resourcePath.isEmpty()) {
-                resourcePath = "/db";
+            // For child resource creation, path is already a db path (e.g., "/db/system")
+            return createLocator(hrefPrefix, path);
+        }
+
+        private DavResourceLocator createLocator(final String hrefPrefix, String dbPath) {
+            if (dbPath == null || dbPath.isEmpty()) {
+                dbPath = "/db";
             }
-            if (!resourcePath.startsWith("/db")) {
-                resourcePath = "/db" + resourcePath;
+            if (!dbPath.startsWith("/db")) {
+                dbPath = "/db" + dbPath;
             }
-            if (resourcePath.length() > 1 && resourcePath.endsWith("/")) {
-                resourcePath = resourcePath.substring(0, resourcePath.length() - 1);
+            if (dbPath.length() > 1 && dbPath.endsWith("/")) {
+                dbPath = dbPath.substring(0, dbPath.length() - 1);
             }
-            return new ExistDavLocator(serverPrefix, prefix, resourcePath, this);
+            return new ExistDavLocator(hrefPrefix, webdavPath, dbPath, this);
         }
     }
 
     /**
      * DavResourceLocator implementation for eXist-db resources.
+     *
+     * Stores the href prefix (scheme://host:port/contextPath) separately
+     * from the webdav path ("/webdav") so that getPrefix() always returns
+     * the correct base for href generation.
      */
     static class ExistDavLocator implements DavResourceLocator {
 
-        private final String serverPrefix;
-        private final String webdavPrefix;
+        private final String hrefPrefix;
+        private final String webdavPath;
         private final String resourcePath;
         private final DavLocatorFactory factory;
 
-        ExistDavLocator(final String serverPrefix, final String webdavPrefix,
+        ExistDavLocator(final String hrefPrefix, final String webdavPath,
                 final String resourcePath, final DavLocatorFactory factory) {
-            this.serverPrefix = serverPrefix;
-            this.webdavPrefix = webdavPrefix;
+            this.hrefPrefix = hrefPrefix;
+            this.webdavPath = webdavPath;
             this.resourcePath = resourcePath;
             this.factory = factory;
         }
 
         @Override
         public String getPrefix() {
-            return serverPrefix + webdavPrefix;
+            // hrefPrefix is scheme://host:port/contextPath
+            // Append the webdav path to form the full prefix
+            if (hrefPrefix.endsWith(webdavPath)) {
+                return hrefPrefix;
+            }
+            return hrefPrefix + webdavPath;
         }
 
         @Override
@@ -235,13 +251,13 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
 
         @Override
         public String getHref(final boolean isCollection) {
-            // The serverPrefix (from AbstractWebdavServlet) already includes
-            // the context path and servlet path. The href should be just the
-            // database path mapped to the WebDAV namespace.
-            final String path = resourcePath.startsWith("/db")
+            // Jackrabbit uses getHref() directly for <D:href> in responses.
+            // Must return the full path relative to the server root:
+            // /webdav/ for /db, /webdav/system/ for /db/system, etc.
+            final String dbRelative = resourcePath.startsWith("/db")
                     ? resourcePath.substring("/db".length())
                     : resourcePath;
-            final String href = path.isEmpty() ? "/" : path;
+            final String href = webdavPath + (dbRelative.isEmpty() ? "/" : dbRelative);
             if (isCollection && !href.endsWith("/")) {
                 return href + "/";
             }
