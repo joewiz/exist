@@ -3010,12 +3010,46 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
-            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
-            // An initial implementation was reverted (ab46e48c14 / 01729ed334) because
-            // it caused a runtime stack overflow when compiling modules with recursive
-            // functions (e.g., test.xq). The overflow occurs during actual function
-            // execution, not during analysis — the rd parser's expression tree has a
-            // subtle difference in recursive function handling that needs investigation.
+            // Route through rd parser if enabled
+            if (XQuery.useRdParser()) {
+                try {
+                    final StringBuilder sb = new StringBuilder(4096);
+                    final char[] buf = new char[4096];
+                    int n;
+                    while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+                    final org.exist.xquery.parser.next.XQueryParser rdParser =
+                            new org.exist.xquery.parser.next.XQueryParser(modContext, sb.toString());
+                    final Expression rootExpr = rdParser.parse();
+                    modContext.setRootExpression(rootExpr);
+                    // Resolve forward references — critical for recursive function detection.
+                    // Without this, FunctionCall.isRecursive() returns false and recursive
+                    // calls cause stack overflow instead of using DeferredFunctionCall.
+                    modContext.resolveForwardReferences();
+
+                    for (final java.util.Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
+                        modExternal.declareFunction(it.next());
+                    }
+                    for (final Variable var : modContext.getVariables().values()) {
+                        if (var.getQName().getNamespaceURI().equals(namespaceURI)) {
+                            modExternal.declareVariable(var);
+                        }
+                    }
+                    modExternal.setRootExpression(rootExpr);
+
+                    if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
+                        throw new XPathException(rootExpression, ErrorCodes.XQST0059,
+                                "namespace URI declared by module (" + modExternal.getNamespaceURI() +
+                                ") does not match namespace URI in import statement, which was: " + namespaceURI);
+                    }
+                    modExternal.setSource(source);
+                    modContext.setSource(source);
+                    modExternal.setIsReady(true);
+                    return modExternal;
+                } catch (final XPathException e) {
+                    e.prependMessage("Error while loading module " + location + ": ");
+                    throw e;
+                }
+            }
             final XQueryLexer lexer = new XQueryLexer(modContext, reader);
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(modContext, modExternal);

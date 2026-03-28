@@ -3724,10 +3724,30 @@ public final class XQueryParser {
 
         final QName qname = resolveQName(nameToken.value, context.getDefaultFunctionNamespace());
         final PathExpr parent = new PathExpr(context);
-        final Expression fn = FunctionFactory.createFunction(context, qname, ast, parent, args);
+        Expression fn = FunctionFactory.createFunction(context, qname, ast, parent, args);
         if (fn instanceof AbstractExpression) {
             ((AbstractExpression) fn).setLocation(nameToken.line, nameToken.column);
         }
+
+        // Check for partial application — if any argument is a placeholder
+        boolean isPartial = false;
+        for (final Expression arg : args) {
+            if (arg instanceof Function.Placeholder) {
+                isPartial = true;
+                break;
+            }
+        }
+        if (isPartial) {
+            if (!(fn instanceof FunctionCall)) {
+                if (fn instanceof CastExpression) {
+                    fn = ((CastExpression) fn).toFunction();
+                }
+                fn = FunctionFactory.wrap(context, (Function) fn);
+            }
+            fn = new PartialFunctionApplication(context, (FunctionCall) fn);
+            ((AbstractExpression) fn).setLocation(nameToken.line, nameToken.column);
+        }
+
         return fn;
     }
 
@@ -3735,6 +3755,16 @@ public final class XQueryParser {
      * Parses a function argument — either a regular expression or a keyword argument (name := value).
      */
     private Expression parseFunctionArg() throws XPathException {
+        // Placeholder argument: ? for partial function application
+        if (check(Token.QUESTION) && !peekIs(Token.QUESTION)) {
+            // Check if this is a placeholder (followed by comma or rparen)
+            // vs a lookup on context item (followed by key)
+            if (peekIs(Token.COMMA) || peekIs(Token.RPAREN)) {
+                advance(); // consume ?
+                return new Function.Placeholder(context);
+            }
+        }
+
         // Check for keyword argument: name := value — XQ4 only
         if (check(Token.NCNAME) && peekIs(Token.COLON_EQ) && isXQ4()) {
             final String keyName = current.value;
