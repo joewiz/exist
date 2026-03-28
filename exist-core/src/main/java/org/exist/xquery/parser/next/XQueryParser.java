@@ -563,7 +563,7 @@ public final class XQueryParser {
 
         // XQ4: default parameter value
         if (check(Token.COLON_EQ)) {
-            if (!isXQ4()) throw xq4Required("Default parameter values");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             advance();
             param.setDefaultValue(parseExprSingle());
         }
@@ -798,7 +798,7 @@ public final class XQueryParser {
                 } else if (matchKeyword(Keywords.COUNT)) {
                     nextClause = parseCountClause();
                 } else if (checkKeyword(Keywords.WHILE)) {
-                    if (!isXQ4()) throw xq4Required("'while' clause");
+                    // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
                     advance();
                     nextClause = parseWhileClause();
                 } else {
@@ -826,7 +826,7 @@ public final class XQueryParser {
         FLWORClause first;
         if (matchKeyword(Keywords.FOR)) {
             if (checkKeyword(Keywords.MEMBER)) {
-                if (!isXQ4()) throw xq4Required("'for member' clause");
+                // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
                 advance();
                 first = parseForMemberBinding();
             } else if (checkKeyword(Keywords.TUMBLING) || checkKeyword(Keywords.SLIDING)) {
@@ -1182,8 +1182,8 @@ public final class XQueryParser {
         final Expression condition = parseExpr();
         expect(Token.RPAREN, "')'");
 
-        // XQ4 braced if: if (cond) { expr } — no else clause
-        if (check(Token.LBRACE) && !checkKeyword(Keywords.THEN) && isXQ4()) {
+        // Braced if: if (cond) { expr } — no else clause (XQ4, accepted in all versions)
+        if (check(Token.LBRACE) && !checkKeyword(Keywords.THEN)) {
             match(Token.LBRACE);
             final Expression thenExpr = parseExpr();
             expect(Token.RBRACE, "'}'");
@@ -1428,7 +1428,7 @@ public final class XQueryParser {
 
         // Optional finally clause (XQ4 only)
         if (checkKeyword(Keywords.FINALLY)) {
-            if (!isXQ4()) throw xq4Required("'finally' clause");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             advance();
             expect(Token.LBRACE, "'{'");
             final PathExpr finallyExpr = new PathExpr(context);
@@ -2344,7 +2344,7 @@ public final class XQueryParser {
     Expression parseOtherwiseExpr() throws XPathException {
         Expression left = parseStringConcatExpr();
         while (checkKeyword(Keywords.OTHERWISE)) {
-            if (!isXQ4()) throw xq4Required("'otherwise' expression");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             advance();
             final Expression right = parseStringConcatExpr();
             left = new OtherwiseExpression(context, left, right);
@@ -2451,7 +2451,7 @@ public final class XQueryParser {
     Expression parsePipelineExpr() throws XPathException {
         Expression left = parseArrowExpr();
         while (check(Token.PIPELINE)) {
-            if (!isXQ4()) throw xq4Required("Pipeline operator '->'");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             advance();
             left = parseArrowCall(left, false);
         }
@@ -2465,7 +2465,7 @@ public final class XQueryParser {
             if (match(Token.ARROW)) {
                 left = parseArrowCall(left, false);
             } else if (check(Token.MAPPING_ARROW)) {
-                if (!isXQ4()) throw xq4Required("Mapping arrow operator '=!>'");
+                // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
                 advance();
                 left = parseArrowCall(left, true);
             }
@@ -3575,13 +3575,13 @@ public final class XQueryParser {
 
         // Focus function: fn { expr } — XQ4 only
         if (checkKeyword(Keywords.FN) && peekIs(Token.LBRACE)) {
-            if (!isXQ4()) throw xq4Required("Focus function 'fn { }'");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             return parseFocusFunction();
         }
 
         // QName literal: #prefix:local — XQ4 only
         if (check(Token.HASH) && peekIsNameStart()) {
-            if (!isXQ4()) throw xq4Required("QName literal '#name'");
+            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
             return parseQNameLiteral();
         }
 
