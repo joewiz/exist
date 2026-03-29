@@ -1510,6 +1510,83 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqsuiteRunTestsPattern() throws Exception {
+        // Exact pattern from xqsuite.xql lines 225-268
+        // First <report> at line 244 parses fine, second at line 258 fails
+        final String query =
+            "declare function local:run-tests(\n" +
+            "    $func as function(*),\n" +
+            "    $meta as element(function),\n" +
+            "    $test-failure-function as (function(xs:string, map(xs:string, item()?), map(xs:string, item()?)) as empty-sequence())?,\n" +
+            "    $test-error-function as (function(xs:string, map(xs:string, item()?)?) as empty-sequence())?\n" +
+            ") {\n" +
+            "    if ($meta/annotation) then\n" +
+            "        <report>{\n" +
+            "            element pending { 'test' }\n" +
+            "        }</report>\n" +
+            "    else\n" +
+            "        let $failed := ()\n" +
+            "        return\n" +
+            "            if (not(empty($failed))) then\n" +
+            "                <report>{\n" +
+            "                    element assumptions {\n" +
+            "                        element assumption { 'test' }\n" +
+            "                    }\n" +
+            "                }</report>\n" +
+            "            else\n" +
+            "                <ok/>\n" +
+            "};\n" +
+            "local:run-tests(true#0, <function/>, (), ())/name()";
+        assertModuleEval("ok", query);
+    }
+
+    @Test
+    public void xqsuiteRunTestsFullSignature() throws Exception {
+        // Full signature from xqsuite.xql — all HOF type annotations
+        final String query =
+            "declare function local:run-tests(\n" +
+            "        $func as function(*),\n" +
+            "        $meta as element(function),\n" +
+            "        $test-ignored-function as (function(xs:string) as empty-sequence())?,\n" +
+            "        $test-started-function as (function(xs:string) as empty-sequence())?,\n" +
+            "        $test-failure-function as (function(xs:string, map(xs:string, item()?), map(xs:string, item()?)) as empty-sequence())?,\n" +
+            "        $test-assumption-failed-function as (function(xs:string, map(xs:string, item()?)?) as empty-sequence())?,\n" +
+            "        $test-error-function as (function(xs:string, map(xs:string, item()?)?) as empty-sequence())?,\n" +
+            "        $test-finished-function as (function(xs:string) as empty-sequence())?\n" +
+            ") {\n" +
+            "    if ($meta/annotation[ends-with(@name, ':pending')]) then\n" +
+            "        (\n" +
+            "            if (not(empty($test-ignored-function))) then\n" +
+            "                $test-ignored-function(local-name($meta))\n" +
+            "            else (),\n" +
+            "            <report>{\n" +
+            "                element pending {\n" +
+            "                    $meta/annotation/value ! text()\n" +
+            "                }\n" +
+            "            }</report>\n" +
+            "        )\n" +
+            "    else\n" +
+            "        let $failed-assumptions := ()\n" +
+            "        return\n" +
+            "            if (not(empty($failed-assumptions))) then\n" +
+            "                <report>{\n" +
+            "                    element assumptions {\n" +
+            "                        for $fa in $failed-assumptions\n" +
+            "                        return\n" +
+            "                            element assumption {\n" +
+            "                                attribute name { replace($fa/@name, '[^:]+:(.+)', '$1') },\n" +
+            "                                $fa/value/text()\n" +
+            "                            }\n" +
+            "                    }\n" +
+            "                }</report>\n" +
+            "            else\n" +
+            "                <ok/>\n" +
+            "};\n" +
+            "local:run-tests(true#0, <function/>, (), (), (), (), (), ())/name()";
+        assertModuleEval("ok", query);
+    }
+
+    @Test
     public void directConstructorInFunctionBody() throws Exception {
         // Bug: direct element constructor with enclosed expression in function body
         assertModuleEval("bar",
