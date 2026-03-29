@@ -790,7 +790,7 @@ public final class XQueryParser {
                     nextClause = parseFLWORInitialClause();
                 } else if (matchKeyword(Keywords.WHERE)) {
                     nextClause = parseWhereClause();
-                } else if (checkKeyword(Keywords.ORDER)) {
+                } else if (checkKeyword(Keywords.ORDER) || checkKeyword("stable")) {
                     nextClause = parseOrderByClause();
                 } else if (matchKeyword(Keywords.GROUP)) {
                     expectKeyword(Keywords.BY);
@@ -1076,6 +1076,7 @@ public final class XQueryParser {
     private OrderByClause parseOrderByClause() throws XPathException {
         final int line = current.line;
         final int col = current.column;
+        matchKeyword("stable"); // optional 'stable' before 'order by'
         matchKeyword(Keywords.ORDER);
         expectKeyword(Keywords.BY);
 
@@ -1151,9 +1152,11 @@ public final class XQueryParser {
     private WhileClause parseWhileClause() throws XPathException {
         final int line = previous.line;
         final int col = previous.column;
-        expect(Token.LPAREN, "'('");
-        final Expression condition = parseExpr();
-        expect(Token.RPAREN, "')'");
+        // XQ4 spec: WhileClause ::= "while" ExprSingle (no parens required)
+        // But accept optional parens for backwards compatibility
+        final boolean hasParens = match(Token.LPAREN);
+        final Expression condition = parseExprSingle();
+        if (hasParens) expect(Token.RPAREN, "')'");
         final WhileClause clause = new WhileClause(context, new DebuggableExpression(condition));
         clause.setLocation(line, col);
         return clause;
@@ -2499,6 +2502,8 @@ public final class XQueryParser {
         if (check(Token.NCNAME) || check(Token.QNAME)) {
             funcName = current.value;
             advance();
+        } else if (check(Token.BRACED_URI_LITERAL)) {
+            funcName = parseEQName();
         } else if (match(Token.DOLLAR)) {
             // Variable reference as function
             funcExpr = new PathExpr(context);
@@ -2528,6 +2533,17 @@ public final class XQueryParser {
             }
         }
         expect(Token.RPAREN, "')'");
+
+        // For EQName, declare the namespace prefix so QName.parse works
+        if (funcName != null && funcName.startsWith("Q{")) {
+            final int braceEnd = funcName.indexOf('}');
+            final String uri = funcName.substring(2, braceEnd);
+            final String local = funcName.substring(braceEnd + 1);
+            // Use a synthetic prefix for arrow calls with EQNames
+            final String prefix = "__arrow" + System.identityHashCode(funcName);
+            try { context.declareNamespace(prefix, uri); } catch (final XPathException ignored) { }
+            funcName = prefix + ":" + local;
+        }
 
         if (mapping) {
             final MappingArrowOperator op = new MappingArrowOperator(context, leftExpr);
