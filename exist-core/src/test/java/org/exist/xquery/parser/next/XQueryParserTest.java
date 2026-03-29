@@ -1483,6 +1483,26 @@ public class XQueryParserTest {
             "Q{http://www.w3.org/2005/xpath-functions}abs(-42)");
     }
 
+    @Test
+    public void bareMapConstructor() throws Exception {
+        // XQ4 bare map constructor: { "key": value } without 'map' keyword
+        assertBothParsers("bare map",
+            "let $m := { 'a': 1, 'b': 2 } return $m?a + $m?b");
+    }
+
+    @Test
+    public void bareMapConstructorEmpty() throws Exception {
+        assertBothParsers("empty bare map",
+            "map:size({ })");
+    }
+
+    @Test
+    public void bareMapConstructorInAssertion() throws Exception {
+        // Pattern from XQTS assert-deep-eq assertions
+        assertBothParsers("bare map in deep-equal",
+            "deep-equal({ 'x': 1 }, map { 'x': 1 })");
+    }
+
     // xqsuiteFilterPattern — disabled: both parsers throw XPTY0004 for
     // filter() with function-name() comparison on standalone function refs.
     // This is a pre-existing eXist limitation, not rd-parser-specific.

@@ -3495,6 +3495,91 @@ public final class XQueryParser {
     /**
      * Map constructor: map { "key": value, "key2": value2 }
      */
+    /**
+     * Checks if the current '{' starts a bare map constructor (XQ4).
+     * Uses lookahead: { RBRACE (empty map) or { expr COLON (key:value map).
+     * Saves and restores parser state for backtracking.
+     */
+    private boolean isBareMapConstructorStart() {
+        if (!check(Token.LBRACE)) return false;
+
+        // { } is an empty map
+        if (peekIs(Token.RBRACE)) return true;
+
+        // Save state for backtracking
+        final Token savedCurrent = current;
+        final Token savedPrevious = previous;
+        final Token savedBuffered = bufferedNext;
+        final int savedLexerPos = lexer.getPosition();
+
+        try {
+            advance(); // consume {
+
+            // Check for patterns that indicate map entries:
+            // { "string" : ... } or { number : ... } or { $var : ... } or { name : ... }
+            // Skip the first "key" expression — simple cases only
+            if (check(Token.STRING_LITERAL) || check(Token.INTEGER_LITERAL)
+                    || check(Token.DECIMAL_LITERAL) || check(Token.DOUBLE_LITERAL)) {
+                advance(); // consume literal
+                return check(Token.COLON);
+            }
+            if (check(Token.DOLLAR)) {
+                advance(); // $
+                if (check(Token.NCNAME) || check(Token.QNAME)) {
+                    advance(); // var name
+                    return check(Token.COLON);
+                }
+            }
+            if (check(Token.NCNAME) || check(Token.QNAME)) {
+                final String name = current.value;
+                advance(); // consume name
+                // name followed by : (but not :: which is an axis)
+                if (check(Token.COLON) && !peekIs(Token.COLON)) return true;
+                // name(...) : — function call as key
+                if (check(Token.LPAREN)) {
+                    // Skip balanced parens
+                    int depth = 0;
+                    while (!check(Token.EOF)) {
+                        if (match(Token.LPAREN)) depth++;
+                        else if (match(Token.RPAREN)) { depth--; if (depth <= 0) break; }
+                        else advance();
+                    }
+                    return check(Token.COLON);
+                }
+            }
+            // Can't determine — not a bare map
+            return false;
+        } finally {
+            // Restore parser state
+            current = savedCurrent;
+            previous = savedPrevious;
+            bufferedNext = savedBuffered;
+            lexer.setPosition(savedLexerPos);
+        }
+    }
+
+    /**
+     * Parses a bare map constructor: { key: value, ... }
+     * Called when isBareMapConstructorStart() returns true.
+     */
+    Expression parseBareMapConstructor() throws XPathException {
+        final int line = current.line, col = current.column;
+        expect(Token.LBRACE, "'{'");
+
+        final org.exist.xquery.functions.map.MapExpr mapExpr =
+                new org.exist.xquery.functions.map.MapExpr(context);
+        mapExpr.setLocation(line, col);
+
+        if (!check(Token.RBRACE)) {
+            parseMapEntry(mapExpr);
+            while (match(Token.COMMA)) {
+                parseMapEntry(mapExpr);
+            }
+        }
+        expect(Token.RBRACE, "'}'");
+        return mapExpr;
+    }
+
     Expression parseMapConstructor() throws XPathException {
         final int line = current.line, col = current.column;
         matchKeyword(Keywords.MAP);
@@ -3585,6 +3670,12 @@ public final class XQueryParser {
 
         // Map constructor: map { "key": value }
         if (checkKeyword(Keywords.MAP) && peekIs(Token.LBRACE)) return parseMapConstructor();
+
+        // XQ4 bare map constructor: { "key": value } (without 'map' keyword)
+        // Disambiguated from enclosed expression by lookahead: { expr : indicates map
+        if (check(Token.LBRACE) && isBareMapConstructorStart()) {
+            return parseBareMapConstructor();
+        }
 
         // Curly array constructor: array { expr }
         if (checkKeyword(Keywords.ARRAY) && peekIs(Token.LBRACE)) return parseCurlyArrayConstructor();
@@ -4004,6 +4095,14 @@ public final class XQueryParser {
             advance();
             return new NameTest(nodeType, resolveQName(nameToken.value,
                     axis == Constants.ATTRIBUTE_AXIS ? null : context.getURIForPrefix("")));
+        }
+        // EQName: Q{uri}local as node test
+        if (check(Token.BRACED_URI_LITERAL)) {
+            final String eqname = parseEQName();
+            final int braceEnd = eqname.indexOf('}');
+            final String uri = eqname.substring(2, braceEnd);
+            final String local = eqname.substring(braceEnd + 1);
+            return new NameTest(nodeType, new QName(local, uri));
         }
         throw error("Expected node test");
     }
