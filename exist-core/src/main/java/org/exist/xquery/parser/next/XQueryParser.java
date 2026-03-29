@@ -215,8 +215,24 @@ public final class XQueryParser {
         } else if (checkKeyword(Keywords.OPTION)) {
             parseOptionDecl();
         } else if (checkKeyword(Keywords.CONTEXT)) {
-            // declare context item := expr;
-            skipToSemicolon();
+            // declare context item [as type] [:= expr | external [:= expr]] ;
+            advance(); // consume 'context'
+            expectKeyword(Keywords.ITEM);
+            SequenceType type = null;
+            if (matchKeyword(Keywords.AS)) {
+                type = parseSequenceType();
+            }
+            final boolean isExternal = matchKeyword(Keywords.EXTERNAL);
+            Expression defaultExpr = null;
+            if (match(Token.COLON_EQ)) {
+                defaultExpr = parseExprSingle();
+            }
+            expect(Token.SEMICOLON, "';'");
+            // Register context item declaration on the context
+            final PathExpr enclosed = defaultExpr != null ? new PathExpr(context) : null;
+            if (enclosed != null) enclosed.add(defaultExpr);
+            final ContextItemDeclaration cid = new ContextItemDeclaration(context, type, isExternal, enclosed);
+            context.setContextItemDeclaration(cid);
         } else if (checkKeyword("decimal-format")) {
             advance(); // consume "decimal-format"
             // Named decimal format: declare decimal-format name property = value ... ;
@@ -261,7 +277,18 @@ public final class XQueryParser {
         } else if (checkKeyword(Keywords.COPY_NAMESPACES)) {
             // declare copy-namespaces preserve|no-preserve, inherit|no-inherit;
             advance();
-            skipToSemicolon();
+            if (matchKeyword(Keywords.PRESERVE)) {
+                context.setPreserveNamespaces(true);
+            } else if (matchKeyword("no-preserve")) {
+                context.setPreserveNamespaces(false);
+            }
+            expect(Token.COMMA, "','");
+            if (matchKeyword(Keywords.INHERIT)) {
+                context.setInheritNamespaces(true);
+            } else if (matchKeyword("no-inherit")) {
+                context.setInheritNamespaces(false);
+            }
+            expect(Token.SEMICOLON, "';'");
         } else if (checkKeyword(Keywords.BASE_URI)) {
             // declare base-uri "uri";
             advance();
