@@ -443,6 +443,21 @@ public class LocationStep extends Step {
                         result = getSiblings(context, contextSequence);
                         break;
 
+                    // --- XQuery 4.0 combined axes ---
+                    case Constants.FOLLOWING_OR_SELF_AXIS:
+                    case Constants.PRECEDING_OR_SELF_AXIS:
+                        result = getOrSelfAxis(context, contextSequence,
+                                axis == Constants.FOLLOWING_OR_SELF_AXIS
+                                        ? Constants.FOLLOWING_AXIS : Constants.PRECEDING_AXIS);
+                        break;
+
+                    case Constants.FOLLOWING_SIBLING_OR_SELF_AXIS:
+                    case Constants.PRECEDING_SIBLING_OR_SELF_AXIS:
+                        result = getOrSelfAxis(context, contextSequence,
+                                axis == Constants.FOLLOWING_SIBLING_OR_SELF_AXIS
+                                        ? Constants.FOLLOWING_SIBLING_AXIS : Constants.PRECEDING_SIBLING_AXIS);
+                        break;
+
                     default:
                         throw new IllegalArgumentException("Unsupported axis specified");
                 }
@@ -912,6 +927,50 @@ public class LocationStep extends Step {
      *
      * @throws XPathException if an error occurs
      */
+    /**
+     * Evaluates an XQuery 4.0 combined axis (e.g., following-or-self, preceding-sibling-or-self).
+     * Returns the union of the self axis result and the base axis result, preserving document order.
+     *
+     * @param context the XQuery context
+     * @param contextSequence the context sequence
+     * @param baseAxis the base axis constant (e.g., Constants.FOLLOWING_AXIS)
+     * @return the combined result in document order
+     */
+    private Sequence getOrSelfAxis(final XQueryContext context, final Sequence contextSequence,
+            final int baseAxis) throws XPathException {
+        // Save and temporarily switch axis to get self results
+        final int savedAxis = this.axis;
+        try {
+            this.axis = Constants.SELF_AXIS;
+            final Sequence selfResult = getSelf(context, contextSequence);
+
+            // Get the base axis results
+            this.axis = baseAxis;
+            final Sequence baseResult;
+            if (baseAxis == Constants.FOLLOWING_AXIS || baseAxis == Constants.PRECEDING_AXIS) {
+                baseResult = getPrecedingOrFollowing(context, contextSequence);
+            } else {
+                baseResult = getSiblings(context, contextSequence);
+            }
+
+            // Union preserving document order
+            if (selfResult.isEmpty()) {
+                return baseResult;
+            }
+            if (baseResult.isEmpty()) {
+                return selfResult;
+            }
+            final ValueSequence combined = new ValueSequence();
+            combined.addAll(selfResult);
+            combined.addAll(baseResult);
+            combined.removeDuplicates();
+            combined.sortInDocumentOrder();
+            return combined;
+        } finally {
+            this.axis = savedAxis;
+        }
+    }
+
     private Sequence getPrecedingOrFollowing(final XQueryContext context, final Sequence contextSequence)
             throws XPathException {
         final int position = computeLimit();
