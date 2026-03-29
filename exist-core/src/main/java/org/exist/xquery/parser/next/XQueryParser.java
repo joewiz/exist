@@ -297,6 +297,13 @@ public final class XQueryParser {
                 advance();
             }
             expect(Token.SEMICOLON, "';'");
+        } else if (checkKeyword("revalidation")) {
+            // XQUF: declare revalidation strict|lax|skip;
+            advance(); // consume 'revalidation'
+            matchKeyword("strict");
+            matchKeyword("lax");
+            matchKeyword("skip");
+            expect(Token.SEMICOLON, "';'");
         } else {
             final String keyword = check(Token.NCNAME) ? current.value : "???";
             throw error("Unknown prolog declaration: declare " + keyword);
@@ -2895,6 +2902,23 @@ public final class XQueryParser {
             }
             if (checkKeyword(Keywords.NAMESPACE) && peekIsConstructorStart()) {
                 return parseComputedNamespaceConstructor();
+            }
+
+            // ordered { expr } — evaluation order hint
+            if (checkKeyword(Keywords.ORDERED) && peekIs(Token.LBRACE)) {
+                advance(); // consume 'ordered'
+                expect(Token.LBRACE, "'{'");
+                final Expression inner = parseExpr();
+                expect(Token.RBRACE, "'}'");
+                return inner; // pass through — eXist doesn't differentiate ordered/unordered
+            }
+            // unordered { expr } — evaluation order hint
+            if (checkKeyword(Keywords.UNORDERED) && peekIs(Token.LBRACE)) {
+                advance(); // consume 'unordered'
+                expect(Token.LBRACE, "'{'");
+                final Expression inner = parseExpr();
+                expect(Token.RBRACE, "'}'");
+                return inner; // pass through
             }
 
             // validate expression — eXist is not schema-aware, so parse and pass through
