@@ -43,10 +43,12 @@ import org.exist.xquery.value.StringValue;
 import org.exist.xquery.value.Type;
 
 import org.exist.xquery.functions.map.MapType;
+import org.exist.xquery.value.ValueSequence;
 
 import javax.xml.XMLConstants;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Implements XQuery 4.0 fn:atomic-type-annotation and fn:node-type-annotation.
@@ -58,6 +60,18 @@ import java.util.List;
 public class FnTypeAnnotation extends BasicFunction {
 
     private static final String XS_NS = "http://www.w3.org/2001/XMLSchema";
+
+    /** List types: type → item type mapping */
+    private static final Map<Integer, Integer> LIST_TYPES = Map.of(
+            Type.NMTOKENS, Type.NMTOKEN,
+            Type.IDREFS, Type.IDREF,
+            Type.ENTITIES, Type.ENTITY
+    );
+
+    /** Union types: type → member types mapping */
+    private static final Map<Integer, int[]> UNION_TYPES = Map.of(
+            Type.NUMERIC, new int[]{Type.DOUBLE, Type.FLOAT, Type.DECIMAL}
+    );
 
     public static final FunctionSignature FN_ATOMIC_TYPE_ANNOTATION = new FunctionSignature(
             new QName("atomic-type-annotation", Function.BUILTIN_FUNCTION_NS),
@@ -157,10 +171,23 @@ public class FnTypeAnnotation extends BasicFunction {
             case Type.UNTYPED_ATOMIC:
                 return Type.ANY_ATOMIC_TYPE;
             default:
+                // List types (NMTOKENS, IDREFS, ENTITIES) derive from anySimpleType
+                if (LIST_TYPES.containsKey(type)) {
+                    return Type.ANY_SIMPLE_TYPE;
+                }
+                // Union types (NUMERIC, ERROR) derive from anySimpleType
+                if (UNION_TYPES.containsKey(type) || type == Type.ERROR) {
+                    return Type.ANY_SIMPLE_TYPE;
+                }
                 // For other types, use the normal hierarchy but redirect through schema chain
                 final int parent = Type.getSuperType(type);
                 // If parent is ITEM, redirect to ANY_ATOMIC_TYPE (for atomic types) or ANY_TYPE
                 if (parent == Type.ITEM) {
+                    return Type.ANY_ATOMIC_TYPE;
+                }
+                // NUMERIC subtypes (DOUBLE, FLOAT, DECIMAL) — in schema they derive from
+                // anyAtomicType, not from xs:numeric (which is a union, not a base type)
+                if (parent == Type.NUMERIC) {
                     return Type.ANY_ATOMIC_TYPE;
                 }
                 return parent;
@@ -175,6 +202,10 @@ public class FnTypeAnnotation extends BasicFunction {
             return false;
         }
         if (type == Type.ANY_SIMPLE_TYPE || type == Type.ANY_ATOMIC_TYPE || type == Type.UNTYPED_ATOMIC) {
+            return true;
+        }
+        // List and union types are simple types
+        if (LIST_TYPES.containsKey(type) || UNION_TYPES.containsKey(type) || type == Type.ERROR) {
             return true;
         }
         // Walk up to see if we eventually reach ANY_ATOMIC_TYPE or ANY_SIMPLE_TYPE
@@ -216,41 +247,106 @@ public class FnTypeAnnotation extends BasicFunction {
         // is-simple: xs:boolean
         result.add(new StringValue(this, "is-simple"), BooleanValue.valueOf(isSimple));
 
-        // variety: xs:string
-        if (isSimple) {
-            result.add(new StringValue(this, "variety"), new StringValue(this, "atomic"));
-        } else {
-            result.add(new StringValue(this, "variety"), new StringValue(this, "mixed"));
+        // variety: depends on the kind of type
+        final String variety = determineVariety(type, isSimple);
+        if (variety != null) {
+            result.add(new StringValue(this, "variety"), new StringValue(this, variety));
         }
 
         // base-type: function() as schema-type-record?
-        // Returns the pre-built parent record, or empty sequence for root types
         final Sequence baseTypeResult = parentRecord != null ? parentRecord : Sequence.EMPTY_SEQUENCE;
         result.add(new StringValue(this, "base-type"), makeConstantFunction("base-type-" + type, 0, baseTypeResult));
 
-        // For simple types: add primitive-type, matches, constructor
-        if (isSimple) {
+        // members: for list and union types, a function returning member type annotations
+        if (LIST_TYPES.containsKey(type)) {
+            // List type: members returns annotation for the item type
+            final int itemType = LIST_TYPES.get(type);
+            final MapType itemTypeRecord = buildRecordChain(itemType, true);
+            result.add(new StringValue(this, "members"),
+                    makeConstantFunction("members-" + type, 0, itemTypeRecord));
+        } else if (UNION_TYPES.containsKey(type)) {
+            // Union type: members returns annotations for all member types
+            final int[] memberTypes = UNION_TYPES.get(type);
+            final ValueSequence memberRecords = new ValueSequence(memberTypes.length);
+            for (final int memberType : memberTypes) {
+                memberRecords.add(buildRecordChain(memberType, true));
+            }
+            result.add(new StringValue(this, "members"),
+                    makeConstantFunction("members-" + type, 0, memberRecords));
+        }
+
+        // For atomic types: add primitive-type, matches, constructor
+        if (isSimple && isAtomicOrAtomicSubtype(type)) {
             // primitive-type: find the primitive ancestor type and build its record
             final int primitiveType = findPrimitiveType(type);
             if (primitiveType != type) {
-                // Build a standalone record for the primitive type
                 result.add(new StringValue(this, "primitive-type"),
                         makeConstantFunction("primitive-type-" + type, 0, buildPrimitiveRecord(primitiveType)));
             } else {
                 // This IS the primitive type — return self
-                // Use a lazy self-reference via deferred evaluation
                 result.add(new StringValue(this, "primitive-type"),
                         makeConstantFunction("primitive-type-" + type, 0, result));
             }
+        }
 
-            // matches: function($value) as xs:boolean
+        // matches: for atomic types and union types that have an atomic() representation
+        if (isSimple && (isAtomicOrAtomicSubtype(type) || UNION_TYPES.containsKey(type))) {
             result.add(new StringValue(this, "matches"), makeMatchesFunction(type));
+        }
 
-            // constructor: function($value) as xs:atomic
-            result.add(new StringValue(this, "constructor"), makeConstructorFunction(type));
+        // constructor: for atomic types (except xs:QName and xs:NOTATION) and list/union types
+        if (isSimple && type != Type.ANY_SIMPLE_TYPE && type != Type.ANY_ATOMIC_TYPE) {
+            if (type != Type.QNAME && type != Type.NOTATION && type != Type.ERROR) {
+                result.add(new StringValue(this, "constructor"), makeConstructorFunction(type));
+            }
         }
 
         return result;
+    }
+
+    /**
+     * Determine the variety of a type for the schema-type-record.
+     * Returns null for xs:anySimpleType (which has no variety per spec).
+     */
+    private static String determineVariety(final int type, final boolean isSimple) {
+        if (type == Type.ANY_SIMPLE_TYPE) {
+            return null; // xs:anySimpleType has no variety
+        }
+        if (LIST_TYPES.containsKey(type)) {
+            return "list";
+        }
+        if (UNION_TYPES.containsKey(type)) {
+            return "union";
+        }
+        if (!isSimple) {
+            return "mixed"; // xs:anyType, xs:untyped
+        }
+        return "atomic";
+    }
+
+    /**
+     * Check if a type is xs:anyAtomicType or a subtype of it.
+     * Excludes list types, union types, and non-simple types.
+     */
+    private static boolean isAtomicOrAtomicSubtype(final int type) {
+        if (type == Type.ANY_ATOMIC_TYPE || type == Type.UNTYPED_ATOMIC) {
+            return true;
+        }
+        if (LIST_TYPES.containsKey(type) || UNION_TYPES.containsKey(type)
+                || type == Type.ERROR || type == Type.ANY_SIMPLE_TYPE
+                || type == Type.ANY_TYPE || type == Type.UNTYPED) {
+            return false;
+        }
+        // Walk up to check if we reach ANY_ATOMIC_TYPE
+        int current = type;
+        for (int i = 0; i < 20; i++) {
+            final int parent = Type.getSuperType(current);
+            if (parent == current) break;
+            if (parent == Type.ANY_ATOMIC_TYPE) return true;
+            if (parent == Type.ITEM || parent == Type.ANY_TYPE || parent == Type.ANY_SIMPLE_TYPE) return false;
+            current = parent;
+        }
+        return false;
     }
 
     /**

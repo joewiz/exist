@@ -956,6 +956,94 @@ function t:nodeTypeAnnotation-element-hasBaseType() {
     return map:contains($r, "base-type")
 };
 
+(: fn:atomic-type-annotation — base-type function :)
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-baseType-returns-parent() {
+    let $r := atomic-type-annotation(42)
+    let $base := $r?base-type()
+    return $base?name eq xs:QName("xs:decimal")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-baseType-chain-to-anyType() {
+    (: Walk the chain: integer → decimal → anyAtomicType → anySimpleType → anyType :)
+    let $r := atomic-type-annotation(42)
+    let $decimal := $r?base-type()
+    let $atomic := $decimal?base-type()
+    let $simple := $atomic?base-type()
+    let $anyType := $simple?base-type()
+    return $anyType?name eq xs:QName("xs:anyType")
+};
+
+(: fn:atomic-type-annotation — primitive-type function :)
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-primitiveType-integer() {
+    (: primitive type of xs:integer is xs:decimal :)
+    let $r := atomic-type-annotation(42)
+    let $prim := $r?primitive-type()
+    return $prim?name eq xs:QName("xs:decimal")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-primitiveType-string-self() {
+    (: primitive type of xs:string is xs:string itself :)
+    let $r := atomic-type-annotation("hello")
+    let $prim := $r?primitive-type()
+    return $prim?name eq xs:QName("xs:string")
+};
+
+(: fn:atomic-type-annotation — matches function :)
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-matches-true() {
+    let $r := atomic-type-annotation(42)
+    return $r?matches(xs:integer(99))
+};
+
+declare
+    %test:assertFalse
+function t:atomicTypeAnnotation-matches-false() {
+    let $r := atomic-type-annotation(42)
+    return $r?matches("not an integer")
+};
+
+(: fn:atomic-type-annotation — constructor function :)
+
+declare
+    %test:assertEquals(42)
+function t:atomicTypeAnnotation-constructor-cast() {
+    let $r := atomic-type-annotation(42)
+    return $r?constructor("42")
+};
+
+(: fn:atomic-type-annotation — variety for special types :)
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-anySimpleType-noVariety() {
+    (: xs:anySimpleType has no variety :)
+    let $r := atomic-type-annotation(42)
+    (: Walk to anySimpleType: integer → decimal → anyAtomicType → anySimpleType :)
+    let $simple := $r?base-type()?base-type()?base-type()
+    return not(map:contains($simple, "variety"))
+};
+
+declare
+    %test:assertEquals("mixed")
+function t:nodeTypeAnnotation-anyType-variety() {
+    (: Walk: untyped → anyType :)
+    let $r := node-type-annotation(<x/>)
+    let $anyType := $r?base-type()
+    return $anyType?variety
+};
+
 (: fn:civil-timezone :)
 
 declare
