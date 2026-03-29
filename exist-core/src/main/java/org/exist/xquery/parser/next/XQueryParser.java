@@ -970,8 +970,15 @@ public final class XQueryParser {
         final Expression inputSeq = parseExprSingle();
 
         // Parse window conditions: start when/end when with variables
-        // For now, absorb the window condition tokens to avoid parse errors
-        final WindowCondition startCond = parseWindowCondition(Keywords.START);
+        // Start condition: required in XQ3.1, optional in XQ4 (defaults to always-true)
+        final WindowCondition startCond;
+        if (checkKeyword(Keywords.START)) {
+            startCond = parseWindowCondition(Keywords.START);
+        } else {
+            // XQ4: implicit start — matches at every position
+            startCond = new WindowCondition(context, false, null, null, null, null,
+                    new LiteralValue(context, BooleanValue.TRUE));
+        }
         final WindowCondition endCond = checkKeyword(Keywords.END) || checkKeyword(Keywords.ONLY) ?
                 parseWindowCondition(Keywords.END) : null;
 
@@ -1018,8 +1025,13 @@ public final class XQueryParser {
             nextVar = resolveQName(expectName("next variable"), null);
         }
 
-        expectKeyword(Keywords.WHEN);
-        final Expression whenExpr = parseExprSingle();
+        // XQ4: when clause is optional — defaults to true() (always matches)
+        final Expression whenExpr;
+        if (matchKeyword(Keywords.WHEN)) {
+            whenExpr = parseExprSingle();
+        } else {
+            whenExpr = new LiteralValue(context, BooleanValue.TRUE);
+        }
 
         return new WindowCondition(context, only, condVar, posVar, prevVar, nextVar, whenExpr);
     }
