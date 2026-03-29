@@ -1491,6 +1491,25 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void namespaceUriFunctionInModule() throws Exception {
+        // Reproduces the xqsuite.xql line 113 pattern —
+        // namespace-uri-from-QName inside an inline function
+        assertBothParsers("namespace-uri-from-QName in module",
+            "let $f := true#0 " +
+            "return namespace-uri-from-QName(function-name($f))");
+    }
+
+    @Test
+    public void nestedFunctionCallInModule() throws Exception {
+        // Reproduces xqsuite line 113: nested function calls where outer
+        // should return xs:string but may be parsed as name test
+        assertBothParsers("nested fn calls",
+            "let $f := true#0 " +
+            "let $ns := namespace-uri-from-QName(function-name($f)) " +
+            "return $ns = 'http://www.w3.org/2005/xpath-functions'");
+    }
+
+    @Test
     public void bareMapConstructorEmpty() throws Exception {
         assertBothParsers("empty bare map",
             "map:size({ })");

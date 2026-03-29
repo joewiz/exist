@@ -1082,7 +1082,8 @@ public class GeneralComparison extends BinaryOp implements Optimizable, IndexUse
             /*
              *  d. Otherwise, a type error is raised [err:XPTY0004].
              */
-            throw new XPathException(this, ErrorCodes.XPTY0004, "Incompatible primitive types");
+            throw new XPathException(this, ErrorCodes.XPTY0004,
+                    "Incompatible primitive types: " + Type.getTypeName(thisType) + " vs " + Type.getTypeName(otherType));
         }
 
         return value;

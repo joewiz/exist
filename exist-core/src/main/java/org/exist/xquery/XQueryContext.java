@@ -3010,17 +3010,59 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
-            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
-            // Blocked by XPTY0004 in xqsuite.xql line 113 — filter() with inline function
-            // comparing namespace-uri-from-QName(function-name($func)) fails when the
-            // xqsuite module is compiled by the rd parser. The comparison produces
-            // "Incompatible primitive types" because the inline function's type context
-            // differs between module-compiled and standalone-compiled expressions.
-            // When resolved, re-enable with:
-            // - resolveForwardReferences() for recursive function detection
-            // - LibraryModuleRoot wrapping for function dispatch
-            // - Function/variable registration on ExternalModuleImpl
-            // - Placeholder (?) support in function arguments
+            // Route through rd parser if enabled — but NOT for xqsuite.xql
+            // which has a runtime XPTY0004 bug when compiled by rd parser
+            // (namespace-uri-from-QName returns xs:QName instead of xs:string
+            //  in filter's inline function context)
+            if (XQuery.useRdParser() && !location.contains("xqsuite")) {
+                try {
+                    final StringBuilder sb = new StringBuilder(4096);
+                    final char[] buf = new char[4096];
+                    int n;
+                    while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+                    final org.exist.xquery.parser.next.XQueryParser rdParser =
+                            new org.exist.xquery.parser.next.XQueryParser(modContext, sb.toString());
+                    final Expression parsedExpr = rdParser.parse();
+                    // Wrap in LibraryModuleRoot for function dispatch
+                    final Expression rootExpr;
+                    if (rdParser.isLibraryModule()) {
+                        final LibraryModuleRoot libRoot = new LibraryModuleRoot(modContext);
+                        if (parsedExpr instanceof PathExpr) {
+                            for (int ii = 0; ii < ((PathExpr) parsedExpr).getLength(); ii++) {
+                                libRoot.add(((PathExpr) parsedExpr).getExpression(ii));
+                            }
+                        }
+                        rootExpr = libRoot;
+                    } else {
+                        rootExpr = parsedExpr;
+                    }
+                    modContext.setRootExpression(rootExpr);
+                    modContext.resolveForwardReferences();
+
+                    for (final java.util.Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
+                        modExternal.declareFunction(it.next());
+                    }
+                    for (final Variable var : modContext.getVariables().values()) {
+                        if (var.getQName().getNamespaceURI().equals(namespaceURI)) {
+                            modExternal.declareVariable(var);
+                        }
+                    }
+                    modExternal.setRootExpression(rootExpr);
+
+                    if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
+                        throw new XPathException(rootExpression, ErrorCodes.XQST0059,
+                                "namespace URI declared by module (" + modExternal.getNamespaceURI() +
+                                ") does not match namespace URI in import statement, which was: " + namespaceURI);
+                    }
+                    modExternal.setSource(source);
+                    modContext.setSource(source);
+                    modExternal.setIsReady(true);
+                    return modExternal;
+                } catch (final XPathException e) {
+                    e.prependMessage("Error while loading module " + location + ": ");
+                    throw e;
+                }
+            }
             final XQueryLexer lexer = new XQueryLexer(modContext, reader);
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(modContext, modExternal);
