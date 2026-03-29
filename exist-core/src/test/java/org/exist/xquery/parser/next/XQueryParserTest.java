@@ -1510,6 +1510,44 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void directConstructorInFunctionBody() throws Exception {
+        // Bug: direct element constructor with enclosed expression in function body
+        assertModuleEval("bar",
+            "declare function local:test() {\n" +
+            "    <report>{\n" +
+            "        element foo { 'bar' }\n" +
+            "    }</report>\n" +
+            "};\n" +
+            "local:test()/foo/string()");
+    }
+
+    @Test
+    public void directConstructorInFunctionBodyComplex() throws Exception {
+        // More complex: nested elements with multiple enclosed expressions
+        assertModuleEval("1 2 3",
+            "declare function local:items($n as xs:integer) {\n" +
+            "    <list>{\n" +
+            "        for $i in 1 to $n\n" +
+            "        return <item id='{$i}'>{$i}</item>\n" +
+            "    }</list>\n" +
+            "};\n" +
+            "string-join(local:items(3)//item/string(), ' ')");
+    }
+
+    @Test
+    public void directConstructorInFunctionBodyWithComputedElement() throws Exception {
+        // Direct element with computed element inside — the exact restxq-impl pattern
+        assertModuleEval("bar",
+            "declare function local:test() {\n" +
+            "    <report>{\n" +
+            "        element foo { 'bar' },\n" +
+            "        element baz { 'qux' }\n" +
+            "    }</report>\n" +
+            "};\n" +
+            "local:test()/foo/string()");
+    }
+
+    @Test
     public void bareMapConstructorEmpty() throws Exception {
         assertBothParsers("empty bare map",
             "map:size({ })");
