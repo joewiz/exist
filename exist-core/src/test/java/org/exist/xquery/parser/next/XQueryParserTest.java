@@ -1587,6 +1587,27 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqsuiteXqlWithModuleContext() throws Exception {
+        // Test: compile actual xqsuite.xql with ModuleContext (the compileModule path)
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final java.io.InputStream is = getClass().getClassLoader()
+                    .getResourceAsStream("org/exist/xquery/lib/xqsuite/xqsuite.xql");
+            assertNotNull("xqsuite.xql not found on classpath", is);
+            final String source = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+
+            // Use ModuleContext — same as compileModule does
+            final XQueryContext parentContext = new XQueryContext(pool);
+            final ModuleContext modContext = new ModuleContext(parentContext,
+                    "http://exist-db.org/xquery/xqsuite", "test", "xqsuite.xql");
+            final XQueryParser parser = new XQueryParser(modContext, source);
+            final Expression result = parser.parse();
+            assertNotNull("Parse should succeed", result);
+            assertTrue("Should be a library module", parser.isLibraryModule());
+        }
+    }
+
+    @Test
     public void directConstructorInFunctionBody() throws Exception {
         // Bug: direct element constructor with enclosed expression in function body
         assertModuleEval("bar",
