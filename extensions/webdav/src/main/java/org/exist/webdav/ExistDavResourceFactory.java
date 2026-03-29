@@ -64,7 +64,7 @@ public class ExistDavResourceFactory implements DavResourceFactory {
      */
     public ExistDavResourceFactory(final BrokerPool pool) {
         this.brokerPool = pool;
-        this.lockManager = new ExistLockManager();
+        this.lockManager = new ExistLockManager(pool);
 
         // Load WebDAV serialization options
         loadConfiguration();
