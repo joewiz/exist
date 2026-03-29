@@ -2674,6 +2674,26 @@ public final class XQueryParser {
                 expr = parseLookup(expr);
             } else if (check(Token.LPAREN) && isDynamicCallContext(expr)) {
                 expr = parseDynamicFunctionCall(expr);
+            } else if (match(Token.METHOD_CALL)) {
+                // Method call: expr =?> methodName(args)
+                final String methodName = expectName("method name");
+                expect(Token.LPAREN, "'('");
+                final List<Expression> args = new ArrayList<>();
+                if (!check(Token.RPAREN)) {
+                    final PathExpr argExpr = new PathExpr(context);
+                    argExpr.add(parseExprSingle());
+                    args.add(argExpr.simplify());
+                    while (match(Token.COMMA)) {
+                        final PathExpr nextArg = new PathExpr(context);
+                        nextArg.add(parseExprSingle());
+                        args.add(nextArg.simplify());
+                    }
+                }
+                expect(Token.RPAREN, "')'");
+                final MethodCallOperator op = new MethodCallOperator(context, expr);
+                op.setLocation(previous.line, previous.column);
+                op.setMethod(methodName, args);
+                expr = op;
             } else if (check(Token.SLASH) || check(Token.DSLASH)) {
                 // Path continuation after postfix: $f()/path, $arr[1]/child, etc.
                 final PathExpr path = new PathExpr(context);
