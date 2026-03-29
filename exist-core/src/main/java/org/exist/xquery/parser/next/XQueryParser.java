@@ -2064,6 +2064,28 @@ public final class XQueryParser {
             return cmp;
         }
 
+        // Node comparison: is, << (node before), >> (node after)
+        if (matchKeyword("is")) {
+            final Expression right = parseFTContainsOrInstanceOf();
+            final NodeComparison cmp = new NodeComparison(context, left, right, Constants.NodeComparisonOperator.IS);
+            cmp.setLocation(left.getLine(), left.getColumn());
+            return cmp;
+        }
+        if (check(Token.LT) && peekIs(Token.LT)) {
+            advance(); advance(); // consume <<
+            final Expression right = parseFTContainsOrInstanceOf();
+            final NodeComparison cmp = new NodeComparison(context, left, right, Constants.NodeComparisonOperator.BEFORE);
+            cmp.setLocation(left.getLine(), left.getColumn());
+            return cmp;
+        }
+        if (check(Token.GT) && peekIs(Token.GT)) {
+            advance(); advance(); // consume >>
+            final Expression right = parseFTContainsOrInstanceOf();
+            final NodeComparison cmp = new NodeComparison(context, left, right, Constants.NodeComparisonOperator.AFTER);
+            cmp.setLocation(left.getLine(), left.getColumn());
+            return cmp;
+        }
+
         return left;
     }
 
