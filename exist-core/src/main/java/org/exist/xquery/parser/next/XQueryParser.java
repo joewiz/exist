@@ -298,8 +298,8 @@ public final class XQueryParser {
             }
             expect(Token.SEMICOLON, "';'");
         } else {
-            // Unknown declaration — skip to semicolon to recover
-            skipToSemicolon();
+            final String keyword = check(Token.NCNAME) ? current.value : "???";
+            throw error("Unknown prolog declaration: declare " + keyword);
         }
     }
 
@@ -2883,6 +2883,23 @@ public final class XQueryParser {
             }
             if (checkKeyword(Keywords.NAMESPACE) && peekIsConstructorStart()) {
                 return parseComputedNamespaceConstructor();
+            }
+
+            // validate expression — eXist is not schema-aware, so parse and pass through
+            // validate strict { expr }, validate lax { expr }, validate type QName { expr }
+            if (checkKeyword(Keywords.VALIDATE)) {
+                advance(); // consume 'validate'
+                matchKeyword("strict");
+                matchKeyword("lax");
+                if (matchKeyword("type")) {
+                    // consume the type name
+                    if (check(Token.NCNAME) || check(Token.QNAME)) advance();
+                    else if (check(Token.BRACED_URI_LITERAL)) parseEQName();
+                }
+                expect(Token.LBRACE, "'{'");
+                final Expression inner = parseExpr();
+                expect(Token.RBRACE, "'}'");
+                return inner; // pass through — no validation wrapper
             }
 
             // Kind test: text(), node(), element(), attribute(), comment(), etc.
