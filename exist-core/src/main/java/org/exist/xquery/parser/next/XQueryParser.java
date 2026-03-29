@@ -2323,10 +2323,15 @@ public final class XQueryParser {
      * Also handles parenthesized types: (function(...) as type)
      */
     private int parseItemType() throws XPathException {
-        // Parenthesized type: (ItemType)
+        // ChoiceItemType: (ItemType | ItemType | ...)
+        // or parenthesized type: (ItemType)
         if (check(Token.LPAREN)) {
             advance(); // consume (
             final int innerType = parseItemType();
+            // Handle | for choice types (XQ4)
+            while (match(Token.PIPE)) {
+                parseItemType(); // consume additional types (use first type as approximation)
+            }
             // Skip any nested content until closing )
             int depth = 1;
             while (depth > 0 && !check(Token.EOF)) {
@@ -2336,6 +2341,17 @@ public final class XQueryParser {
             }
             if (check(Token.RPAREN)) advance();
             return innerType;
+        }
+
+        // EnumerationType: enum('val1', 'val2', ...)
+        if (checkKeyword("enum") && peekIs(Token.LPAREN)) {
+            advance(); advance(); // consume 'enum' '('
+            // Parse string literal list
+            while (!check(Token.RPAREN) && !check(Token.EOF)) {
+                advance(); // consume each literal/comma
+            }
+            expect(Token.RPAREN, "')'");
+            return Type.STRING; // enum values are strings
         }
 
         // item()
