@@ -3010,11 +3010,16 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
-            // Route through rd parser if enabled — but NOT for xqsuite.xql
-            // which has a runtime XPTY0004 bug when compiled by rd parser
-            // (namespace-uri-from-QName returns xs:QName instead of xs:string
-            //  in filter's inline function context)
-            if (XQuery.useRdParser() && !location.contains("xqsuite")) {
+            // TODO(rd-parser): Route through rd parser when XQuery.useRdParser() is true.
+            // Blocked by multiple issues when modules are compiled by rd parser:
+            // 1. xqsuite.xql: XPTY0004 in namespace-uri-from-QName inside inline function
+            // 2. Other modules: database infrastructure tests fail (RecoverXmlTest, etc.)
+            // Root cause: rd parser's expression tree for modules has subtle differences
+            // from ANTLR 2's that affect runtime evaluation in module context.
+            // The compileModule rd routing adds 23 trigger tests but breaks ~400 others.
+            // Keep for future investigation — the LibraryModuleRoot fix in
+            // compileWithRdParser() handles triggers without needing compileModule routing.
+            if (false && XQuery.useRdParser()) {
                 try {
                     final StringBuilder sb = new StringBuilder(4096);
                     final char[] buf = new char[4096];
