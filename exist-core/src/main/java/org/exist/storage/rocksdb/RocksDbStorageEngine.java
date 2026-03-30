@@ -42,6 +42,8 @@ public class RocksDbStorageEngine implements StorageEngine {
 
     private RocksDB db;
     private DBOptions dbOptions;
+    private Cache blockCache;
+    private ColumnFamilyOptions cfOptions;
     private final Map<String, ColumnFamilyHandle> cfHandles = new LinkedHashMap<>();
     private final List<ColumnFamilyHandle> cfHandleList = new ArrayList<>();
     private WriteOptions syncWriteOptions;
@@ -51,11 +53,12 @@ public class RocksDbStorageEngine implements StorageEngine {
         RocksDB.loadLibrary();
 
         try {
-            // Configure block cache
+            // Configure block cache — store reference for cleanup
+            blockCache = new LRUCache(BLOCK_CACHE_SIZE);
             final BlockBasedTableConfig tableConfig = new BlockBasedTableConfig()
-                    .setBlockCache(new LRUCache(BLOCK_CACHE_SIZE));
+                    .setBlockCache(blockCache);
 
-            final ColumnFamilyOptions cfOptions = new ColumnFamilyOptions()
+            cfOptions = new ColumnFamilyOptions()
                     .setTableFormatConfig(tableConfig);
 
             // Build column family descriptors
@@ -135,6 +138,14 @@ public class RocksDbStorageEngine implements StorageEngine {
         if (dbOptions != null) {
             dbOptions.close();
             dbOptions = null;
+        }
+        if (cfOptions != null) {
+            cfOptions.close();
+            cfOptions = null;
+        }
+        if (blockCache != null) {
+            blockCache.close();
+            blockCache = null;
         }
     }
 }

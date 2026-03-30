@@ -73,17 +73,21 @@ public class RocksDbWriteTransaction implements WriteTransaction {
 
     @Override
     public void abort() {
+        // WriteBatch is discarded (not written to DB) — close releases native memory
         if (!committed) {
             writeBatch.close();
+            committed = true; // prevent double-close
         }
     }
 
     @Override
     public void close() {
-        if (!committed) {
+        try {
+            // Always close writeBatch — even after commit, native memory must be released
             writeBatch.close();
+        } finally {
+            readOptions.close();
+            db.releaseSnapshot(snapshot);
         }
-        readOptions.close();
-        db.releaseSnapshot(snapshot);
     }
 }

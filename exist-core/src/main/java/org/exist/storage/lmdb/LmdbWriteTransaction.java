@@ -5,13 +5,16 @@ import org.exist.storage.engine.WriteTransaction;
 import org.lmdbjava.Txn;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class LmdbWriteTransaction implements WriteTransaction {
     final Txn<ByteBuffer> txn;
+    private final ReentrantLock writeLock;
     private boolean finished = false;
 
-    LmdbWriteTransaction(final Txn<ByteBuffer> txn) {
+    LmdbWriteTransaction(final Txn<ByteBuffer> txn, final ReentrantLock writeLock) {
         this.txn = txn;
+        this.writeLock = writeLock;
     }
 
     @Override
@@ -37,10 +40,14 @@ public class LmdbWriteTransaction implements WriteTransaction {
 
     @Override
     public void close() {
-        if (!finished) {
-            txn.abort();
-            finished = true;
+        try {
+            if (!finished) {
+                txn.abort();
+                finished = true;
+            }
+            txn.close();
+        } finally {
+            writeLock.unlock();
         }
-        txn.close();
     }
 }

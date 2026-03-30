@@ -62,6 +62,11 @@ public class RocksDbPartition implements Partition {
         }
     }
 
+    @Override
+    public boolean exists(final ReadTransaction txn, final byte[] key) throws StorageException {
+        return get(txn, key) != null;
+    }
+
     @Nullable
     public byte[] get(final WriteTransaction txn, final byte[] key) throws StorageException {
         final RocksDbWriteTransaction wtxn = (RocksDbWriteTransaction) txn;

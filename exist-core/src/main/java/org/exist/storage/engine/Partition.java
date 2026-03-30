@@ -11,6 +11,12 @@ public interface Partition {
     @Nullable
     byte[] get(ReadTransaction txn, byte[] key) throws StorageException;
 
+    /**
+     * Check if a key exists without reading its value.
+     * More efficient than get() for existence checks (e.g., fn:doc-available).
+     */
+    boolean exists(ReadTransaction txn, byte[] key) throws StorageException;
+
     void put(WriteTransaction txn, byte[] key, byte[] value) throws StorageException;
 
     void delete(WriteTransaction txn, byte[] key) throws StorageException;
