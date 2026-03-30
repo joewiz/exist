@@ -1075,3 +1075,51 @@ declare
 function t:civilTimezone-unknown-place() {
     civil-timezone(xs:dateTime("2024-06-15T12:00:00"), "North/Pole")
 };
+
+(: fn:format-number with XQ4 map options and char:rendition :)
+
+declare
+    %test:assertEquals("12,56")
+function t:formatNumber-map-decimalRendition() {
+    (: decimal-separator marker is . for picture, rendered as , in output :)
+    format-number(12.56, '#0.##', map {
+        'decimal-separator': '.:,'
+    })
+};
+
+declare
+    %test:assertEquals("1 234.56")
+function t:formatNumber-map-groupingRendition() {
+    (: grouping-separator marker is , for picture, but space is rendered :)
+    format-number(1234.56, '#,##0.##', map {
+        'grouping-separator': ',: '
+    })
+};
+
+declare
+    %test:assertEquals("14pc")
+function t:formatNumber-map-percentRendition() {
+    (: percent marker is % in picture, but "pc" is rendered :)
+    format-number(0.14, '01%', map {
+        'percent': '%:pc'
+    })
+};
+
+declare
+    %test:assertEquals("1,234.56")
+function t:formatNumber-map-noRendition() {
+    (: No rendition — marker used directly in output :)
+    format-number(1234.56, '#,##0.##', map {
+        'decimal-separator': '.',
+        'grouping-separator': ','
+    })
+};
+
+declare
+    %test:assertEquals("1.5EXP2")
+function t:formatNumber-map-exponentRendition() {
+    (: exponent-separator marker is e for picture, "EXP" is rendered :)
+    format-number(150, '0.0e0', map {
+        'exponent-separator': 'e:EXP'
+    })
+};

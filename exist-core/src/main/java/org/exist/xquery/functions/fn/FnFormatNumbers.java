@@ -228,12 +228,12 @@ public class FnFormatNumbers extends BasicFunction {
             }
         }
 
-        // Override individual properties from the map
-        final int decimalSeparator = getCharProperty(map, "decimal-separator", base.decimalSeparator);
-        final int groupingSeparator = getCharProperty(map, "grouping-separator", base.groupingSeparator);
-        final int exponentSeparator = getCharProperty(map, "exponent-separator", base.exponentSeparator);
-        final int percent = getCharProperty(map, "percent", base.percent);
-        final int perMille = getCharProperty(map, "per-mille", base.perMille);
+        // Override individual properties from the map, extracting char:rendition
+        final CharRendition decSep = getCharRenditionProperty(map, "decimal-separator", base.decimalSeparator);
+        final CharRendition grpSep = getCharRenditionProperty(map, "grouping-separator", base.groupingSeparator);
+        final CharRendition expSep = getCharRenditionProperty(map, "exponent-separator", base.exponentSeparator);
+        final CharRendition pct = getCharRenditionProperty(map, "percent", base.percent);
+        final CharRendition pml = getCharRenditionProperty(map, "per-mille", base.perMille);
         final int zeroDigit = getCharProperty(map, "zero-digit", base.zeroDigit);
         final int digit = getCharProperty(map, "digit", base.digit);
         final int patternSeparator = getCharProperty(map, "pattern-separator", base.patternSeparator);
@@ -241,27 +241,48 @@ public class FnFormatNumbers extends BasicFunction {
         final String infinity = getStringProperty(map, "infinity", base.infinity);
         final String nan = getStringProperty(map, "NaN", base.NaN);
 
-        return new DecimalFormat(decimalSeparator, exponentSeparator, groupingSeparator,
-                percent, perMille, zeroDigit, digit, patternSeparator, infinity, nan, minusSign);
+        return new DecimalFormat(decSep.marker(), expSep.marker(), grpSep.marker(),
+                pct.marker(), pml.marker(), zeroDigit, digit, patternSeparator, infinity, nan, minusSign,
+                decSep.rendition(), expSep.rendition(), grpSep.rendition(),
+                pct.rendition(), pml.rendition());
     }
 
     /**
-     * Extracts a single-character property from the map, handling the
-     * char:rendition pattern. Returns the marker character (first char).
-     * If the property is absent, returns the default.
+     * Result of parsing a char:rendition property value.
+     * Marker is used for picture string parsing; rendition for output.
      */
-    private int getCharProperty(final MapType map, final String key, final int defaultValue) throws XPathException {
+    private record CharRendition(int marker, String rendition) {}
+
+    /**
+     * Extracts a single-character property from the map, handling the
+     * char:rendition pattern. Returns marker (first char) and rendition.
+     * If the property is absent, returns the default marker with null rendition.
+     */
+    private CharRendition getCharRenditionProperty(final MapType map, final String key, final int defaultValue) throws XPathException {
         final Sequence seq = map.get(new StringValue(this, key));
         if (seq == null || seq.isEmpty()) {
-            return defaultValue;
+            return new CharRendition(defaultValue, null);
         }
         final String value = seq.itemAt(0).getStringValue();
         if (value.isEmpty()) {
             throw new XPathException(this, ErrorCodes.FODF1280,
                     "Decimal format property '" + key + "' must not be empty.");
         }
-        // char:rendition pattern — the marker is the first character
-        return value.codePointAt(0);
+        final int marker = value.codePointAt(0);
+        final int markerLen = Character.charCount(marker);
+        // char:rendition pattern: "X:rendition" where X is the marker
+        if (value.length() > markerLen && value.charAt(markerLen) == ':') {
+            final String rendition = value.substring(markerLen + 1);
+            return new CharRendition(marker, rendition);
+        }
+        return new CharRendition(marker, null);
+    }
+
+    /**
+     * Extracts a single-character property (no rendition support).
+     */
+    private int getCharProperty(final MapType map, final String key, final int defaultValue) throws XPathException {
+        return getCharRenditionProperty(map, key, defaultValue).marker();
     }
 
     /**
@@ -837,8 +858,41 @@ public class FnFormatNumbers extends BasicFunction {
         }
 
         // Rule 14 - concatenate prefix, formatted number, and suffix
-        final String result = subPicture.getPrefixString() + formatted + subPicture.getSuffixString();
+        String result = subPicture.getPrefixString() + formatted + subPicture.getSuffixString();
 
+        // XQ4: Apply char:rendition substitutions — replace marker characters with
+        // their rendition strings in the final output
+        result = applyRenditions(result, decimalFormat);
+
+        return result;
+    }
+
+    /**
+     * XQ4 char:rendition: replace marker characters with their rendition strings
+     * in the formatted output. Only applies when a rendition differs from the
+     * marker (i.e., the property was specified as "marker:rendition").
+     */
+    private static String applyRenditions(String result, final DecimalFormat df) {
+        final String decMarker = new String(Character.toChars(df.decimalSeparator));
+        if (!decMarker.equals(df.decimalSeparatorRendition)) {
+            result = result.replace(decMarker, df.decimalSeparatorRendition);
+        }
+        final String grpMarker = new String(Character.toChars(df.groupingSeparator));
+        if (!grpMarker.equals(df.groupingSeparatorRendition)) {
+            result = result.replace(grpMarker, df.groupingSeparatorRendition);
+        }
+        final String expMarker = new String(Character.toChars(df.exponentSeparator));
+        if (!expMarker.equals(df.exponentSeparatorRendition)) {
+            result = result.replace(expMarker, df.exponentSeparatorRendition);
+        }
+        final String pctMarker = new String(Character.toChars(df.percent));
+        if (!pctMarker.equals(df.percentRendition)) {
+            result = result.replace(pctMarker, df.percentRendition);
+        }
+        final String pmlMarker = new String(Character.toChars(df.perMille));
+        if (!pmlMarker.equals(df.perMilleRendition)) {
+            result = result.replace(pmlMarker, df.perMilleRendition);
+        }
         return result;
     }
 
