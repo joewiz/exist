@@ -3017,14 +3017,25 @@ public class XQueryContext implements BinaryValueManager, Context {
             // Simple regression tests pass — the bug requires a specific parser state
             // reached after ~250 lines of complex XQuery with nested HOF types.
             // Function/variable registration logic (localFunctions() → modExternal) is correct.
+            // TODO(rd-parser): compileModule rd routing blocked by XPTY0004
+            // Root cause found: namespace-uri-from-QName(function-name($func)) at
+            // xqsuite.xql line 113 — the parser correctly creates InternalFunctionCall
+            // for namespace-uri-from-QName, but during module registration/analysis,
+            // the outer call is replaced by its argument (function-name). The comparison
+            // then gets xs:QName (from function-name) vs xs:string (from $module).
+            // This does NOT happen in standalone compilation — only via compileModule.
+            // The issue is NOT in PathExpr.add(PathExpr) flattening — tested and ruled out.
+            // Next investigation: check resolveForwardReferences and analyzeAndOptimize
+            // for expression tree rewriting that could drop the outer function call.
             if (false && XQuery.useRdParser()) {
                 try {
                     final StringBuilder sb = new StringBuilder(4096);
                     final char[] buf = new char[4096];
                     int n;
                     while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+                    final String sourceText = sb.toString();
                     final org.exist.xquery.parser.next.XQueryParser rdParser =
-                            new org.exist.xquery.parser.next.XQueryParser(modContext, sb.toString());
+                            new org.exist.xquery.parser.next.XQueryParser(modContext, sourceText);
                     final Expression parsedExpr = rdParser.parse();
                     // Wrap in LibraryModuleRoot for function dispatch
                     final Expression rootExpr;

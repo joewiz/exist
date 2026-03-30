@@ -4045,7 +4045,6 @@ public final class XQueryParser {
         if (fn instanceof AbstractExpression) {
             ((AbstractExpression) fn).setLocation(nameToken.line, nameToken.column);
         }
-
         // Check for partial application — if any argument is a placeholder
         boolean isPartial = false;
         for (final Expression arg : args) {
