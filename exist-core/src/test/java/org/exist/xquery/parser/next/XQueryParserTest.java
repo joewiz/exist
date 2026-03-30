@@ -1860,6 +1860,33 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqtsRunnerPipelineSimulation() throws Exception {
+        // Reproduce XQTS runner trailing-space bug:
+        // When $result is bound from xquery.execute() output and the assertion
+        // query string-join(for $r in $result return string($r), ' ') is
+        // compiled by the rd parser, it produces 'ab ' instead of 'ab'.
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final XQuery xquery = pool.getXQueryService();
+
+            // Execute test query
+            final Sequence testResult = xquery.execute(broker, "(concat('a', 'b'))", null);
+            assertEquals("testResult", "ab", testResult.getStringValue());
+
+            // Assertion query with external variable — the XQTS runner pattern
+            final XQueryContext ctx = new XQueryContext(pool);
+            ctx.declareVariable("result", testResult);
+            final CompiledXQuery compiled = xquery.compile(ctx,
+                "declare variable $result external;\n" +
+                "string-join(for $r in $result return string($r), ' ')");
+            final Sequence result = xquery.execute(broker, compiled, null);
+
+            // This fails with rd parser: expected 'ab' but got 'ab '
+            assertEquals("runner assertion pipeline", "ab", result.getStringValue());
+        }
+    }
+
+    @Test
     public void xqtsRunnerStringJoinPattern() throws Exception {
         // Exact XQTS runner assertion query pattern
         assertBothParsers("xqts string-join",
