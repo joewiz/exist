@@ -126,11 +126,12 @@ public class ExistLockManager implements LockManager {
                     "Lock token does not match");
         }
 
-        // Refresh: remove and re-create with new timeout
+        // Refresh: remove and re-create with the SAME token and new timeout
         try {
             lockStore.removeLock(resourceUri);
             final long timeout = reqLockInfo.getTimeout();
-            final String newToken = lockStore.storeLock(
+            lockStore.storeLockWithToken(
+                    lock.token,
                     resourceUri,
                     lock.owner,
                     lock.scope,
@@ -138,7 +139,7 @@ public class ExistLockManager implements LockManager {
                     lock.deep,
                     timeout > 0 ? timeout : 3600
             );
-            return buildActiveLock(newToken, lock.owner, lock.deep, timeout, resource);
+            return buildActiveLock(lock.token, lock.owner, lock.deep, timeout, resource);
         } catch (final EXistException e) {
             throw new DavException(DavServletResponse.SC_INTERNAL_SERVER_ERROR,
                     "Failed to refresh lock: " + e.getMessage());

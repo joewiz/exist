@@ -80,6 +80,16 @@ public class WebDavLockStore {
     }
 
     /**
+     * Store a lock for a resource URI with a specific token (used for refresh).
+     */
+    public void storeLockWithToken(final String token, final String resourceUri,
+                                    final String owner, final String scope,
+                                    final String type, final boolean deep,
+                                    final long timeout) throws EXistException {
+        storeLockInternal(token, resourceUri, owner, scope, type, deep, timeout);
+    }
+
+    /**
      * Store a lock for a resource URI.
      *
      * @return the generated opaque lock token
@@ -89,6 +99,14 @@ public class WebDavLockStore {
                             final boolean deep, final long timeout) throws EXistException {
 
         final String token = UUID.randomUUID().toString();
+        storeLockInternal(token, resourceUri, owner, scope, type, deep, timeout);
+        return token;
+    }
+
+    private void storeLockInternal(final String token, final String resourceUri,
+                                    final String owner, final String scope,
+                                    final String type, final boolean deep,
+                                    final long timeout) throws EXistException {
         final String lockXml = buildLockXml(token, resourceUri, owner, scope, type, deep, timeout);
         final String lockDocName = uriToLockDocName(resourceUri);
 
@@ -107,7 +125,6 @@ public class WebDavLockStore {
         }
 
         LOG.debug("Stored lock for {} with token {}", resourceUri, token);
-        return token;
     }
 
     /**
