@@ -1789,6 +1789,76 @@ public class XQueryParserTest {
             "count(local:primes(20))");
     }
 
+    // ========================================================================
+    // Definitive QT4 gap tests — run under both parsers, report exact output
+    // ========================================================================
+
+    @Test public void qt4_trailing_insertBefore() throws Exception {
+        assertBothParsers("insert-before", "(insert-before( ('a', 'b', 'c'), 0, ('x', 'y')))");
+    }
+    @Test public void qt4_trailing_concat() throws Exception {
+        assertBothParsers("concat", "(concat('a', 'b'))");
+    }
+    @Test public void qt4_trailing_sum() throws Exception {
+        assertBothParsers("sum", "sum( (1, 2, 3) )");
+    }
+    @Test public void qt4_trailing_tokenize() throws Exception {
+        assertBothParsers("tokenize", "string-join(tokenize( 'a    b c', '\\s'), '|')");
+    }
+    @Test public void qt4_trailing_abs() throws Exception {
+        assertBothParsers("abs", "(abs(3.5))");
+    }
+    @Test public void qt4_trailing_zeroOrOne() throws Exception {
+        assertBothParsers("zero-or-one", "(zero-or-one('a'))");
+    }
+    @Test public void qt4_trailing_number() throws Exception {
+        assertBothParsers("number", "string(number( () ))");
+    }
+    @Test public void qt4_xpty_duplicatesFilter() throws Exception {
+        assertBothParsers("duplicates-filter",
+            "let $seq := (1 to 10, reverse(10 to 20), tail(20 to 30))\n" +
+            "for $item in distinct-values($seq)\n" +
+            "where count($seq[. = $item]) > 1\n" +
+            "return $item");
+    }
+    @Test public void qt4_xpty_duplicatesIndexOf() throws Exception {
+        assertBothParsers("duplicates-index-of",
+            "let $seq := (1, 2, 3, 1, 2)\n" +
+            "return distinct-values($seq[count(index-of($seq, .)) gt 1])");
+    }
+    @Test public void qt4_xpty_yearMonthDuration() throws Exception {
+        assertBothParsers("yearMonthDuration",
+            "declare function local:if-empty($arg as item()?, $value as item()*) as item()* {\n" +
+            "  if (string($arg) != '') then data($arg) else $value\n" +
+            "};\n" +
+            "(xs:yearMonthDuration('P1M') * local:if-empty(6,0)) +\n" +
+            "(xs:yearMonthDuration('P1Y') * local:if-empty(1,0))");
+    }
+    @Test public void qt4_xpty_dayTimeDuration() throws Exception {
+        assertBothParsers("dayTimeDuration",
+            "declare function local:if-empty($arg as item()?, $value as item()*) as item()* {\n" +
+            "  if (string($arg) != '') then data($arg) else $value\n" +
+            "};\n" +
+            "(xs:dayTimeDuration('PT1M') * local:if-empty(5,0))");
+    }
+    @Test public void qt4_unexpected_changeElementNames() throws Exception {
+        assertBothParsers("change-element-names",
+            "declare function local:change-names($nodes as node()*, $newName as xs:string) as node()* {\n" +
+            "  for $node in $nodes\n" +
+            "  return\n" +
+            "    if ($node instance of element())\n" +
+            "    then element { $newName } { $node/@*, local:change-names($node/node(), $newName) }\n" +
+            "    else $node\n" +
+            "};\n" +
+            "local:change-names(<a><b>text</b></a>, 'x')");
+    }
+    @Test public void qt4_wrongval_escapeHtmlUri() throws Exception {
+        assertBothParsers("escape-html-uri", "escape-html-uri('http://example.com/test')");
+    }
+    @Test public void qt4_wrongval_translate() throws Exception {
+        assertBothParsers("translate", "translate('bar','abc','ABC')");
+    }
+
     @Test
     public void xqtsRunnerStringJoinPattern() throws Exception {
         // Exact XQTS runner assertion query pattern
