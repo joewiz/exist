@@ -24,6 +24,7 @@ package org.exist.webdav;
 import jakarta.servlet.ServletException;
 import org.apache.jackrabbit.webdav.*;
 import org.apache.jackrabbit.webdav.lock.ActiveLock;
+import org.apache.jackrabbit.webdav.lock.LockInfo;
 import org.apache.jackrabbit.webdav.server.AbstractWebdavServlet;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -104,9 +105,7 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
             return true;
         }
         // If the resource match failed, check if a parent collection has a
-        // deep lock whose token appears in the If header. This handles the
-        // case where the If header contains a collection lock token for an
-        // operation on a child resource (tests 32-33, 35).
+        // deep lock whose token appears in the If header.
         DavResource parent = resource.getCollection();
         while (parent != null) {
             final ActiveLock parentLock = parent.getLock(
@@ -117,7 +116,7 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
             }
             parent = parent.getCollection();
         }
-        // No matching lock found — if no If header was sent, this is OK (e.g. GET)
+        // No matching lock found — if no If header was sent, this is OK
         final String ifHeader = request.getHeader("If");
         if (ifHeader == null || ifHeader.isEmpty()) {
             return true;

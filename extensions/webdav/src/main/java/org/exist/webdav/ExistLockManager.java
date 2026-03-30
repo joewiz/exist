@@ -29,6 +29,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.EXistException;
 import org.exist.storage.BrokerPool;
+import org.exist.xmldb.XmldbURI;
 
 /**
  * Lock manager using /db/system/webdav-locks/ for persistent lock storage.
@@ -112,10 +113,27 @@ public class ExistLockManager implements LockManager {
                     "Locking is only supported for eXist resources");
         }
 
-        final String resourceUri = davResource.getXmldbUri().toString();
         final String cleanToken = stripTokenPrefix(lockToken);
 
-        final WebDavLockStore.LockInfo lock = lockStore.getLock(resourceUri);
+        // Find the lock — either on this resource or on an ancestor collection
+        String lockUri = davResource.getXmldbUri().toString();
+        WebDavLockStore.LockInfo lock = lockStore.getLock(lockUri);
+
+        if (lock == null || !lock.token.equals(cleanToken)) {
+            // Walk up ancestor URIs to find a matching collection lock
+            XmldbURI ancestorUri = davResource.getXmldbUri().removeLastSegment();
+            while (ancestorUri != null && !"/".equals(ancestorUri.toString())) {
+                final String ancestorPath = ancestorUri.toString();
+                final WebDavLockStore.LockInfo ancestorLock = lockStore.getLock(ancestorPath);
+                if (ancestorLock != null && ancestorLock.token.equals(cleanToken)) {
+                    lock = ancestorLock;
+                    lockUri = ancestorPath;
+                    break;
+                }
+                ancestorUri = ancestorUri.removeLastSegment();
+            }
+        }
+
         if (lock == null) {
             throw new DavException(DavServletResponse.SC_PRECONDITION_FAILED,
                     "Resource is not locked");
@@ -128,11 +146,11 @@ public class ExistLockManager implements LockManager {
 
         // Refresh: remove and re-create with the SAME token and new timeout
         try {
-            lockStore.removeLock(resourceUri);
+            lockStore.removeLock(lockUri);
             final long timeout = reqLockInfo.getTimeout();
             lockStore.storeLockWithToken(
                     lock.token,
-                    resourceUri,
+                    lockUri,
                     lock.owner,
                     lock.scope,
                     lock.type,

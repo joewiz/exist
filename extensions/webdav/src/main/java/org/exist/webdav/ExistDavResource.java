@@ -287,6 +287,19 @@ public abstract class ExistDavResource implements DavResource {
         if (writeLock != null) {
             locks.add(writeLock);
         }
+        // Include deep locks from ancestor collections — needed for indirect
+        // lock refresh (litmus test 35) and If-header matching on child resources
+        if (locks.isEmpty()) {
+            DavResource parent = getCollection();
+            while (parent != null) {
+                final ActiveLock parentLock = parent.getLock(Type.WRITE, Scope.EXCLUSIVE);
+                if (parentLock != null && parentLock.isDeep()) {
+                    locks.add(parentLock);
+                    break;
+                }
+                parent = parent.getCollection();
+            }
+        }
         return locks.toArray(new ActiveLock[0]);
     }
 
