@@ -151,6 +151,24 @@ public class UserDefinedFunction extends Function implements Cloneable {
                             ". Expected " + getSignature().getArgumentTypes()[j].getCardinality().getHumanDescription() +
                             ", got " + currentArguments[j].getItemCount());
                 }
+
+                // XQuery 4.0: record type validation at runtime
+                final org.exist.xquery.value.SequenceType argType = getSignature().getArgumentTypes()[j];
+                if (argType.isRecordType() && argType.getRecordType() != null && !currentArguments[j].isEmpty()) {
+                    for (final org.exist.xquery.value.SequenceIterator iter = currentArguments[j].iterate(); iter.hasNext(); ) {
+                        final org.exist.xquery.value.Item item = iter.nextItem();
+                        if (org.exist.xquery.value.Type.subTypeOf(item.getType(), org.exist.xquery.value.Type.MAP_ITEM)) {
+                            if (!argType.getRecordType().matches((org.exist.xquery.functions.map.AbstractMapType) item)) {
+                                throw new XPathException(this, ErrorCodes.XPTY0004,
+                                        "Argument $" + varName + " does not match " + argType.getRecordType());
+                            }
+                        } else {
+                            throw new XPathException(this, ErrorCodes.XPTY0004,
+                                    "Argument $" + varName + " expected " + argType.getRecordType() +
+                                            " but got " + org.exist.xquery.value.Type.getTypeName(item.getType()));
+                        }
+                    }
+                }
             }
             result = body.eval(null, null);
             return result;
