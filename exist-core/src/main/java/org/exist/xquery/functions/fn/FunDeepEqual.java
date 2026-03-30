@@ -442,16 +442,28 @@ public class FunDeepEqual extends CollatingFunction {
      */
     static List<Object> mergeTextNodes(final Node parent) {
         final List<Object> result = new ArrayList<>();
+        StringBuilder textAccum = null;
         Node child = parent.getFirstChild();
         while (child != null) {
             final int nodeType = getEffectiveNodeType(child);
             if (nodeType == Node.TEXT_NODE) {
-                result.add(getNodeValue(child));
+                // XQ4: merge adjacent text nodes (split by ignored comments/PIs)
+                if (textAccum == null) {
+                    textAccum = new StringBuilder();
+                }
+                textAccum.append(getNodeValue(child));
             } else if (nodeType == Node.ELEMENT_NODE) {
+                if (textAccum != null) {
+                    result.add(textAccum.toString());
+                    textAccum = null;
+                }
                 result.add(child);
             }
-            // Skip comments and PIs per spec
+            // Skip comments and PIs per spec — text continues to merge
             child = child.getNextSibling();
+        }
+        if (textAccum != null) {
+            result.add(textAccum.toString());
         }
         return result;
     }
