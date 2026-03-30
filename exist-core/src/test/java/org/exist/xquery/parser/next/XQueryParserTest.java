@@ -1752,6 +1752,44 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void functxYearMonthDuration() throws Exception {
+        // FunctX test: duration arithmetic — tests Incompatible primitive types
+        assertBothParsers("yearMonthDuration",
+            "declare function local:if-empty($arg as item()?, $value as item()*) as item()* { " +
+            "  if (string($arg) != '') then data($arg) else $value " +
+            "}; " +
+            "declare function local:yearMonthDuration($years as xs:decimal?, $months as xs:integer?) as xs:yearMonthDuration { " +
+            "  (xs:yearMonthDuration('P1M') * local:if-empty($months,0)) + " +
+            "  (xs:yearMonthDuration('P1Y') * local:if-empty($years,0)) " +
+            "}; " +
+            "local:yearMonthDuration(1,6)");
+    }
+
+    @Test
+    public void sequenceMoreThanOneItem() throws Exception {
+        // "sequence with more than one item" — from app-Duplicates tests
+        assertBothParsers("sequence cardinality",
+            "declare function local:non-distinct($seq as item()*) as item()* { " +
+            "  for $val in distinct-values($seq) " +
+            "  return if (count($seq[. = $val]) > 1) then $val else () " +
+            "}; " +
+            "string-join(local:non-distinct(('a','b','c','a','b')), ',')");
+    }
+
+    @Test
+    public void fnCountWithEvery() throws Exception {
+        // fn-count test with every/satisfies — XPTY0004 on next
+        assertBothParsers("count with every",
+            "declare function local:primes($n as xs:integer) { " +
+            "  if ($n lt 2) then 1 " +
+            "  else for $i in 2 to $n " +
+            "  return if (every $x in 2 to ($i - 1) satisfies ($i mod $x ne 0)) " +
+            "  then $i else () " +
+            "}; " +
+            "count(local:primes(20))");
+    }
+
+    @Test
     public void xqtsRunnerStringJoinPattern() throws Exception {
         // Exact XQTS runner assertion query pattern
         assertBothParsers("xqts string-join",
