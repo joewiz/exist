@@ -21,18 +21,18 @@
  */
 package org.exist.xquery.functions.fn;
 
-import org.exist.Namespaces;
 import org.exist.dom.QName;
 import org.exist.xquery.*;
-import org.exist.xquery.functions.map.MapType;
 import org.exist.xquery.value.*;
 
 /**
  * fn:schema-type($name as xs:QName) as map(*)
  *
- * Returns a map describing the named schema type with keys:
- * name, is-simple, variety. Function-valued entries (base-type,
- * primitive-type, matches, constructor) are not yet implemented.
+ * Returns a schema-type-record for the named type, with the same structure
+ * as fn:atomic-type-annotation: name, is-simple, variety, base-type(),
+ * primitive-type(), matches(), constructor().
+ *
+ * Delegates to {@link FnTypeAnnotation} for the full record chain.
  */
 public class FnSchemaType extends BasicFunction {
 
@@ -44,7 +44,7 @@ public class FnSchemaType extends BasicFunction {
                             Cardinality.EXACTLY_ONE, "The QName of the type")
             },
             new FunctionReturnSequenceType(Type.MAP_ITEM, Cardinality.EXACTLY_ONE,
-                    "A map describing the type"));
+                    "A schema-type-record describing the type"));
 
     public FnSchemaType(final XQueryContext context, final FunctionSignature signature) {
         super(context, signature);
@@ -62,45 +62,11 @@ public class FnSchemaType extends BasicFunction {
                     "Unknown schema type: " + typeName);
         }
 
-        return buildTypeMap(typeCode, typeName);
-    }
-
-    MapType buildTypeMap(final int typeCode, final QName typeName) throws XPathException {
-        final MapType result = new MapType(this, context);
-
-        // name
-        result.add(new StringValue("name"), new QNameValue(this, context, typeName));
-
-        // is-simple
-        final boolean isSimple = typeCode != Type.ANY_TYPE && typeCode != Type.UNTYPED
-                && typeCode != Type.ITEM && typeCode != Type.NODE;
-        result.add(new StringValue("is-simple"), BooleanValue.valueOf(isSimple));
-
-        // variety
-        final String variety = getVariety(typeCode);
-        result.add(new StringValue("variety"), new StringValue(variety));
-
-        return result;
-    }
-
-    private static QName typeCodeToQName(final int typeCode) {
-        final String name = Type.getTypeName(typeCode);
-        if (name == null) {
-            return new QName(String.valueOf(typeCode), Namespaces.SCHEMA_NS, "xs");
-        }
-        return new QName(name, Namespaces.SCHEMA_NS, "xs");
-    }
-
-    private static String getVariety(final int typeCode) {
-        if (typeCode == Type.ANY_TYPE || typeCode == Type.UNTYPED) {
-            return "complex";
-        }
-        if (Type.subTypeOf(typeCode, Type.ANY_ATOMIC_TYPE)) {
-            return "atomic";
-        }
-        if (typeCode == Type.ANY_SIMPLE_TYPE || typeCode == Type.ANY_ATOMIC_TYPE) {
-            return "atomic";
-        }
-        return "atomic";
+        // Delegate to FnTypeAnnotation for the full schema-type-record
+        // with base-type, primitive-type, matches, constructor
+        final boolean isSimple = typeCode != Type.ANY_TYPE && typeCode != Type.UNTYPED;
+        final FnTypeAnnotation helper = new FnTypeAnnotation(context,
+                FnTypeAnnotation.FN_ATOMIC_TYPE_ANNOTATION);
+        return helper.buildSchemaTypeRecord(typeCode, isSimple);
     }
 }

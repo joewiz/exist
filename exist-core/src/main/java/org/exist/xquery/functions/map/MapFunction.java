@@ -173,11 +173,19 @@ public class MapFunction extends BasicFunction {
     );
 
     // --- XQuery 4.0 map functions ---
-    public static final FunctionSignature FNS_EMPTY = functionSignature(
-            Fn.EMPTY.fname,
-            "Returns an empty map.",
-            RETURN_MAP
-    );
+    public static final FunctionSignature[] FNS_EMPTY = {
+            functionSignature(
+                    Fn.EMPTY.fname,
+                    "Returns an empty map.",
+                    RETURN_MAP
+            ),
+            functionSignature(
+                    Fn.EMPTY.fname,
+                    "Returns true if the map is empty.",
+                    new FunctionReturnSequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE, "true if the map is empty"),
+                    PARAM_INPUT_MAP
+            )
+    };
 
     public static final FunctionSignature FNS_GET_DEFAULT = functionSignature(
             Fn.GET_DEFAULT.fname,
@@ -314,7 +322,20 @@ public class MapFunction extends BasicFunction {
             case ENTRY -> entry(args);
             case REMOVE -> remove(args);
             case FOR_EACH -> forEach(args);
-            case EMPTY -> new MapType(this, this.context);
+            case EMPTY -> {
+                if (args.length > 0 && !args[0].isEmpty()) {
+                    // 1-arity: map:empty($map) — check if map is empty
+                    final AbstractMapType map = (AbstractMapType) args[0].itemAt(0);
+                    yield BooleanValue.valueOf(map.size() == 0);
+                } else if (args.length > 0 && args[0].isEmpty()) {
+                    // empty sequence passed — type error
+                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                            "Expected map(*) but got empty sequence");
+                } else {
+                    // 0-arity: map:empty() — return empty map
+                    yield new MapType(this, this.context);
+                }
+            }
             case GET_DEFAULT -> getDefault(args);
             case BUILD -> build(args);
             case ITEMS, ENTRIES -> items(args);

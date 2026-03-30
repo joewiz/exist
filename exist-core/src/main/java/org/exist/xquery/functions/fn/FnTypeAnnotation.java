@@ -124,6 +124,14 @@ public class FnTypeAnnotation extends BasicFunction {
      * Uses the XML Schema type hierarchy (not the XPath item() hierarchy)
      * since type annotations follow the schema derivation chain.
      */
+    /**
+     * Build a full schema-type-record for a type, used by both
+     * fn:atomic-type-annotation and fn:schema-type.
+     */
+    MapType buildSchemaTypeRecord(final int type, final boolean isSimple) throws XPathException {
+        return buildRecordChain(type, isSimple);
+    }
+
     private MapType buildRecordChain(final int type, final boolean isSimple) throws XPathException {
         // Collect ancestor chain using XML Schema hierarchy
         final List<int[]> chain = new ArrayList<>();
