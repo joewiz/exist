@@ -138,9 +138,15 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
         if (!resource.exists()) {
             return;
         }
-        final ActiveLock lock = resource.getLock(
+        // Check both exclusive and shared locks
+        ActiveLock lock = resource.getLock(
                 org.apache.jackrabbit.webdav.lock.Type.WRITE,
                 org.apache.jackrabbit.webdav.lock.Scope.EXCLUSIVE);
+        if (lock == null) {
+            lock = resource.getLock(
+                    org.apache.jackrabbit.webdav.lock.Type.WRITE,
+                    org.apache.jackrabbit.webdav.lock.Scope.SHARED);
+        }
         if (lock == null || lock.getToken() == null) {
             return;
         }
@@ -162,9 +168,14 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
             throws DavException {
         DavResource parent = resource.getCollection();
         while (parent != null) {
-            final ActiveLock parentLock = parent.getLock(
+            ActiveLock parentLock = parent.getLock(
                     org.apache.jackrabbit.webdav.lock.Type.WRITE,
                     org.apache.jackrabbit.webdav.lock.Scope.EXCLUSIVE);
+            if (parentLock == null) {
+                parentLock = parent.getLock(
+                        org.apache.jackrabbit.webdav.lock.Type.WRITE,
+                        org.apache.jackrabbit.webdav.lock.Scope.SHARED);
+            }
             if (parentLock != null && parentLock.getToken() != null && parentLock.isDeep()) {
                 final String ifHeader = request.getHeader("If");
                 if (ifHeader == null || !ifHeader.contains(parentLock.getToken())) {
