@@ -3010,23 +3010,12 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
-            // TODO(rd-parser): Re-enable when rd parser handles the full xqsuite.xql module.
-            // The rd parser fails at xqsuite.xql line 258 — the second <report>{...}</report>
-            // direct element constructor in a deeply nested if/else/let/return context.
-            // The first <report>{...}</report> at line 244 parses fine; the second doesn't.
-            // Simple regression tests pass — the bug requires a specific parser state
-            // reached after ~250 lines of complex XQuery with nested HOF types.
-            // Function/variable registration logic (localFunctions() → modExternal) is correct.
-            // TODO(rd-parser): compileModule rd routing blocked by XPTY0004
-            // Root cause found: namespace-uri-from-QName(function-name($func)) at
-            // xqsuite.xql line 113 — the parser correctly creates InternalFunctionCall
-            // for namespace-uri-from-QName, but during module registration/analysis,
-            // the outer call is replaced by its argument (function-name). The comparison
-            // then gets xs:QName (from function-name) vs xs:string (from $module).
-            // This does NOT happen in standalone compilation — only via compileModule.
-            // The issue is NOT in PathExpr.add(PathExpr) flattening — tested and ruled out.
-            // Next investigation: check resolveForwardReferences and analyzeAndOptimize
-            // for expression tree rewriting that could drop the outer function call.
+            // rd parser compileModule routing: GeneralComparison PathExpr unwrapping
+            // bug is fixed. Remaining blocker: rd parser fails on inline functions
+            // inside parenthesized sequences — e.g., (function ($a) {1}, ...) in
+            // bang.xql line 258. The parser doesn't recognize `function` as starting
+            // an inline function in this context. This is a general rd parser bug,
+            // not compileModule-specific. Re-enable once inline function parsing is fixed.
             if (false && XQuery.useRdParser()) {
                 try {
                     final StringBuilder sb = new StringBuilder(4096);
@@ -3034,6 +3023,11 @@ public class XQueryContext implements BinaryValueManager, Context {
                     int n;
                     while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
                     final String sourceText = sb.toString();
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("compileModule rd-parser: source length={}, namespace={}, first200={}",
+                                sourceText.length(), namespaceURI,
+                                sourceText.substring(0, Math.min(200, sourceText.length())).replace("\n", "\\n"));
+                    }
                     final org.exist.xquery.parser.next.XQueryParser rdParser =
                             new org.exist.xquery.parser.next.XQueryParser(modContext, sourceText);
                     final Expression parsedExpr = rdParser.parse();
@@ -3056,6 +3050,21 @@ public class XQueryContext implements BinaryValueManager, Context {
                     for (final java.util.Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
                         modExternal.declareFunction(it.next());
                     }
+                    // Register module-level variables from the parsed expression tree.
+                    // The rd parser adds VariableDeclaration expressions to rootExpr,
+                    // which need to be registered on the module (like ANTLR 2's
+                    // myModule.declareVariable(qn, decl) during tree walking).
+                    if (parsedExpr instanceof PathExpr) {
+                        final PathExpr rootPath = (PathExpr) parsedExpr;
+                        for (int vi = 0; vi < rootPath.getLength(); vi++) {
+                            final Expression step = rootPath.getExpression(vi);
+                            if (step instanceof VariableDeclaration) {
+                                final VariableDeclaration decl = (VariableDeclaration) step;
+                                modExternal.declareVariable(decl.getName(), decl);
+                            }
+                        }
+                    }
+                    // Also register any variables already in the context
                     for (final Variable var : modContext.getVariables().values()) {
                         if (var.getQName().getNamespaceURI().equals(namespaceURI)) {
                             modExternal.declareVariable(var);

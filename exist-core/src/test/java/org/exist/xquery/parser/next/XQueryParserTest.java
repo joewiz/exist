@@ -1608,6 +1608,89 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqsuiteXqlViaReaderWithModuleContext() throws Exception {
+        // Reproduce exact compileModule path: read via Reader with 4096 buffer
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final java.io.InputStream is = getClass().getClassLoader()
+                    .getResourceAsStream("org/exist/xquery/lib/xqsuite/xqsuite.xql");
+            assertNotNull("xqsuite.xql not found on classpath", is);
+
+            // Read via Reader with 4096 buffer — exactly as compileModule does
+            final java.io.Reader reader = new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8);
+            final StringBuilder sb = new StringBuilder(4096);
+            final char[] buf = new char[4096];
+            int n;
+            while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+            final String source = sb.toString();
+
+            // Use ModuleContext with a parent that has already loaded modules
+            // (simulating what happens when a main module imports xqsuite)
+            final XQueryContext parentContext = new XQueryContext(pool);
+            final ModuleContext modContext = new ModuleContext(parentContext,
+                    "http://exist-db.org/xquery/xqsuite", "test", "xqsuite.xql");
+            final XQueryParser parser = new XQueryParser(modContext, source);
+            final Expression result = parser.parse();
+            assertNotNull("Parse should succeed", result);
+            assertTrue("Should be a library module", parser.isLibraryModule());
+        }
+    }
+
+    @Test
+    public void xqsuiteViaCompileModulePath() throws Exception {
+        // End-to-end test: compile a main module that imports xqsuite,
+        // triggering the compileModule code path with rd parser enabled.
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            // This XQuery imports xqsuite.xql, which triggers compileModule
+            final String xquery =
+                    "import module namespace test = \"http://exist-db.org/xquery/xqsuite\"\n" +
+                    "    at \"resource:org/exist/xquery/lib/xqsuite/xqsuite.xql\";\n" +
+                    "1";
+            final XQueryContext context = new XQueryContext(pool);
+            final org.exist.xquery.parser.next.XQueryParser parser =
+                    new org.exist.xquery.parser.next.XQueryParser(context, xquery);
+            // This will trigger importModule → compileModule → rd parser on xqsuite.xql
+            final Expression result = parser.parse();
+            assertNotNull("Parse should succeed", result);
+        }
+    }
+
+    @Test
+    public void xqsuiteViaAntlr2CompileModule() throws Exception {
+        // The REAL failure path: ANTLR 2 compiles main module,
+        // which triggers compileModule (rd parser) for xqsuite.xql
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final org.exist.xquery.XQuery xquery = pool.getXQueryService();
+            // Compile a query that imports xqsuite — this uses ANTLR 2 for the main
+            // module and should use rd parser for compileModule of xqsuite.xql
+            final String query =
+                    "import module namespace test = \"http://exist-db.org/xquery/xqsuite\"\n" +
+                    "    at \"resource:org/exist/xquery/lib/xqsuite/xqsuite.xql\";\n" +
+                    "1";
+            final XQueryContext context = new XQueryContext(pool);
+            final org.exist.xquery.CompiledXQuery compiled = xquery.compile(context, query);
+            assertNotNull("Compilation should succeed", compiled);
+        }
+    }
+
+    @Test
+    public void xqsuiteViaTestRunnerQuery() throws Exception {
+        // Replicate the exact XSuite test runner path: compile xquery-test-runner.xq
+        // which imports xqsuite.xql via resource: URI, triggering compileModule
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final org.exist.xquery.XQuery xquery = pool.getXQueryService();
+            final String pkgName = org.exist.test.runner.XQueryTestRunner.class.getPackage().getName().replace('.', '/');
+            final org.exist.source.Source src = new org.exist.source.ClassLoaderSource(pkgName + "/xquery-test-runner.xq");
+            final XQueryContext context = new XQueryContext(pool);
+            final org.exist.xquery.CompiledXQuery compiled = xquery.compile(context, src);
+            assertNotNull("Compilation should succeed", compiled);
+        }
+    }
+
+    @Test
     public void directConstructorInFunctionBody() throws Exception {
         // Bug: direct element constructor with enclosed expression in function body
         assertModuleEval("bar",
