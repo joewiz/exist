@@ -162,6 +162,83 @@ public class LockTargetCollectorTest {
         assertTrue(collector.requiresGlobalLock());
     }
 
+    // --- Gap 1: xmldb write functions should be detected ---
+
+    @Test
+    public void xmldbStoreDetectsCollectionTarget() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "xmldb:store('/db/test', 'new.xml', <root>data</root>)");
+        assertTrue("xmldb:store should detect collection target or require global lock",
+                collector.hasTargets());
+    }
+
+    @Test
+    public void xmldbRemoveDetectsCollectionTarget() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "xmldb:remove('/db/test', 'old.xml')");
+        assertTrue("xmldb:remove should detect collection target or require global lock",
+                collector.hasTargets());
+    }
+
+    @Test
+    public void xmldbMoveDetectsSourceAndTarget() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "xmldb:move('/db/source', '/db/target', 'doc.xml')");
+        assertTrue("xmldb:move should detect targets or require global lock",
+                collector.hasTargets());
+    }
+
+    @Test
+    public void xmldbCopyCollectionDetectsSourceAndTarget() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "xmldb:copy-collection('/db/source', '/db/target')");
+        assertTrue("xmldb:copy-collection should detect targets or require global lock",
+                collector.hasTargets());
+    }
+
+    // --- Gap 2: util:eval should trigger global fallback ---
+
+    @Test
+    public void utilEvalRequiresGlobalLock() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "util:eval('xmldb:store(\"/db/test\", \"dynamic.xml\", <root/>)')");
+        assertTrue("util:eval should require global lock (cannot analyze dynamic queries)",
+                collector.requiresGlobalLock());
+    }
+
+    @Test
+    public void utilEvalInlineRequiresGlobalLock() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "util:eval-inline((), 'doc(\"/db/test/data.xml\")')");
+        assertTrue("util:eval-inline should require global lock",
+                collector.requiresGlobalLock());
+    }
+
+    // --- Gap 3: User function bodies should be analyzed ---
+
+    @Test
+    public void userFunctionBodyAnalyzed() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "declare function local:write() {\n" +
+                "    xmldb:store('/db/test', 'fromfunc.xml', <root/>)\n" +
+                "};\n" +
+                "local:write()");
+        assertTrue("Function body writes should be detected or require global lock",
+                collector.hasTargets());
+    }
+
+    // --- Gap 4: TryCatch should analyze catch clauses ---
+
+    @Test
+    public void tryCatchAnalyzesCatchBranch() throws Exception {
+        final LockTargetCollector collector = collectTargets(
+                "try { doc('/db/test/a.xml') } catch * { doc('/db/test/b.xml') }");
+        assertEquals("Should find doc targets in both try and catch branches",
+                2, collector.getDocumentTargets().size());
+        assertTrue(collector.getDocumentTargets().contains(
+                XmldbURI.xmldbUriFor("/db/test/b.xml")));
+    }
+
     // --- Helper ---
 
     private LockTargetCollector collectTargets(final String xquery)

@@ -28,6 +28,7 @@ import org.exist.xquery.value.AtomicValue;
 import org.exist.xquery.value.Type;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -51,10 +52,14 @@ import java.util.TreeSet;
 public class LockTargetCollector extends BasicExpressionVisitor {
 
     private static final String FN_NS = Function.BUILTIN_FUNCTION_NS;
+    private static final String XMLDB_NS = "http://exist-db.org/xquery/xmldb";
+    private static final String UTIL_NS = "http://exist-db.org/xquery/util";
 
     private final Set<XmldbURI> documentTargets = new TreeSet<>();
     private final Set<XmldbURI> collectionTargets = new TreeSet<>();
     private boolean globalLockRequired = false;
+    /** Track visited user functions to prevent infinite recursion on cyclic calls */
+    private final Set<String> visitedFunctions = new HashSet<>();
 
     /**
      * Collect lock targets from the given root expression.
@@ -76,8 +81,11 @@ public class LockTargetCollector extends BasicExpressionVisitor {
     @Override
     public void visitBuiltinFunction(final Function function) {
         final QName name = function.getSignature().getName();
-        if (FN_NS.equals(name.getNamespaceURI())) {
-            switch (name.getLocalPart()) {
+        final String ns = name.getNamespaceURI();
+        final String local = name.getLocalPart();
+
+        if (FN_NS.equals(ns)) {
+            switch (local) {
                 case "doc":
                 case "doc-available":
                     collectDocTarget(function);
@@ -89,6 +97,47 @@ public class LockTargetCollector extends BasicExpressionVisitor {
                 default:
                     break;
             }
+        } else if (XMLDB_NS.equals(ns)) {
+            // xmldb write functions — extract collection/document targets
+            switch (local) {
+                case "store":
+                case "store-as-binary":
+                    // xmldb:store($collection, $name, $content) — 1st arg is collection
+                    collectCollectionArgTarget(function, 0);
+                    break;
+                case "remove":
+                    // xmldb:remove($collection[, $name]) — 1st arg is collection
+                    collectCollectionArgTarget(function, 0);
+                    break;
+                case "move":
+                case "copy":
+                case "copy-collection":
+                case "move-collection":
+                    // xmldb:move/copy($source, $target[, $name])
+                    // Need locks on both source and target collections
+                    collectCollectionArgTarget(function, 0);
+                    collectCollectionArgTarget(function, 1);
+                    break;
+                case "rename":
+                    // xmldb:rename($collection, $old, $new)
+                    collectCollectionArgTarget(function, 0);
+                    break;
+                default:
+                    break;
+            }
+        } else if (UTIL_NS.equals(ns)) {
+            // util:eval and util:eval-inline — dynamic query execution
+            // Cannot statically analyze the inner query, require global lock
+            switch (local) {
+                case "eval":
+                case "eval-inline":
+                case "eval-with-context":
+                case "eval-and-serialize":
+                    globalLockRequired = true;
+                    break;
+                default:
+                    break;
+            }
         }
         // Traverse function arguments to find nested fn:doc/fn:collection calls
         traverseSubExpressions(function);
@@ -96,8 +145,21 @@ public class LockTargetCollector extends BasicExpressionVisitor {
 
     @Override
     public void visitFunctionCall(final FunctionCall call) {
-        // User-defined function call — traverse arguments
+        // Traverse arguments
         traverseSubExpressions(call);
+
+        // Also traverse the function body to detect writes inside user functions
+        final UserDefinedFunction calledFunction = call.getFunction();
+        if (calledFunction != null) {
+            final String funcKey = calledFunction.getSignature().getFunctionId().toString();
+            // Cycle detection: don't re-visit functions we've already analyzed
+            if (visitedFunctions.add(funcKey)) {
+                final Expression body = calledFunction.getFunctionBody();
+                if (body != null) {
+                    body.accept(this);
+                }
+            }
+        }
     }
 
     @Override
@@ -147,6 +209,13 @@ public class LockTargetCollector extends BasicExpressionVisitor {
     @Override
     public void visitTryCatch(final TryCatchExpression tryCatch) {
         tryCatch.getTryTargetExpr().accept(this);
+        // Also analyze catch clauses — they may contain writes
+        for (final TryCatchExpression.CatchClause catchClause : tryCatch.getCatchClauses()) {
+            final Expression catchExpr = catchClause.getCatchExpr();
+            if (catchExpr != null) {
+                catchExpr.accept(this);
+            }
+        }
     }
 
     @Override
@@ -245,6 +314,27 @@ public class LockTargetCollector extends BasicExpressionVisitor {
             return;
         }
         final String uri = extractStaticStringArg(function.getArgument(0));
+        if (uri != null) {
+            try {
+                collectionTargets.add(XmldbURI.xmldbUriFor(uri));
+            } catch (final Exception e) {
+                globalLockRequired = true;
+            }
+        } else {
+            globalLockRequired = true;
+        }
+    }
+
+    /**
+     * Extract a collection target from a specific function argument position.
+     * If the argument is a static string, add it to collection targets.
+     * If dynamic, require global lock.
+     */
+    private void collectCollectionArgTarget(final Function function, final int argIndex) {
+        if (function.getArgumentCount() <= argIndex) {
+            return;
+        }
+        final String uri = extractStaticStringArg(function.getArgument(argIndex));
         if (uri != null) {
             try {
                 collectionTargets.add(XmldbURI.xmldbUriFor(uri));
