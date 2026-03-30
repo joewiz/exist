@@ -2720,6 +2720,7 @@ public final class XQueryParser {
                 || expr instanceof FunctionCall
                 || expr instanceof InternalFunctionCall
                 || expr instanceof Lookup
+                || expr instanceof ContextItemExpression  // .(args) — context item as function
                 || expr instanceof org.exist.xquery.functions.array.ArrayConstructor
                 || expr instanceof PathExpr;  // parenthesized expressions, sequences
     }

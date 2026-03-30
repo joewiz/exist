@@ -1729,6 +1729,80 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void inlineFunctionInSequence() throws Exception {
+        // Bug: function keyword not recognized as inline function inside parenthesized sequence
+        assertBothParsers("inline function in sequence",
+            "(function($x) { $x + 1 })(42)");
+    }
+
+    @Test
+    public void inlineFunctionInTupleSequence() throws Exception {
+        // function keyword inside tuple (expr, expr, ...) must parse as inline function
+        assertBothParsers("inline fn in tuple",
+            "let $fns := (function ($a) { $a + 1 }, function ($b) { $b * 2 }) " +
+            "return $fns[1](10)");
+    }
+
+    @Test
+    public void inlineFunctionBodyWithNumberOnly() throws Exception {
+        // function ($a) {1} — body is just integer 1
+        // The {1} could be mis-parsed as bare map if lookahead is wrong
+        assertBothParsers("fn body with number",
+            "(function ($a) {1})(42)");
+    }
+
+    @Test
+    public void bangXqlModuleCompilation() throws Exception {
+        // Test compiling bang.xql as a module — reproduces the line 234 parse error
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final String bangSource = new String(java.nio.file.Files.readAllBytes(
+                java.nio.file.Path.of("src/test/xquery/xquery3/bang.xql")));
+            // Test with plain XQueryContext (works)
+            final XQueryContext ctx = new XQueryContext(pool);
+            final XQueryParser parser = new XQueryParser(ctx, bangSource);
+            parser.parse();
+        }
+    }
+
+    @Test
+    public void bangXqlModuleContextCompilation() throws Exception {
+        // Test compiling bang.xql with ModuleContext — the compileModule path
+        final BrokerPool pool = existEmbeddedServer.getBrokerPool();
+        try (final DBBroker broker = pool.getBroker()) {
+            final String bangSource = new String(java.nio.file.Files.readAllBytes(
+                java.nio.file.Path.of("src/test/xquery/xquery3/bang.xql")));
+            final XQueryContext parentCtx = new XQueryContext(pool);
+            final ModuleContext modCtx = new ModuleContext(parentCtx,
+                "http://exist-db.org/xquery/test/bang", "bang", "bang.xql");
+            final XQueryParser parser = new XQueryParser(modCtx, bangSource);
+            parser.parse(); // should not throw — THIS is the real test
+        }
+    }
+
+    @Test
+    public void mapConstructorNoSpace() throws Exception {
+        // map{1:1} without space between map and {
+        assertBothParsers("map no space", "map{1:1}?1");
+    }
+
+    @Test
+    public void bangXqlExactLine258() throws Exception {
+        // Exact line 258 of bang.xql
+        assertBothParsers("bang line 258",
+            "let $id := function ($a) { $a }\n" +
+            "return (function ($a) {1}, $id, sum#1, [1], map{1:1}) ! .(1)");
+    }
+
+    @Test
+    public void inlineFunctionBodyMixedWithMapAndArray() throws Exception {
+        // Mix of inline function, map, and array in sequence
+        assertBothParsers("fn+map+array in sequence",
+            "let $items := (function ($a) {1}, map{1:1}, [1]) " +
+            "return count($items)");
+    }
+
+    @Test
     public void bareMapConstructorEmpty() throws Exception {
         assertBothParsers("empty bare map",
             "map:size({ })");
