@@ -1123,3 +1123,70 @@ function t:formatNumber-map-exponentRendition() {
         'exponent-separator': 'e:EXP'
     })
 };
+
+(: fn:function-annotations :)
+
+declare %private function local:annotated-fn() { 42 };
+
+declare
+    %test:assertTrue
+function t:functionAnnotations-private() {
+    (: %private annotation should be returned :)
+    let $anns := function-annotations(local:annotated-fn#0)
+    return some $m in $anns satisfies
+        map:keys($m) = xs:QName("fn:private")
+};
+
+declare
+    %test:assertTrue
+function t:functionAnnotations-builtin-empty() {
+    (: Built-in functions have no annotations :)
+    empty(function-annotations(true#0))
+};
+
+declare
+    %test:assertTrue
+function t:functionAnnotations-returns-maps() {
+    (: Each annotation is a single-entry map :)
+    let $anns := function-annotations(local:annotated-fn#0)
+    return every $m in $anns satisfies ($m instance of map(*) and map:size($m) = 1)
+};
+
+(: fn:function-identity :)
+
+declare
+    %test:assertTrue
+function t:functionIdentity-same() {
+    (: Same named function returns same identity :)
+    function-identity(true#0) eq function-identity(true#0)
+};
+
+declare
+    %test:assertFalse
+function t:functionIdentity-different() {
+    (: Different functions return different identities :)
+    function-identity(true#0) eq function-identity(false#0)
+};
+
+declare
+    %test:assertTrue
+function t:functionIdentity-isString() {
+    (: Returns a string :)
+    function-identity(true#0) instance of xs:string
+};
+
+declare
+    %test:assertTrue
+function t:functionIdentity-map-self-equal() {
+    (: Same map variable has same identity :)
+    let $m := map { "a": 1 }
+    return function-identity($m) eq function-identity($m)
+};
+
+declare
+    %test:assertTrue
+function t:functionIdentity-array-self-equal() {
+    (: Same array variable has same identity :)
+    let $a := [ 1, 2, 3 ]
+    return function-identity($a) eq function-identity($a)
+};
