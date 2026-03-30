@@ -1752,6 +1752,21 @@ public class XQueryParserTest {
     }
 
     @Test
+    public void xqtsRunnerStringJoinPattern() throws Exception {
+        // Exact XQTS runner assertion query pattern
+        assertBothParsers("xqts string-join",
+            "let $result := ('Thursday') " +
+            "return string-join(for $r in $result return string($r), ' ')");
+    }
+
+    @Test
+    public void xqtsRunnerStringJoinMultiple() throws Exception {
+        assertBothParsers("xqts string-join multi",
+            "let $result := ('a', 'b', 'c') " +
+            "return string-join(for $r in $result return string($r), ' ')");
+    }
+
+    @Test
     public void bangXqlModuleCompilation() throws Exception {
         // Test compiling bang.xql as a module — reproduces the line 234 parse error
         final BrokerPool pool = existEmbeddedServer.getBrokerPool();
