@@ -282,8 +282,8 @@ public class LockTargetCollector extends BasicExpressionVisitor {
      */
     private Expression unwrap(Expression expr) {
         while (true) {
-            if (expr instanceof PathExpr pathExpr && pathExpr.getLength() == 1) {
-                expr = pathExpr.getExpression(0);
+            if (expr.getClass() == PathExpr.class && ((PathExpr) expr).getLength() == 1) {
+                expr = ((PathExpr) expr).getExpression(0);
             } else if (expr instanceof final DynamicCardinalityCheck check) {
                 expr = check.getSubExpression(0);
             } else if (expr instanceof final DynamicTypeCheck check) {
