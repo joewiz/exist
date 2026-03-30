@@ -1881,7 +1881,50 @@ public class XQueryParserTest {
                 "string-join(for $r in $result return string($r), ' ')");
             final Sequence result = xquery.execute(broker, compiled, null);
 
-            // This fails with rd parser: expected 'ab' but got 'ab '
+            // Check: how many items does the for loop produce?
+            final XQueryContext ctx2 = new XQueryContext(pool);
+            ctx2.declareVariable("result", testResult);
+            final CompiledXQuery countCompiled = xquery.compile(ctx2,
+                "declare variable $result external;\n" +
+                "count(for $r in $result return string($r))");
+            final Sequence countResult = xquery.execute(broker, countCompiled, null);
+
+            // Check: what are the individual items?
+            final XQueryContext ctx3 = new XQueryContext(pool);
+            ctx3.declareVariable("result", testResult);
+            final CompiledXQuery itemsCompiled = xquery.compile(ctx3,
+                "declare variable $result external;\n" +
+                "for $r at $pos in $result return concat('[', $pos, ']=', string($r))");
+            final Sequence itemsResult = xquery.execute(broker, itemsCompiled, null);
+
+            assertEquals("for loop item count should be 1", "1", countResult.getStringValue());
+            assertEquals("for loop items", "[1]=ab", itemsResult.getStringValue());
+
+            // Isolate: is string-join adding a trailing space?
+            final XQueryContext ctx4 = new XQueryContext(pool);
+            ctx4.declareVariable("result", testResult);
+            final CompiledXQuery sjCompiled = xquery.compile(ctx4,
+                "declare variable $result external;\n" +
+                "string-join($result, ' ')");
+            final Sequence sjResult = xquery.execute(broker, sjCompiled, null);
+            assertEquals("string-join($result, ' ') direct", "ab", sjResult.getStringValue());
+
+            // string-join with literal sequence
+            final XQueryContext ctx5 = new XQueryContext(pool);
+            final CompiledXQuery sjLitCompiled = xquery.compile(ctx5,
+                "string-join(('ab'), ' ')");
+            final Sequence sjLitResult = xquery.execute(broker, sjLitCompiled, null);
+            assertEquals("string-join(('ab'), ' ') literal", "ab", sjLitResult.getStringValue());
+
+            // Without string() — does the for loop itself add trailing space?
+            final XQueryContext ctx6 = new XQueryContext(pool);
+            ctx6.declareVariable("result", testResult);
+            final CompiledXQuery noStringCompiled = xquery.compile(ctx6,
+                "declare variable $result external;\n" +
+                "string-join(for $r in $result return $r, ' ')");
+            final Sequence noStringResult = xquery.execute(broker, noStringCompiled, null);
+            assertEquals("string-join without string()", "ab", noStringResult.getStringValue());
+
             assertEquals("runner assertion pipeline", "ab", result.getStringValue());
         }
     }

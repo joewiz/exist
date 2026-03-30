@@ -845,9 +845,13 @@ public final class XQueryParser {
                 lastClause = findLastInChain(nextClause);
             }
 
-            // 'return' — uses parseExpr to allow comma-separated sequences
+            // 'return' — uses parseExprSingle (not parseExpr!) because the
+            // FLWOR return clause must not consume commas that belong to the
+            // enclosing expression (e.g., function argument separators):
+            //   string-join(for $r in $result return string($r), ' ')
+            //                                                   ^ this comma is NOT part of return
             expectKeyword(Keywords.RETURN);
-            final Expression returnExpr = parseExpr();
+            final Expression returnExpr = parseExprSingle();
             lastClause.setReturnExpression(new DebuggableExpression(returnExpr));
 
             return firstClause;
