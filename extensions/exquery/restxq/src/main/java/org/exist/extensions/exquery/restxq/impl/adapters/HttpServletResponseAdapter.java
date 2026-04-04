@@ -51,7 +51,7 @@ public class HttpServletResponseAdapter implements HttpResponse {
 
     @Override
     public void setStatus(final HttpStatus status, final String reason) {
-        response.setStatus(status.getStatus(), reason);
+        response.setStatus(status.getStatus());
     }
 
     @Override
