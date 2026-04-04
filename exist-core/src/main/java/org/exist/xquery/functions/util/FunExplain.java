@@ -21,8 +21,6 @@
  */
 package org.exist.xquery.functions.util;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.exist.dom.QName;
 import org.exist.dom.memtree.DocumentImpl;
 import org.exist.dom.memtree.MemTreeBuilder;
@@ -48,8 +46,6 @@ import java.io.StringReader;
  * path expressions, function calls, comparisons, etc.
  */
 public class FunExplain extends BasicFunction {
-
-    private static final Logger LOG = LogManager.getLogger(FunExplain.class);
 
     public static final FunctionSignature[] signatures = {
             new FunctionSignature(

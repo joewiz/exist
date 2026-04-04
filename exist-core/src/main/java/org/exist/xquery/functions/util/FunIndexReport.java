@@ -129,10 +129,9 @@ public class FunIndexReport extends BasicFunction {
                 context.popDocumentContext();
             }
 
+        } catch (final XPathException e) {
+            throw e;
         } catch (final Exception e) {
-            if (e instanceof XPathException) {
-                throw (XPathException) e;
-            }
             throw new XPathException(this, ErrorCodes.FOER0000, "Error profiling query: " + e.getMessage());
         } finally {
             context.popNamespaceContext();
