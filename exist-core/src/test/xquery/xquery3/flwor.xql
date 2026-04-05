@@ -227,6 +227,8 @@ function flwor:orderby-empty-ordering-spec-last() {
         ()
     return
         $elem/name() || $elem/@n
+};
+
 (:~
  : Type declaration in for-binding should constrain the iteration variable,
  : not the return type. See https://github.com/eXist-db/exist/issues/3553
