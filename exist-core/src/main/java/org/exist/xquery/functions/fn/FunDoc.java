@@ -83,10 +83,6 @@ public class FunDoc extends Function {
     // fixit! - security warning
     private UpdateListener listener = null;
 
-    public FunDoc(XQueryContext context) {
-        super(context, signature);
-    }
-
     public FunDoc(XQueryContext context, FunctionSignature sig) {
         super(context, sig);
     }

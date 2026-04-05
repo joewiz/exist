@@ -152,6 +152,12 @@ public class FunReplace extends BasicFunction {
 				final RegularExpression regularExpression = config.compileRegularExpression(pattern, flags, "XP30", warnings);
 				final boolean canMatchEmpty = regularExpression.matches("");
 
+				// XQ 3.1: FORX0003 if regex can match empty string
+				// XQ 4.0: empty-matching regex is allowed
+				if (canMatchEmpty && context.getXQueryVersion() < 40 && !isFunctionReplacement) {
+					throw new XPathException(this, ErrorCodes.FORX0003, "regular expression could match empty string");
+				}
+
 				if (isFunctionReplacement) {
 					result = evalFunctionReplacement(string, pattern, flags,
 							(FunctionReference) replacementArg.itemAt(0));
@@ -190,7 +196,7 @@ public class FunReplace extends BasicFunction {
 	 */
 	private Sequence evalEmptyMatchReplace(final String input, final String pattern,
 			final String replace, final String flags) throws XPathException {
-		final String javaPattern = org.exist.xquery.regex.RegexUtil.translateRegexp(
+		final String javaPattern = translateRegexp(
 				this, pattern, hasIgnoreWhitespace(flags), hasCaseInsensitive(flags));
 		final int javaFlags = parseFlags(this, flags);
 		final Pattern compiled = Pattern.compile(javaPattern, javaFlags);
@@ -263,7 +269,7 @@ public class FunReplace extends BasicFunction {
 	private Sequence evalFunctionReplacement(final String input, final String pattern,
 			final String flags, final FunctionReference func) throws XPathException {
 		// Use Java regex for function replacement since Saxon's replace() only accepts strings
-		final String javaPattern = org.exist.xquery.regex.RegexUtil.translateRegexp(
+		final String javaPattern = translateRegexp(
 				this, pattern, hasIgnoreWhitespace(flags), hasCaseInsensitive(flags));
 		int javaFlags = parseFlags(this, flags);
 		final Pattern compiled = Pattern.compile(javaPattern, javaFlags);

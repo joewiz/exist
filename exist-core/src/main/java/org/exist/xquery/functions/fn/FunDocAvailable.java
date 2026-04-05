@@ -77,10 +77,6 @@ public class FunDocAvailable extends Function {
                     new FunctionReturnSequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE,
                             "true() if the document is available, false() otherwise"));
 
-    public FunDocAvailable(final XQueryContext context) {
-        super(context, signature);
-    }
-
     public FunDocAvailable(final XQueryContext context, final FunctionSignature sig) {
         super(context, sig);
     }
