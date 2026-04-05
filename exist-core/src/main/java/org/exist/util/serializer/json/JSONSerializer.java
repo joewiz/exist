@@ -77,10 +77,11 @@ public class JSONSerializer {
     }
 
     public void serialize(Sequence sequence, Writer writer) throws SAXException {
-        // QT4: escape-solidus controls whether / is escaped as \/ (default: true)
+        // QT4: escape-solidus controls whether / is escaped as \/
+        // Default is "no" for XQ 3.1 compatibility (parameter doesn't exist in 3.1 spec)
         // Canonical JSON (RFC 8785): solidus is NOT escaped
-        final boolean escapeSolidus = !canonical && !isBooleanFalse(
-                outputProperties.getProperty(EXistOutputKeys.ESCAPE_SOLIDUS, "yes"));
+        final boolean escapeSolidus = !canonical && isBooleanTrue(
+                outputProperties.getProperty(EXistOutputKeys.ESCAPE_SOLIDUS, "no"));
         final JsonFactory factory = JsonFactory.builder()
                 .configure(JsonWriteFeature.ESCAPE_FORWARD_SLASHES, escapeSolidus)
                 .build();
