@@ -126,12 +126,12 @@ public class XQuerySerializer {
         for (final SequenceIterator i = sequence.iterate(); i.hasNext(); ) {
             final Item item = i.nextItem();
             if (Type.subTypeOf(item.getType(), Type.NODE)) {
-                validateCanonicalNode((org.exist.xquery.value.NodeValue) item);
+                validateCanonicalNode((NodeValue) item);
             }
         }
     }
 
-    private void validateCanonicalNode(final org.exist.xquery.value.NodeValue node) throws SAXException, XPathException {
+    private void validateCanonicalNode(final NodeValue node) throws SAXException, XPathException {
         if (node.getType() == Type.DOCUMENT) {
             // Check for multi-root: document must have exactly one element child
             int elementCount = 0;

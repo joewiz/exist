@@ -45,7 +45,6 @@ import java.util.*;
  */
 public class CSVSerializer {
 
-    private final Properties outputProperties;
     private final String fieldDelimiter;
     private final String rowDelimiter;
     private final char quoteChar;
@@ -53,7 +52,6 @@ public class CSVSerializer {
     private final boolean includeHeader;
 
     public CSVSerializer(final Properties outputProperties) {
-        this.outputProperties = outputProperties;
         this.fieldDelimiter = outputProperties.getProperty(EXistOutputKeys.CSV_FIELD_DELIMITER, ",");
         this.rowDelimiter = outputProperties.getProperty(EXistOutputKeys.CSV_ROW_DELIMITER, "\n");
         final String qc = outputProperties.getProperty(EXistOutputKeys.CSV_QUOTE_CHARACTER, "\"");
