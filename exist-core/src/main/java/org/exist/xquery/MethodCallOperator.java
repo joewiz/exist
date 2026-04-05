@@ -190,6 +190,7 @@ public class MethodCallOperator extends AbstractExpression {
 
         @Override
         public void analyze(AnalyzeContextInfo contextInfo) throws XPathException {
+            // no-op: context param is pre-evaluated
         }
 
         @Override
@@ -204,6 +205,7 @@ public class MethodCallOperator extends AbstractExpression {
 
         @Override
         public void dump(ExpressionDumper dumper) {
+            // no-op: context param has no source representation
         }
     }
 }

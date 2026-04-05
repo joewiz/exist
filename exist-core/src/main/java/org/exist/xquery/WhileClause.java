@@ -39,6 +39,14 @@ import java.util.Set;
 public class WhileClause extends AbstractFLWORClause {
 
     /**
+     * Thread-local flag that signals all enclosing binding expressions
+     * in the same FLWOR to stop iteration after the current item.
+     */
+    private static final ThreadLocal<Boolean> terminated = ThreadLocal.withInitial(() -> false);
+
+    private final Expression whileExpr;
+
+    /**
      * Lightweight control-flow exception used to signal the immediately
      * enclosing for/let binding expression to stop iteration.
      */
@@ -48,12 +56,6 @@ public class WhileClause extends AbstractFLWORClause {
         }
     }
 
-    /**
-     * Thread-local flag that signals all enclosing binding expressions
-     * in the same FLWOR to stop iteration after the current item.
-     */
-    private static final ThreadLocal<Boolean> terminated = ThreadLocal.withInitial(() -> false);
-
     public static boolean isTerminated() {
         return terminated.get();
     }
@@ -61,8 +63,6 @@ public class WhileClause extends AbstractFLWORClause {
     public static void clearTerminated() {
         terminated.set(false);
     }
-
-    private final Expression whileExpr;
 
     public WhileClause(final XQueryContext context, final Expression whileExpr) {
         super(context);

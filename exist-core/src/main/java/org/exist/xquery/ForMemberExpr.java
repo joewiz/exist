@@ -174,6 +174,8 @@ public class ForMemberExpr extends BindingExpression {
                 case ORDERBY:
                 case GROUPBY:
                     return true;
+                default:
+                    break;
             }
             prev = prev.getPreviousClause();
         }
