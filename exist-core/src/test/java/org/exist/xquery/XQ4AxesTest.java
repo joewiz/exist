@@ -63,14 +63,14 @@ public class XQ4AxesTest {
 
     @Test
     public void followingOrSelf() throws XMLDBException {
-        // following::* from c excludes descendants of c (d=4 is a child of c, not following)
-        assertEquals("3,5,6", query("$data//c/following-or-self::*/@id/string()"));
+        // following-or-self = context node and all nodes after it in document order
+        assertEquals("3,4,5,6", query("$data//c/following-or-self::*/@id/string()"));
     }
 
     @Test
     public void followingOrSelfFromFirst() throws XMLDBException {
-        // following::* from a excludes descendants of a, so only f=6 is following. Plus self a=1.
-        assertEquals("1,6", query("$data/a/following-or-self::*/@id/string()"));
+        // following-or-self from a = a plus all nodes after a in document order (descendants + following)
+        assertEquals("1,2,3,4,5,6", query("$data/a/following-or-self::*/@id/string()"));
     }
 
     // --- following-sibling-or-self ---
@@ -89,8 +89,8 @@ public class XQ4AxesTest {
 
     @Test
     public void precedingOrSelf() throws XMLDBException {
-        // preceding::* from c excludes ancestors (a=1 is ancestor, not preceding). Only b=2 precedes c.
-        assertEquals("2,3", query("$data//c/preceding-or-self::*/@id/string()"));
+        // preceding-or-self = context node and all nodes before it in document order (ancestors + preceding)
+        assertEquals("1,2,3", query("$data//c/preceding-or-self::*/@id/string()"));
     }
 
     // --- preceding-sibling-or-self ---

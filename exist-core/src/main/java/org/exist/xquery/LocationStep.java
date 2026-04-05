@@ -938,30 +938,43 @@ public class LocationStep extends Step {
      */
     private Sequence getOrSelfAxis(final XQueryContext context, final Sequence contextSequence,
             final int baseAxis) throws XPathException {
-        // Save and temporarily switch axis to get self results
+        // Save and temporarily switch axis to get results
         final int savedAxis = this.axis;
         try {
-            this.axis = Constants.SELF_AXIS;
-            final Sequence selfResult = getSelf(context, contextSequence);
-
-            // Get the base axis results
-            this.axis = baseAxis;
+            final Sequence selfOrRelatedResult;
             final Sequence baseResult;
-            if (baseAxis == Constants.FOLLOWING_AXIS || baseAxis == Constants.PRECEDING_AXIS) {
+
+            if (baseAxis == Constants.FOLLOWING_AXIS) {
+                // following-or-self = descendant-or-self | following
+                // (all nodes at or after context node in document order)
+                this.axis = Constants.DESCENDANT_SELF_AXIS;
+                selfOrRelatedResult = getDescendants(context, contextSequence);
+                this.axis = Constants.FOLLOWING_AXIS;
+                baseResult = getPrecedingOrFollowing(context, contextSequence);
+            } else if (baseAxis == Constants.PRECEDING_AXIS) {
+                // preceding-or-self = ancestor-or-self | preceding
+                // (all nodes at or before context node in document order)
+                this.axis = Constants.ANCESTOR_SELF_AXIS;
+                selfOrRelatedResult = getAncestors(context, contextSequence);
+                this.axis = Constants.PRECEDING_AXIS;
                 baseResult = getPrecedingOrFollowing(context, contextSequence);
             } else {
+                // following-sibling-or-self / preceding-sibling-or-self = self | sibling
+                this.axis = Constants.SELF_AXIS;
+                selfOrRelatedResult = getSelf(context, contextSequence);
+                this.axis = baseAxis;
                 baseResult = getSiblings(context, contextSequence);
             }
 
             // Union preserving document order
-            if (selfResult.isEmpty()) {
+            if (selfOrRelatedResult.isEmpty()) {
                 return baseResult;
             }
             if (baseResult.isEmpty()) {
-                return selfResult;
+                return selfOrRelatedResult;
             }
             final ValueSequence combined = new ValueSequence();
-            combined.addAll(selfResult);
+            combined.addAll(selfOrRelatedResult);
             combined.addAll(baseResult);
             combined.removeDuplicates();
             combined.sortInDocumentOrder();
