@@ -88,6 +88,8 @@ public class XIncludeFilter implements Receiver {
 
     private static final QName HREF_ATTRIB = new QName("href", XMLConstants.NULL_NS_URI);
     private static final QName XPOINTER_ATTRIB = new QName("xpointer", XMLConstants.NULL_NS_URI);
+    private static final QName PARSE_ATTRIB = new QName("parse", XMLConstants.NULL_NS_URI);
+    private static final QName ENCODING_ATTRIB = new QName("encoding", XMLConstants.NULL_NS_URI);
     private static final String XI_INCLUDE = "include";
     private static final String XI_FALLBACK = "fallback";
 
@@ -112,6 +114,9 @@ public class XIncludeFilter implements Receiver {
     private @Nullable String moduleLoadPath = null;
     private @Nullable Map<String, String> namespaces = null;
     private boolean inFallback = false;
+    private int inIncludeDepth = 0; // depth of non-XInclude elements inside xi:include (for suppressing non-fallback children)
+    private boolean suppressIncludeChildren = false; // true while processing xi:include's own children (not expanded content)
+    private int fallbackCount = 0; // count of xi:fallback children in current xi:include
     private @Nullable ResourceError error = null;
 
     public XIncludeFilter(final Serializer serializer, @Nullable final Receiver receiver) {
@@ -132,6 +137,9 @@ public class XIncludeFilter implements Receiver {
         this.moduleLoadPath = null;
         this.namespaces = null;
         this.inFallback = false;
+        this.inIncludeDepth = 0;
+        this.suppressIncludeChildren = false;
+        this.fallbackCount = 0;
         this.error = null;
     }
 
@@ -155,6 +163,9 @@ public class XIncludeFilter implements Receiver {
 
     @Override
     public void characters(final CharSequence seq) throws SAXException {
+        if (suppressIncludeChildren && !inFallback) {
+            return; // suppress non-fallback content inside xi:include
+        }
         if (!inFallback || error != null) {
             receiver.characters(seq);
         }
@@ -162,6 +173,9 @@ public class XIncludeFilter implements Receiver {
 
     @Override
     public void comment(final char[] ch, final int start, final int length) throws SAXException {
+        if (suppressIncludeChildren && !inFallback) {
+            return; // suppress non-fallback content inside xi:include
+        }
         if (!inFallback || error != null) {
             receiver.comment(ch, start, length);
         }
@@ -179,13 +193,19 @@ public class XIncludeFilter implements Receiver {
                 inFallback = false;
                 // clear error
                 error = null;
-            } else if (XI_INCLUDE.equals(qname.getLocalPart()) && error != null) {
-                // found an error, but there was no fallback element.
-                // throw the exception now
-                final SAXException e = error.cause.map(cause -> new SAXException(error.message, cause)).orElse(new SAXException(error.message));
-                error = null;
-                throw e;
+            } else if (XI_INCLUDE.equals(qname.getLocalPart())) {
+                inIncludeDepth--;
+                suppressIncludeChildren = (inIncludeDepth > 0); // restore suppression if nested
+                if (error != null) {
+                    // found an error, but there was no fallback element.
+                    // throw the exception now
+                    final SAXException e = error.cause.map(cause -> new SAXException(error.message, cause)).orElse(new SAXException(error.message));
+                    error = null;
+                    throw e;
+                }
             }
+        } else if (suppressIncludeChildren && !inFallback) {
+            // Inside xi:include but not in fallback — suppress non-fallback children per spec
         } else if (!inFallback || error != null) {
             receiver.endElement(qname);
         }
@@ -237,8 +257,28 @@ public class XIncludeFilter implements Receiver {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("processing include ...");
                 }
+                inIncludeDepth++;
 
-                final Optional<ResourceError> maybeResourceError = processXInclude(attribs.getValue(HREF_ATTRIB), attribs.getValue(XPOINTER_ATTRIB));
+                // Validate parse attribute (per spec 4.1: must be "xml" or "text")
+                final String parseMode = attribs.getValue(PARSE_ATTRIB);
+                if (parseMode != null && !"xml".equals(parseMode) && !"text".equals(parseMode)) {
+                    throw new SAXException("Invalid value for parse attribute: '" + parseMode +
+                            "'. Must be 'xml' or 'text'.");
+                }
+
+                // processXInclude will serialize included content through this filter;
+                // suppress only the xi:include's own children (not the expanded content)
+                final boolean prevSuppress = suppressIncludeChildren;
+                suppressIncludeChildren = false; // allow expanded content through
+
+                final String encoding = attribs.getValue(ENCODING_ATTRIB);
+                final Optional<ResourceError> maybeResourceError = processXInclude(
+                        attribs.getValue(HREF_ATTRIB), attribs.getValue(XPOINTER_ATTRIB),
+                        parseMode, encoding);
+
+                // After processXInclude returns, any remaining SAX events until </xi:include>
+                // are the xi:include's own children — suppress them (except fallback)
+                suppressIncludeChildren = true;
 
                 if (maybeResourceError.isPresent()) {
                     final ResourceError resourceError = maybeResourceError.get();
@@ -250,6 +290,8 @@ public class XIncludeFilter implements Receiver {
             } else if (qname.getLocalPart().equals(XI_FALLBACK)) {
                 inFallback = true;
             }
+        } else if (suppressIncludeChildren && !inFallback) {
+            // Inside xi:include but not in fallback — suppress non-fallback children per spec
         } else if (!inFallback || error != null) {
             //LOG.debug("start: " + qName);
             receiver.startElement(qname, attribs);
@@ -270,12 +312,24 @@ public class XIncludeFilter implements Receiver {
     /**
      * @param href     The resource to be xincluded
      * @param xpointer The xpointer
+     * @param parseMode The parse mode ("xml" or "text"), null defaults to "xml"
+     * @param encoding  The encoding for text inclusion, null defaults to UTF-8
      * @return Optionally a ResourceError if it was not possible to retrieve the resource
      * to be xincluded
      * @throws SAXException              If a SAX processing error occurs
      */
-    protected Optional<ResourceError> processXInclude(final String href, String xpointer) throws SAXException {
-        if (href == null) {
+    protected Optional<ResourceError> processXInclude(final String href, String xpointer,
+                                                       @Nullable final String parseMode,
+                                                       @Nullable final String encoding) throws SAXException {
+        if (href == null && xpointer == null) {
+            throw new SAXException("No href or xpointer attribute found in XInclude include element");
+        }
+
+        // Intra-document reference: xpointer without href (or href="")
+        if (href == null || href.isEmpty()) {
+            if (xpointer != null) {
+                return processIntraDocumentXPointer(xpointer);
+            }
             throw new SAXException("No href attribute found in XInclude include element");
         }
         // save some settings
@@ -400,6 +454,20 @@ public class XIncludeFilter implements Receiver {
             return Optional.of(new ResourceError("document " + docUri + " not found"));
         }
 
+        // Handle parse="text" — include resource as text, not XML
+        if ("text".equals(parseMode)) {
+            final String textContent = readResourceAsText(doc, memtreeDoc, docUri, href, encoding);
+            if (textContent != null) {
+                characters(textContent);
+            } else {
+                return Optional.of(new ResourceError("Unable to read text content from " + (docUri != null ? docUri : href)));
+            }
+            // restore settings and return
+            document = prevDoc;
+            serializer.createContainerElements = createContainerElements;
+            return Optional.empty();
+        }
+
         if (xpointer == null && !xqueryDoc) {
             // no xpointer found - just serialize the doc
             if (memtreeDoc == null) {
@@ -412,11 +480,28 @@ public class XIncludeFilter implements Receiver {
             Source source = null;
             final XQueryPool pool = serializer.broker.getBrokerPool().getXQueryPool();
             CompiledXQuery compiled = null;
+            boolean wasElementScheme = false;
             try {
                 if (xpointer == null) {
                     source = new DBSource(serializer.broker.getBrokerPool(), (BinaryDocument) doc, true);
                 } else {
+                    wasElementScheme = xpointer.trim().startsWith("element(");
+                    xpointer = convertXPointerToXPath(xpointer);
                     xpointer = checkNamespaces(xpointer);
+                    // element() scheme produces XPath — needs doc() context
+                    // and must be compiled as regular XQuery, not xpointer mode
+                    if (wasElementScheme) {
+                        final XmldbURI contextDocUri = doc != null ? doc.getURI() : docUri;
+                        if (contextDocUri != null) {
+                            if (xpointer.startsWith("/")) {
+                                // Child sequence: /1/2 -> doc('...')/*[1]/*[2]
+                                xpointer = "doc('" + contextDocUri + "')" + xpointer;
+                            } else if (xpointer.startsWith("id(")) {
+                                // ID-based: id('x') -> doc('...')/id('x')
+                                xpointer = "doc('" + contextDocUri + "')/" + xpointer;
+                            }
+                        }
+                    }
                     source = new StringSource(xpointer);
                 }
                 final XQuery xquery = serializer.broker.getBrokerPool().getXQueryService();
@@ -461,7 +546,10 @@ public class XIncludeFilter implements Receiver {
 
                 if (compiled == null) {
                     try {
-                        compiled = xquery.compile(context, source, xpointer != null);
+                        // element() scheme expressions are converted to regular XQuery
+                        // (doc('...')/*[1]) and must not use xpointer compilation mode
+                        final boolean useXPointerMode = xpointer != null && !wasElementScheme;
+                        compiled = xquery.compile(context, source, useXPointerMode);
                     } catch (final IOException e) {
                         throw new SAXException("I/O error while reading query for xinclude: " + e.getMessage(), e);
                     }
@@ -500,8 +588,12 @@ public class XIncludeFilter implements Receiver {
                 }
 
             } catch (final XPathException | PermissionDeniedException e) {
+                // XPointer evaluation failures are resource errors per XInclude spec 4.2,
+                // not fatal errors. Return as ResourceError to allow fallback processing.
                 LOG.warn("xpointer error", e);
-                throw new SAXException("Error while processing XInclude expression: " + e.getMessage(), e);
+                document = prevDoc;
+                serializer.createContainerElements = createContainerElements;
+                return Optional.of(new ResourceError("Error while processing XInclude expression: " + e.getMessage(), e));
             } finally {
                 if (compiled != null) {
                     pool.returnCompiledXQuery(source, compiled);
@@ -513,6 +605,251 @@ public class XIncludeFilter implements Receiver {
         serializer.createContainerElements = createContainerElements;
 
         return Optional.empty();
+    }
+
+    /**
+     * Handle intra-document XPointer references (xpointer without href).
+     * Per XInclude spec, when href is absent or empty, the xpointer is evaluated
+     * against the current document.
+     */
+    private Optional<ResourceError> processIntraDocumentXPointer(String xpointer) throws SAXException {
+        if (document == null) {
+            return Optional.of(new ResourceError("No current document for intra-document XPointer reference"));
+        }
+
+        // Convert element() scheme to XPath if needed
+        xpointer = convertXPointerToXPath(xpointer);
+
+        // For absolute XPath expressions (from element() scheme), wrap with doc()
+        // to ensure the document context is properly set
+        final String docUri = document.getURI().toString();
+        if (xpointer.startsWith("/")) {
+            xpointer = "doc('" + docUri + "')" + xpointer;
+        } else if (xpointer.startsWith("id(")) {
+            // id() needs the document context — wrap: doc('...')/id('...')
+            xpointer = "doc('" + docUri + "')/" + xpointer;
+        }
+
+        final XQueryPool pool = serializer.broker.getBrokerPool().getXQueryPool();
+        CompiledXQuery compiled = null;
+        Source source = null;
+        try {
+            xpointer = checkNamespaces(xpointer);
+            source = new StringSource(xpointer);
+            final XQuery xquery = serializer.broker.getBrokerPool().getXQueryService();
+            XQueryContext context;
+            compiled = pool.borrowCompiledXQuery(serializer.broker, source);
+            if (compiled == null) {
+                context = new XQueryContext(serializer.broker.getBrokerPool());
+            } else {
+                context = compiled.getContext();
+                context.prepareForReuse();
+            }
+            if (namespaces != null) {
+                context.declareNamespaces(namespaces);
+            }
+            context.declareNamespace("xinclude", Namespaces.XINCLUDE_NS);
+            // Set the current document as the statically known document
+            context.setStaticallyKnownDocuments(new XmldbURI[]{document.getURI()});
+
+            if (compiled == null) {
+                compiled = xquery.compile(context, source, true);
+            } else {
+                compiled.getContext().updateContext(context);
+                context.getWatchDog().reset();
+            }
+
+            try {
+                final Sequence seq = xquery.execute(serializer.broker, compiled, null);
+                if (Type.subTypeOf(seq.getItemType(), Type.NODE)) {
+                    NodeValue node;
+                    for (final SequenceIterator i = seq.iterate(); i.hasNext(); ) {
+                        node = (NodeValue) i.nextItem();
+                        serializer.serializeToReceiver(node, false);
+                    }
+                } else {
+                    for (int i = 0; i < seq.getItemCount(); i++) {
+                        characters(seq.itemAt(i).getStringValue());
+                    }
+                }
+            } finally {
+                context.runCleanupTasks();
+            }
+            return Optional.empty();
+        } catch (final XPathException | PermissionDeniedException e) {
+            LOG.warn("intra-document xpointer error", e);
+            throw new SAXException("Error while processing intra-document XPointer: " + e.getMessage(), e);
+        } catch (final IOException e) {
+            throw new SAXException("I/O error while reading intra-document XPointer query: " + e.getMessage(), e);
+        } finally {
+            if (compiled != null) {
+                pool.returnCompiledXQuery(source, compiled);
+            }
+        }
+    }
+
+    /**
+     * Convert XPointer element() scheme to XPath expressions.
+     * The xpointer() scheme is handled natively by the ANTLR parser's xpointer() rule,
+     * so we leave it as-is and only convert element() scheme pointers.
+     *
+     * Handles:
+     *   element(/1)          -> /node()[1]
+     *   element(/1/2/3)      -> /node()[1]/node()[2]/node()[3]
+     *   element(myid)        -> id('myid')
+     *   element(myid/2/3)    -> id('myid')/node()[2]/node()[3]
+     *   xpointer(expr)       -> xpointer(expr) (left for ANTLR parser)
+     *   xmlns(...)element()  -> strips xmlns(), converts element()
+     */
+    private static String convertXPointerToXPath(String xpointer) {
+        xpointer = xpointer.trim();
+
+        // xpointer() scheme — leave as-is; the ANTLR parser's xpointer() rule handles it
+        if (xpointer.startsWith("xpointer(")) {
+            return xpointer;
+        }
+
+        // Handle element() scheme
+        if (xpointer.startsWith("element(") && xpointer.endsWith(")")) {
+            final String content = xpointer.substring(8, xpointer.length() - 1).trim();
+            return convertElementSchemeToXPath(content);
+        }
+
+        // Handle multiple schemes: xmlns(...)element(...)
+        // Strip xmlns() schemes first (handled by checkNamespaces), then look for element()
+        if (xpointer.contains("element(")) {
+            int idx = 0;
+            while (idx < xpointer.length()) {
+                if (xpointer.startsWith("xmlns(", idx)) {
+                    final int close = xpointer.indexOf(')', idx);
+                    if (close > 0) {
+                        idx = close + 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+            if (idx > 0 && idx < xpointer.length()) {
+                return convertXPointerToXPath(xpointer.substring(idx));
+            }
+        }
+
+        return xpointer;
+    }
+
+    /**
+     * Convert element() scheme content to XPath.
+     * Per XPointer element() scheme spec, child sequences use 1-based
+     * element positions (not node positions), so we use *[N] not node()[N].
+     */
+    private static String convertElementSchemeToXPath(final String content) {
+        if (content.startsWith("/")) {
+            // Child sequence: /1/2/3 -> /*[1]/*[2]/*[3]
+            final String[] parts = content.substring(1).split("/");
+            final StringBuilder xpath = new StringBuilder();
+            for (final String part : parts) {
+                xpath.append("/*[").append(part.trim()).append("]");
+            }
+            return xpath.toString();
+        } else if (content.contains("/")) {
+            // ID + child sequence: myid/2/3 -> id('myid')/*[2]/*[3]
+            final String[] parts = content.split("/");
+            final StringBuilder xpath = new StringBuilder("id('").append(parts[0].trim()).append("')");
+            for (int i = 1; i < parts.length; i++) {
+                xpath.append("/*[").append(parts[i].trim()).append("]");
+            }
+            return xpath.toString();
+        } else {
+            // Just an ID: myid -> id('myid')
+            return "id('" + content.trim() + "')";
+        }
+    }
+
+    /**
+     * Read a resource as text for parse="text" inclusion.
+     *
+     * <p>Per the XInclude spec, when parse="text", the resource is read as plain text
+     * and included as character data. XML special characters in the included text are
+     * preserved as-is (they will be escaped during serialization).</p>
+     *
+     * <p>Architectural note: BaseX delegates XInclude entirely to Java's built-in
+     * SAXParserFactory.setXIncludeAware(true), which handles parse="text" at document
+     * import time. eXist's approach (serialization-time XIncludeFilter) is more powerful
+     * (works on stored documents) but requires implementing each XInclude feature
+     * explicitly. A complementary parse-time XInclude option (like BaseX) could be
+     * added as a future enhancement.</p>
+     */
+    private @Nullable String readResourceAsText(@Nullable final DocumentImpl doc,
+                                                 @Nullable final org.exist.dom.memtree.DocumentImpl memtreeDoc,
+                                                 @Nullable final XmldbURI docUri,
+                                                 final String href,
+                                                 @Nullable final String encoding) {
+        final java.nio.charset.Charset charset;
+        try {
+            charset = encoding != null ? java.nio.charset.Charset.forName(encoding) : UTF_8;
+        } catch (final java.nio.charset.UnsupportedCharsetException e) {
+            LOG.warn("Unsupported encoding '{}' for text inclusion, falling back to UTF-8", encoding);
+            return readResourceAsText(doc, memtreeDoc, docUri, href, null);
+        }
+
+        // Case 1: Binary document in database — read raw bytes
+        if (doc != null && doc.getResourceType() == DocumentImpl.BINARY_FILE) {
+            try (final InputStream is = serializer.broker.getBinaryResource((BinaryDocument) doc)) {
+                return new String(is.readAllBytes(), charset);
+            } catch (final IOException e) {
+                LOG.warn("Error reading binary resource as text: {}", docUri, e);
+                return null;
+            }
+        }
+
+        // Case 2: XML document in database — serialize to string (text representation)
+        if (doc != null) {
+            // For XML documents with parse="text", we serialize the document to its
+            // XML text representation and include that as character data.
+            // Per XInclude spec, the XML declaration is NOT part of the text inclusion.
+            try {
+                final Serializer tempSerializer = serializer.broker.borrowSerializer();
+                try {
+                    tempSerializer.setProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, "yes");
+                    tempSerializer.setProperty(javax.xml.transform.OutputKeys.INDENT, "no");
+                    return tempSerializer.serialize(doc);
+                } finally {
+                    serializer.broker.returnSerializer(tempSerializer);
+                }
+            } catch (final Exception e) {
+                LOG.warn("Error serializing XML document as text: {}", docUri, e);
+                return null;
+            }
+        }
+
+        // Case 3: In-memory document
+        if (memtreeDoc != null) {
+            try {
+                final Serializer tempSerializer = serializer.broker.borrowSerializer();
+                try {
+                    tempSerializer.setProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, "yes");
+                    tempSerializer.setProperty(javax.xml.transform.OutputKeys.INDENT, "no");
+                    return tempSerializer.serialize(memtreeDoc);
+                } finally {
+                    serializer.broker.returnSerializer(tempSerializer);
+                }
+            } catch (final Exception e) {
+                LOG.warn("Error serializing in-memory document as text: {}", href, e);
+                return null;
+            }
+        }
+
+        // Case 4: External URI — read from URL
+        try {
+            final URI externalUri = new URI(href);
+            final URLConnection con = externalUri.toURL().openConnection();
+            try (final InputStream is = con.getInputStream()) {
+                return new String(is.readAllBytes(), charset);
+            }
+        } catch (final Exception e) {
+            LOG.warn("Error reading external resource as text: {}", href, e);
+            return null;
+        }
     }
 
     private Either<ResourceError, org.exist.dom.memtree.DocumentImpl> parseExternal(final URI externalUri) throws ParserConfigurationException, SAXException {
