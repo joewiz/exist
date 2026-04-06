@@ -35,11 +35,17 @@ public class DynamicTypeCheck extends AbstractExpression {
 
 	final private Expression expression;
 	final private int requiredType;
-	
+	final private ErrorCodes.ErrorCode errorCode;
+
 	public DynamicTypeCheck(XQueryContext context, int requiredType, Expression expr) {
+		this(context, requiredType, expr, null);
+	}
+
+	public DynamicTypeCheck(XQueryContext context, int requiredType, Expression expr, ErrorCodes.ErrorCode errorCode) {
 		super(context);
 		this.requiredType = requiredType;
 		this.expression = expr;
+		this.errorCode = errorCode;
 	}
 	
     /* (non-Javadoc)
@@ -73,6 +79,10 @@ public class DynamicTypeCheck extends AbstractExpression {
 		return result == null ? seq : result;
 	}
 
+    private ErrorCodes.ErrorCode effectiveErrorCode() {
+        return errorCode != null ? errorCode : ErrorCodes.XPTY0004;
+    }
+
     private void check(Sequence result, Item item) throws XPathException {
         int type = item.getType();
         if (type == Type.NODE &&
@@ -84,6 +94,7 @@ public class DynamicTypeCheck extends AbstractExpression {
         }
         // XQuery 4.0: record type checking — a map can match a record type
         if (requiredType == Type.RECORD && Type.subTypeOf(type, Type.MAP_ITEM)) {
+            if (result != null) { result.add(item); }
             return; // record type checking handled by SequenceType.checkType
         }
         if(type != requiredType && !Type.subTypeOf(type, requiredType)) {
@@ -93,7 +104,7 @@ public class DynamicTypeCheck extends AbstractExpression {
                     item = item.convertTo(requiredType);
                 //No way
                 } catch (final XPathException e) {
-                    throw new XPathException(expression, ErrorCodes.FOCH0002, "Required type is " +
+                    throw new XPathException(expression, effectiveErrorCode(), "Required type is " +
                             Type.getTypeName(requiredType) + " but got '" + Type.getTypeName(item.getType()) + "(" +
                             item.getStringValue() + ")'");
                 }
@@ -107,7 +118,7 @@ public class DynamicTypeCheck extends AbstractExpression {
                     item = item.convertTo(requiredType);
                 //No way
                 } catch (final XPathException e) {
-                    throw new XPathException(expression, ErrorCodes.FOCH0002, "Required type is " +
+                    throw new XPathException(expression, effectiveErrorCode(), "Required type is " +
                             Type.getTypeName(requiredType) + " but got '" + Type.getTypeName(item.getType()) + "(" +
                             item.getStringValue() + ")'");
                 }
@@ -120,7 +131,7 @@ public class DynamicTypeCheck extends AbstractExpression {
                     item = item.convertTo(requiredType);
                 //No way
                 } catch (final XPathException e) {
-                    throw new XPathException(expression, ErrorCodes.FOCH0002, "Required type is " +
+                    throw new XPathException(expression, effectiveErrorCode(), "Required type is " +
                             Type.getTypeName(requiredType) + " but got '" + Type.getTypeName(item.getType()) + "(" +
                             item.getStringValue() + ")'");
                 }
@@ -132,7 +143,7 @@ public class DynamicTypeCheck extends AbstractExpression {
                     item = item.convertTo(requiredType);
                 //No way
                 } catch (final XPathException e) {
-                    throw new XPathException(expression, ErrorCodes.FOCH0002, "Required type is " +
+                    throw new XPathException(expression, effectiveErrorCode(), "Required type is " +
                             Type.getTypeName(requiredType) + " but got '" + Type.getTypeName(item.getType()) + "(" +
                             item.getStringValue() + ")'");
                 }
@@ -145,12 +156,12 @@ public class DynamicTypeCheck extends AbstractExpression {
                     type = Type.STRING;
             } else {
                 if (!(Type.subTypeOf(type, requiredType))) {
-                    throw new XPathException(expression, ErrorCodes.XPTY0004,
+                    throw new XPathException(expression, effectiveErrorCode(),
                             Type.getTypeName(item.getType()) + "(" + item.getStringValue() +
                             ") is not a sub-type of " + Type.getTypeName(requiredType));
 
                 } else
-                    {throw new XPathException(expression, ErrorCodes.FOCH0002, "Required type is " +
+                    {throw new XPathException(expression, effectiveErrorCode(), "Required type is " +
                         Type.getTypeName(requiredType) + " but got '" + Type.getTypeName(item.getType()) + "(" +
                         item.getStringValue() + ")'");}
             }

@@ -1949,7 +1949,7 @@ public class XQueryContext implements BinaryValueManager, Context {
         final QName name = function.getSignature().getName();
         final String uri = name.getNamespaceURI();
 
-        if (uri.isEmpty()) {
+        if (uri.isEmpty() && getXQueryVersion() < 40) {
             throw new XPathException(function, ErrorCodes.XQST0060,
                     "Every declared function name must have a non-null namespace URI, " +
                             "but function '" + name + "' does not meet this requirement.");
@@ -1974,7 +1974,31 @@ public class XQueryContext implements BinaryValueManager, Context {
     @Override
     public @Nullable UserDefinedFunction resolveFunction(final QName name, final int argCount) {
         final FunctionId id = new FunctionId(name, argCount);
-        return declaredFunctions.get(id);
+        final UserDefinedFunction exact = declaredFunctions.get(id);
+        if (exact != null) {
+            return exact;
+        }
+        // XQ4: Try to find a function with more params where trailing params have defaults
+        for (final UserDefinedFunction func : declaredFunctions.values()) {
+            if (func.getName().equals(name)) {
+                final SequenceType[] argTypes = func.getSignature().getArgumentTypes();
+                if (argTypes.length > argCount) {
+                    // Check that all params from argCount onwards have defaults
+                    boolean allDefaulted = true;
+                    for (int i = argCount; i < argTypes.length; i++) {
+                        if (!(argTypes[i] instanceof FunctionParameterSequenceType) ||
+                            !((FunctionParameterSequenceType) argTypes[i]).hasDefaultValue()) {
+                            allDefaulted = false;
+                            break;
+                        }
+                    }
+                    if (allDefaulted) {
+                        return func;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     @Override

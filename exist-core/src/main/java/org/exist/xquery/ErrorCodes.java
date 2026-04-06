@@ -246,6 +246,7 @@ public class ErrorCodes {
 
     /* XQuery 3.1 */
     public static final ErrorCode XQTY0105 = new W3CErrorCode("XQTY0105", "It is a type error if the content sequence in an element constructor contains a function.");
+    public static final ErrorCode XQTY0153 = new W3CErrorCode("XQTY0153", "It is a type error if the finally clause of a try/catch expression evaluates to a non-empty sequence.");
     public static final ErrorCode FOAY0001 = new W3CErrorCode("FOAY0001", "Array index out of bounds.");
     public static final ErrorCode FOAY0002 = new W3CErrorCode("FOAY0002", "Negative array length.");
 

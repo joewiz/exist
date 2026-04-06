@@ -22,7 +22,8 @@
 package org.exist.xquery.value;
 
 import com.ibm.icu.text.Collator;
-
+import net.sf.saxon.tree.util.FastStringBuffer;
+import net.sf.saxon.value.FloatingPointConverter;
 import org.exist.util.ByteConversion;
 import org.exist.xquery.Constants;
 import org.exist.xquery.ErrorCodes;
@@ -92,7 +93,10 @@ public class DoubleValue extends NumericValue {
 
     @Override
     public String getStringValue() {
-        return net.sf.saxon.value.DoubleValue.doubleToString(value).toString();
+        final FastStringBuffer sb = new FastStringBuffer(20);
+        //0 is a dummy parameter
+        FloatingPointConverter.appendDouble(sb, value, false);
+        return sb.toString();
     }
 
     public double getValue() {
@@ -191,21 +195,21 @@ public class DoubleValue extends NumericValue {
 
     public DecimalValue toDecimalValue() throws XPathException {
         if (isNaN() || isInfinite()) {
-            throw conversionError(ErrorCodes.FOCA0002, Type.DECIMAL);
+            throw nanInfConversionError(Type.DECIMAL);
         }
         return new DecimalValue(getExpression(), BigDecimal.valueOf(value));
     }
 
     public IntegerValue toIntegerValue() throws XPathException {
         if (isNaN() || isInfinite()) {
-            throw conversionError(ErrorCodes.FOCA0002, Type.INTEGER);
+            throw nanInfConversionError(Type.INTEGER);
         }
         return new IntegerValue(getExpression(), (long) value);
     }
 
     public IntegerValue toIntegerSubType(final int subType) throws XPathException {
         if (isNaN() || isInfinite()) {
-            throw conversionError(ErrorCodes.FOCA0002, subType);
+            throw nanInfConversionError(subType);
         }
         if (subType != Type.INTEGER && value > Integer.MAX_VALUE) {
             throw new XPathException(getExpression(), ErrorCodes.FOCA0003, "Value is out of range for type "
@@ -215,11 +219,13 @@ public class DoubleValue extends NumericValue {
     }
 
     private XPathException conversionError(final int type) {
-        return conversionError(ErrorCodes.FORG0001, type);
+        return new XPathException(getExpression(), ErrorCodes.XPTY0004, "Cannot convert "
+                + Type.getTypeName(getType()) + "('" + getStringValue() + "') to "
+                + Type.getTypeName(type));
     }
 
-    private XPathException conversionError(final ErrorCodes.ErrorCode errorCode, final int type) {
-        return new XPathException(getExpression(), errorCode, "Cannot convert "
+    private XPathException nanInfConversionError(final int type) {
+        return new XPathException(getExpression(), ErrorCodes.FOCA0002, "Cannot convert "
                 + Type.getTypeName(getType()) + "('" + getStringValue() + "') to "
                 + Type.getTypeName(type));
     }

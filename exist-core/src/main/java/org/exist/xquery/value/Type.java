@@ -137,8 +137,8 @@ public class Type {
     public final static int RECORD = 70;
 
     private final static int[] superTypes = new int[71];
-    private final static Int2ObjectOpenHashMap<String[]> typeNames = new Int2ObjectOpenHashMap<>(69, Hash.FAST_LOAD_FACTOR);
-    private final static Object2IntOpenHashMap<String> typeCodes = new Object2IntOpenHashMap<>(78, Hash.FAST_LOAD_FACTOR);
+    private final static Int2ObjectOpenHashMap<String[]> typeNames = new Int2ObjectOpenHashMap<>(71, Hash.FAST_LOAD_FACTOR);
+    private final static Object2IntOpenHashMap<String> typeCodes = new Object2IntOpenHashMap<>(80, Hash.FAST_LOAD_FACTOR);
     static {
         typeCodes.defaultReturnValue(NO_SUCH_VALUE);
     }
@@ -253,6 +253,9 @@ public class Type {
         // XQ4: RECORD is a subtype of MAP
         defineSubType(MAP_ITEM, RECORD);
         defineSubType(FUNCTION, ARRAY_ITEM);
+
+        // XQ4: RECORD is a subtype of MAP
+        defineSubType(MAP_ITEM, RECORD);
 
         // NODE types
         defineSubType(NODE, ATTRIBUTE);
