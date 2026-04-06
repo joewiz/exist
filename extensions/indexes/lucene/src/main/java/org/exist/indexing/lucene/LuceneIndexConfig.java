@@ -48,6 +48,7 @@ public class LuceneIndexConfig {
     private final static String HAS_SIBLING_ATTR_ELEMENT = "has-sibling-attribute";
     private final static String FACET_ELEMENT = "facet";
     private final static String FIELD_ELEMENT = "field";
+    private final static String VECTOR_FIELD_ELEMENT = "vector-field";
 
     public static final String QNAME_ATTR = "qname";
     public static final String MATCH_ATTR = "match";
@@ -73,9 +74,6 @@ public class LuceneIndexConfig {
     private FieldType type = null;
 
     private boolean doIndex = true;
-
-    private int passageWidth = -1;
-    private String passageBreak = null;
 
     protected final LuceneConfig parent;
     // This is for the @attr match boosting
@@ -120,25 +118,6 @@ public class LuceneIndexConfig {
 
         doIndex = Configuration.parseBooleanAttribute(config, INDEX_ATTR, true);
 
-        final String pwStr = config.getAttribute("passage-width");
-        if (pwStr != null && !pwStr.isEmpty()) {
-            try {
-                passageWidth = Integer.parseInt(pwStr);
-            } catch (NumberFormatException e) {
-                throw new DatabaseConfigurationException(
-                        "Invalid value for 'passage-width': integer expected, got " + pwStr);
-            }
-        }
-
-        final String pbStr = config.getAttribute("passage-break");
-        if (pbStr != null && !pbStr.isEmpty()) {
-            if (!"sentence".equals(pbStr) && !"character".equals(pbStr)) {
-                throw new DatabaseConfigurationException(
-                        "Invalid value for 'passage-break': expected 'sentence' or 'character', got " + pbStr);
-            }
-            passageBreak = pbStr;
-        }
-
         parse(parent, config, namespaces, analyzers);
     }
 
@@ -161,6 +140,10 @@ public class LuceneIndexConfig {
                             if (fieldConfig.getAnalyzer() != null) {
                                 type.addAnalzer(fieldConfig.getName(), fieldConfig.getAnalyzer());
                             }
+                            break;
+                        }
+                        case VECTOR_FIELD_ELEMENT: {
+                            facetsAndFields.add(new LuceneVectorFieldConfig(parent, configElement, namespaces));
                             break;
                         }
                         case IGNORE_ELEMENT: {
@@ -229,6 +212,8 @@ public class LuceneIndexConfig {
                             matchAttrs.put(qname, new MatchAttrData(qname, value, boost, onSibling));
                             break;
                         }
+                        default:
+                            break;
                     }
                 }
             }
@@ -367,20 +352,6 @@ public class LuceneIndexConfig {
     }
 
     /**
-     * @return configured passage width, or -1 if not set (use default)
-     */
-    public int getPassageWidth() {
-        return passageWidth;
-    }
-
-    /**
-     * @return configured passage break type ("sentence" or "character"), or null if not set
-     */
-    public String getPassageBreak() {
-        return passageBreak;
-    }
-
-    /**
      * Get the searchable field names (from LuceneFieldConfig only, not facets).
      * Used for MultiFieldQueryParser when the index has nested fields.
      *
@@ -406,16 +377,17 @@ public class LuceneIndexConfig {
         return parseQName(name, namespaces);
     }
 
-    protected static QName parseQName(String name, Map<String, String> namespaces) throws DatabaseConfigurationException {
+    protected static QName parseQName(final String name, Map<String, String> namespaces) throws DatabaseConfigurationException {
         boolean isAttribute = false;
-        if (name.startsWith("@")) {
+        String qnameStr = name;
+        if (qnameStr.startsWith("@")) {
             isAttribute = true;
-            name = name.substring(1);
+            qnameStr = qnameStr.substring(1);
         }
 
         try {
-            String prefix = QName.extractPrefix(name);
-            String localName = QName.extractLocalName(name);
+            String prefix = QName.extractPrefix(qnameStr);
+            String localName = QName.extractLocalName(qnameStr);
             String namespaceURI = "";
             if (prefix != null) {
                 namespaceURI = namespaces.get(prefix);

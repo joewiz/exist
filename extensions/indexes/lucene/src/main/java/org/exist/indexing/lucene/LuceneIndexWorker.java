@@ -48,6 +48,7 @@ import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.memtree.NodeImpl;
 import org.exist.dom.persistent.*;
 import org.exist.indexing.*;
+import org.exist.indexing.ReindexScope;
 import org.exist.indexing.StreamListener.ReindexMode;
 import org.exist.indexing.lucene.PlainTextHighlighter.Offset;
 import org.exist.indexing.lucene.PlainTextIndexConfig.PlainTextField;
@@ -55,6 +56,7 @@ import org.exist.numbering.NodeId;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.*;
 import org.exist.storage.btree.DBException;
+import org.exist.storage.vector.VectorStore;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.txn.Txn;
 import org.exist.util.*;
@@ -76,6 +78,7 @@ import javax.annotation.Nullable;
 import javax.xml.XMLConstants;
 import java.io.IOException;
 import java.util.*;
+import java.util.Set;
 
 
 /**
@@ -93,7 +96,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         TYPE_NODE_ID.setStored(false);
         TYPE_NODE_ID.setOmitNorms(true);
         TYPE_NODE_ID.setStoreTermVectors(false);
-        TYPE_NODE_ID.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        TYPE_NODE_ID.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
     }
 
     static final Logger LOG = LogManager.getLogger(LuceneIndexWorker.class);
@@ -166,6 +169,8 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             case REMOVE_BINARY:
             	removePlainTextIndexes();
             	break;
+            default:
+                break;
         }
     }
 
@@ -205,6 +210,8 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 break;
             case REMOVE_SOME_NODES:
                 nodesToRemove = new TreeSet<>();
+                break;
+            default:
                 break;
         }
     }
@@ -310,6 +317,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     }
 
     protected void removeDocument(int docId) {
+        removeVectorStoreForDocument(currentDoc.getURI().toString());
     	IndexWriter writer = null;
         try {
             writer = index.getWriter();
@@ -320,6 +328,40 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         } finally {
             index.releaseWriter(writer);
             mode = ReindexMode.STORE;
+        }
+    }
+
+    private void removeVectorStoreForDocument(String docPath) {
+        final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
+        if (vectorStore == null) {
+            return;
+        }
+        final Txn txn = broker.getCurrentTransaction();
+        if (txn == null) {
+            return;
+        }
+        try {
+            vectorStore.removeByDocument(txn, docPath);
+        } catch (IOException e) {
+            LOG.debug("Failed to remove vectors for document {}: {}", docPath, e.getMessage());
+        }
+    }
+
+    private void removeVectorStoreForNodes(String docPath, Set<NodeId> nodeIds) {
+        final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
+        if (vectorStore == null || nodeIds == null || nodeIds.isEmpty()) {
+            return;
+        }
+        final Txn txn = broker.getCurrentTransaction();
+        if (txn == null) {
+            return;
+        }
+        try {
+            for (NodeId nodeId : nodeIds) {
+                vectorStore.remove(txn, docPath, nodeId);
+            }
+        } catch (IOException e) {
+            LOG.debug("Failed to remove vectors for nodes: {}", e.getMessage());
         }
     }
 
@@ -342,6 +384,18 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     public void removeCollection(Collection collection, DBBroker broker, boolean reindex) {
         if (LOG.isDebugEnabled())
             LOG.debug("Removing collection {}", collection.getURI());
+        final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
+        final Txn txn = broker.getCurrentTransaction();
+        if (vectorStore != null && txn != null) {
+            try {
+                for (Iterator<DocumentImpl> i = collection.iterator(broker); i.hasNext(); ) {
+                    DocumentImpl doc = i.next();
+                    vectorStore.removeByDocument(txn, doc.getURI().toString());
+                }
+            } catch (IOException | PermissionDeniedException | LockException e) {
+                LOG.debug("Failed to remove vectors for collection: {}", e.getMessage());
+            }
+        }
         IndexWriter writer = null;
         try {
             writer = index.getWriter();
@@ -374,6 +428,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     protected void removeNodes() {
     	if (nodesToRemove == null)
             return;
+        removeVectorStoreForNodes(currentDoc.getURI().toString(), nodesToRemove);
         IndexWriter writer = null;
         try {
             writer = index.getWriter();
@@ -557,8 +612,10 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         final LuceneHitCollector collector = new LuceneHitCollector(qname, query, docs, contextSet, resultSet, returnAncestor, contextId, facets, facetsCollector);
         searcher.searcher().search(query, collector);
 
-        // compute facets
-        facets.compute(searcher.taxonomyReader(), config.facetsConfig, facetsCollector);
+        // compute facets (skip if config or taxonomy missing)
+        if (config != null && config.facetsConfig != null && searcher.taxonomyReader() != null) {
+            facets.compute(searcher.taxonomyReader(), config.facetsConfig, facetsCollector);
+        }
     }
 
     /**
@@ -587,6 +644,21 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         }
     }
 
+    /**
+     * Calls {@link LuceneUtil#extractTerms(Query, Map, IndexReader, boolean)}  to extract
+     * the terms which would be matched by the given query.
+     *
+     * @param query to extract terms for
+     * @return the map returned by {@link LuceneUtil#extractTerms(Query, Map, IndexReader, boolean)}
+     * @throws IOException in case of Lucene IO error
+     */
+    public Map<Object, Query> getTerms(final Query query) throws IOException {
+        return index.withReader(reader -> {
+            final Map<Object, Query> termMap = new TreeMap<>();
+            LuceneUtil.extractTerms(query, termMap, reader, false);
+            return termMap;
+        });
+    }
 
     public NodeSet queryField(XQueryContext context, int contextId, DocumentSet docs, NodeSet contextSet,
             String field, String queryString, int axis, QueryOptions options)
@@ -605,6 +677,229 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     returnAncestor, searcher, query, config);
             return resultSet;
         });
+    }
+
+    /**
+     * Vector (KNN) search by field name. Returns k nearest nodes.
+     *
+     * @param contextId current context id
+     * @param docs documents to search
+     * @param contextSet optional context set for ancestor resolution
+     * @param field vector field name (from vector-field config)
+     * @param vector query vector
+     * @param k number of nearest neighbours
+     * @param options filter options (filter-query, filter, filter-facets)
+     * @return node set of k nearest matches
+     */
+    public NodeSet searchVector(final int contextId, final DocumentSet docs, @Nullable final NodeSet contextSet,
+            final String field, final float[] vector, final int k, final QueryOptions options)
+            throws IOException, XPathException {
+        return index.withSearcher(searcher -> {
+            final NodeSet resultSet = new NewArrayNodeSet();
+            final boolean returnAncestor = true;
+            final LuceneConfig config = getLuceneConfig(broker, docs);
+            Query filterQuery = buildVectorFilterQuery(options, config, docs);
+            Query baseQuery = filterQuery != null
+                    ? new KnnFloatVectorQuery(field, vector, k, filterQuery)
+                    : new KnnFloatVectorQuery(field, vector, k);
+            searchAndProcess(contextId, null, docs, contextSet, resultSet,
+                    returnAncestor, searcher, baseQuery, config);
+            return resultSet;
+        });
+    }
+
+    /**
+     * Vector (KNN) search by qnames. Resolves vector field from index config.
+     *
+     * @param contextId current context id
+     * @param docs documents to search
+     * @param contextSet optional context set for ancestor resolution
+     * @param qnames index qnames (e.g. article)
+     * @param vector query vector
+     * @param k number of nearest neighbours
+     * @param options filter options
+     * @return node set of k nearest matches
+     */
+    public NodeSet searchVector(final int contextId, final DocumentSet docs, @Nullable final NodeSet contextSet,
+            final List<QName> qnames, final float[] vector, final int k, final QueryOptions options)
+            throws IOException, XPathException {
+        return index.withSearcher(searcher -> {
+            final List<QName> definedIndexes = getDefinedIndexes(qnames);
+            final NodeSet resultSet = new NewArrayNodeSet();
+            final boolean returnAncestor = true;
+            final LuceneConfig config = getLuceneConfig(broker, docs);
+            for (final QName qname : definedIndexes) {
+                final LuceneIndexConfig idxConf = config != null ? config.getIndexConfigForQName(qname) : null;
+                final LuceneVectorFieldConfig vecConf = getFirstVectorField(idxConf);
+                if (vecConf == null) {
+                    continue;
+                }
+                final String field = vecConf.getName();
+                final String indexField = LuceneUtil.encodeQName(qname, index.getBrokerPool().getSymbols());
+                Query filterQuery = buildVectorFilterQuery(options, config, docs);
+                Query vectorQuery = filterQuery != null
+                        ? new KnnFloatVectorQuery(field, vector, k, filterQuery)
+                        : new KnnFloatVectorQuery(field, vector, k);
+                Query baseQuery = filterByIndexType(vectorQuery, indexField);
+                searchAndProcess(contextId, qname, docs, contextSet, resultSet,
+                        returnAncestor, searcher, baseQuery, config);
+            }
+            return resultSet;
+        });
+    }
+
+    @Nullable
+    private static LuceneVectorFieldConfig getFirstVectorField(@Nullable final LuceneIndexConfig idxConf) {
+        if (idxConf == null) {
+            return null;
+        }
+        for (final AbstractFieldConfig fc : idxConf.getFacetsAndFields()) {
+            if (fc instanceof LuceneVectorFieldConfig vfc) {
+                return vfc;
+            }
+        }
+        return null;
+    }
+
+    /** Build filter to restrict KNN to docs in the document set (index is shared across collections). */
+    private Query buildDocsFilterQuery(final DocumentSet docs) {
+        if (docs == null || docs.getDocumentCount() == 0) {
+            return null;
+        }
+        final List<Query> docIdQueries = new ArrayList<>();
+        for (final Iterator<DocumentImpl> it = docs.getDocumentIterator(); it.hasNext(); ) {
+            docIdQueries.add(IntField.newExactQuery(FIELD_DOC_ID, it.next().getDocId()));
+        }
+        if (docIdQueries.size() == 1) {
+            return docIdQueries.get(0);
+        }
+        final BooleanQuery.Builder b = new BooleanQuery.Builder();
+        for (final Query q : docIdQueries) {
+            b.add(q, BooleanClause.Occur.SHOULD);
+        }
+        return b.build();
+    }
+
+    @Nullable
+    private Query buildVectorFilterQuery(final QueryOptions options, @Nullable final LuceneConfig config,
+            final DocumentSet docs) throws XPathException {
+        final List<Query> filters = new ArrayList<>(4);
+        addIfNotNull(filters, buildDocsFilterQuery(docs));
+        addIfNotNull(filters, buildKeywordFilter(options, config, docs));
+        addIfNotNull(filters, buildRangeFilter(options));
+        addIfNotNull(filters, buildFacetFilter(options, config));
+        return combineFilters(filters);
+    }
+
+    private static void addIfNotNull(final List<Query> list, @Nullable final Query q) {
+        if (q != null) {
+            list.add(q);
+        }
+    }
+
+    @Nullable
+    private Query buildKeywordFilter(final QueryOptions options, @Nullable final LuceneConfig config,
+            final DocumentSet docs) {
+        if (options == null) {
+            return null;
+        }
+        final String filterStr = options.getFilterQuery();
+        if (filterStr == null || filterStr.isEmpty()) {
+            return null;
+        }
+        final QueryParserWrapper parser = resolveFilterQueryParser(config, docs);
+        if (parser == null) {
+            return null;
+        }
+        try {
+            return parser.parse(filterStr);
+        } catch (XPathException e) {
+            LOG.warn("Failed to parse filter-query '{}': {}", filterStr, e.getMessage());
+            return null;
+        }
+    }
+
+    @Nullable
+    private QueryParserWrapper resolveFilterQueryParser(@Nullable final LuceneConfig config, final DocumentSet docs) {
+        final LuceneConfig cfg = config != null ? config : getLuceneConfig(broker, docs);
+        if (cfg == null) {
+            return null;
+        }
+        final String[] fields = getSearchableFieldsForFilter(cfg, docs);
+        if (fields.length == 0) {
+            return null;
+        }
+        final Analyzer a = cfg.getAnalyzer((QName) null);
+        if (a == null) {
+            return null;
+        }
+        return fields.length == 1
+                ? new ClassicQueryParserWrapper(fields[0], a)
+                : new MultiFieldQueryParserWrapper(fields, a);
+    }
+
+    @Nullable
+    private static Query buildRangeFilter(final QueryOptions options) {
+        if (options == null) {
+            return null;
+        }
+        final String field = options.getFilterField();
+        final Object val = options.getFilterValue();
+        if (field == null || val == null) {
+            return null;
+        }
+        return val instanceof Number n
+                ? LongField.newExactQuery(field, n.longValue())
+                : new TermQuery(new Term(field, val.toString()));
+    }
+
+    @Nullable
+    private Query buildFacetFilter(final QueryOptions options, @Nullable final LuceneConfig config) {
+        if (options == null || config == null || config.facetsConfig == null) {
+            return null;
+        }
+        final Optional<Map<String, QueryOptions.FacetQuery>> facets = options.getFacets();
+        if (facets.isEmpty()) {
+            return null;
+        }
+        return drilldown(facets.get(), new MatchAllDocsQuery(), config);
+    }
+
+    @Nullable
+    private static Query combineFilters(final List<Query> filters) {
+        if (filters.isEmpty()) {
+            return null;
+        }
+        if (filters.size() == 1) {
+            return filters.getFirst();
+        }
+        final BooleanQuery.Builder b = new BooleanQuery.Builder();
+        for (final Query q : filters) {
+            b.add(q, BooleanClause.Occur.MUST);
+        }
+        return b.build();
+    }
+
+    private String[] getSearchableFieldsForFilter(@Nullable final LuceneConfig config, final DocumentSet docs) {
+        if (config == null || docs == null) {
+            return new String[0];
+        }
+        for (final Iterator<Collection> i = docs.getCollectionIterator(); i.hasNext(); ) {
+            final Collection col = i.next();
+            final IndexSpec idxSpec = col.getIndexConfiguration(broker);
+            if (idxSpec != null) {
+                final LuceneConfig lc = (LuceneConfig) idxSpec.getCustomIndexSpec(LuceneIndex.ID);
+                if (lc != null) {
+                    for (final LuceneIndexConfig idx : lc.getIndexConfigurations()) {
+                        final String[] names = idx.getSearchableFieldNames();
+                        if (names.length > 0) {
+                            return names;
+                        }
+                    }
+                }
+            }
+        }
+        return new String[0];
     }
 
     /**
@@ -721,7 +1016,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 fields = fieldsToGet;
             }
 
-            final PlainTextHighlighter highlighter = new PlainTextHighlighter(query);
+            final PlainTextHighlighter highlighter = new PlainTextHighlighter(query, searcher.searcher().getIndexReader());
 
             context.pushDocumentContext();
             try {
@@ -820,7 +1115,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                             attribs.clear();
                             attribs.addAttribute("", "name", "name", "CDATA", field);
                             for (String content : fieldContent) {
-                                List<Offset> offsets = highlighter.getOffsets(content, searchAnalyzer, field);
+                                List<Offset> offsets = highlighter.getOffsets(content, searchAnalyzer);
                                 builder.startElement("", "field", "field", attribs);
                                 if (offsets != null) {
                                     highlighter.highlight(content, offsets, builder);
@@ -1041,7 +1336,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 this.docBase = context.docBase;
                 this.chainedLeafCollector = chainedLeafCollector;
                 this.docIdValues = reader.getSortedNumericDocValues(FIELD_DOC_ID);
-                this.nodeIdValues = reader.getBinaryDocValues(LuceneUtil.FIELD_NODE_ID);
+                this.nodeIdValues = reader.getBinaryDocValues(LuceneUtil.FIELD_NODE_ID_DV);
             }
 
             @Override
@@ -1069,61 +1364,72 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     docId = reader.storedFields().document(doc).getField(FIELD_DOC_ID).numericValue().intValue();
                 }
                 DocumentImpl storedDocument = docs.getDoc(docId);
-                if (storedDocument == null)
+                if (storedDocument == null) {
                     return;
+                }
                 if (nodeIdValues != null && nodeIdValues.advanceExact(doc)) {
-                        final BytesRef ref = nodeIdValues.binaryValue();
-                        int units = ByteConversion.byteToShortH(ref.bytes, ref.offset);
-                        NodeId nodeId = index.getBrokerPool().getNodeFactory().createFromData(units, ref.bytes, ref.offset + 2);
+                    final BytesRef ref = nodeIdValues.binaryValue();
+                    int units = ByteConversion.byteToShortH(ref.bytes, ref.offset);
+                    NodeId nodeId = index.getBrokerPool().getNodeFactory().createFromData(units, ref.bytes, ref.offset + 2);
 
-                        NodeProxy storedNode = new NodeProxy(null, storedDocument, nodeId);
-                        if (qname != null) {
-                            storedNode.setNodeType(qname.getNameType() == ElementValue.ATTRIBUTE ? Node.ATTRIBUTE_NODE : Node.ELEMENT_NODE);
-                        }
+                    NodeProxy storedNode = new NodeProxy(null, storedDocument, nodeId);
+                    if (qname != null) {
+                        storedNode.setNodeType(qname.getNameType() == ElementValue.ATTRIBUTE ? Node.ATTRIBUTE_NODE : Node.ELEMENT_NODE);
+                    }
+                    LuceneMatch match = createMatch(doc, score, nodeId, docBase);
+                    processHit(doc, storedDocument, storedNode, match);
+                }
+            }
 
-                        if (contextSet != null) {
-                            int sizeHint = contextSet.getSizeHint(storedDocument);
-                            if (returnAncestor) {
-                                NodeProxy parentNode = contextSet.parentWithChild(storedNode, true, true, NodeProxy.UNKNOWN_NODE_LEVEL);
-                                if (parentNode != null) {
-                                    LuceneMatch match = createMatch(doc, score, nodeId, docBase);
-                                    parentNode.addMatch(match);
-                                    resultSet.add(parentNode, sizeHint);
-                                    if (Expression.NO_CONTEXT_ID != contextId) {
-                                        parentNode.deepCopyContext(storedNode, contextId);
-                                    } else
-                                        parentNode.copyContext(storedNode);
-                                    if (chainedLeafCollector != null) {
-                                        chainedLeafCollector.collect(doc);
-                                    }
-                                }
-                            } else {
-                                LuceneMatch match = createMatch(doc, score, nodeId, docBase);
-                                storedNode.addMatch(match);
-                                NodeProxy fromContext = contextSet.get(storedNode);
-                                if (fromContext == null) {
-                                    fromContext = contextSet.parentWithChild(storedNode, true, true, NodeProxy.UNKNOWN_NODE_LEVEL);
-                                }
-                                if (fromContext != null) {
-                                    if (Expression.NO_CONTEXT_ID != contextId) {
-                                        storedNode.deepCopyContext(fromContext, contextId);
-                                    } else {
-                                        storedNode.copyContext(fromContext);
-                                    }
-                                }
-                                resultSet.add(storedNode, sizeHint);
-                                if (chainedLeafCollector != null) {
-                                    chainedLeafCollector.collect(doc);
-                                }
-                            }
-                        } else {
-                            LuceneMatch match = createMatch(doc, score, nodeId, docBase);
-                            storedNode.addMatch(match);
-                            resultSet.add(storedNode);
-                            if (chainedLeafCollector != null) {
-                                chainedLeafCollector.collect(doc);
-                            }
-                        }
+            private void processHit(int doc, DocumentImpl storedDocument, NodeProxy storedNode, LuceneMatch match) throws IOException {
+                if (contextSet != null) {
+                    int sizeHint = contextSet.getSizeHint(storedDocument);
+                    if (returnAncestor) {
+                        processAncestorHit(doc, storedNode, match, sizeHint);
+                    } else {
+                        processDirectHit(doc, storedNode, match, sizeHint);
+                    }
+                } else {
+                    storedNode.addMatch(match);
+                    resultSet.add(storedNode);
+                    chainCollect(doc);
+                }
+            }
+
+            private void processAncestorHit(int doc, NodeProxy storedNode, LuceneMatch match, int sizeHint) throws IOException {
+                NodeProxy parentNode = contextSet.parentWithChild(storedNode, true, true, NodeProxy.UNKNOWN_NODE_LEVEL);
+                if (parentNode != null) {
+                    parentNode.addMatch(match);
+                    resultSet.add(parentNode, sizeHint);
+                    if (Expression.NO_CONTEXT_ID != contextId) {
+                        parentNode.deepCopyContext(storedNode, contextId);
+                    } else {
+                        parentNode.copyContext(storedNode);
+                    }
+                    chainCollect(doc);
+                }
+            }
+
+            private void processDirectHit(int doc, NodeProxy storedNode, LuceneMatch match, int sizeHint) throws IOException {
+                storedNode.addMatch(match);
+                NodeProxy fromContext = contextSet.get(storedNode);
+                if (fromContext == null) {
+                    fromContext = contextSet.parentWithChild(storedNode, true, true, NodeProxy.UNKNOWN_NODE_LEVEL);
+                }
+                if (fromContext != null) {
+                    if (Expression.NO_CONTEXT_ID != contextId) {
+                        storedNode.deepCopyContext(fromContext, contextId);
+                    } else {
+                        storedNode.copyContext(fromContext);
+                    }
+                }
+                resultSet.add(storedNode, sizeHint);
+                chainCollect(doc);
+            }
+
+            private void chainCollect(int doc) throws IOException {
+                if (chainedLeafCollector != null) {
+                    chainedLeafCollector.collect(doc);
                 }
             }
 
@@ -1169,10 +1475,9 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     if (!FIELD_DOC_ID.equals(info.name)) {
                         final QName name = LuceneUtil.decodeQName(info.name, index.getBrokerPool().getSymbols());
                         if (name != null && name.getLocalPart() != null && !name.getLocalPart().isEmpty()
-                                && (qname == null || matchQName(qname, name))) {
-                            if (!indexes.contains(name)) {
-                                indexes.add(name);
-                            }
+                                && (qname == null || matchQName(qname, name))
+                                && !indexes.contains(name)) {
+                            indexes.add(name);
                         }
                     }
                 }
@@ -1286,6 +1591,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
      */
     protected QueryParserWrapper getQueryParser(String field, Analyzer analyzer, DocumentSet docs,
             QName qname, LuceneConfig luceneConfig, String queryStr) {
+        final String safeField = field != null ? field : "";
         /* Use MultiFieldQueryParser only for index="no" with nested fields. Fixes #4389
          * (regex in multiple fields). For index="yes", keep single-field parser to avoid
          * regressions (e.g. facets query-field-no-expression). */
@@ -1309,7 +1615,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 if (idxConf != null) {
                     LuceneConfig config = (LuceneConfig) idxConf.getCustomIndexSpec(LuceneIndex.ID);
                     if (config != null) {
-                        QueryParserWrapper parser = config.getQueryParser(field, analyzer);
+                        QueryParserWrapper parser = config.getQueryParser(safeField, analyzer);
                         if (parser != null) {
                             return parser;
                         }
@@ -1317,7 +1623,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
             }
         }
-        return new ClassicQueryParserWrapper(field, analyzer);
+        return new ClassicQueryParserWrapper(safeField, analyzer);
     }
 
     public boolean checkIndex(DBBroker broker) {
@@ -1417,7 +1723,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             LeafReader leafReader = context.reader();
             // FIXME: docidvalues is null and likely should not be
             SortedNumericDocValues docIdValues = leafReader.getSortedNumericDocValues(FIELD_DOC_ID);
-            BinaryDocValues nodeIdValues = leafReader.getBinaryDocValues(LuceneUtil.FIELD_NODE_ID);
+            BinaryDocValues nodeIdValues = leafReader.getBinaryDocValues(LuceneUtil.FIELD_NODE_ID_DV);
             Bits liveDocs = leafReader.getLiveDocs();
             Terms terms = leafReader.terms(field);
             if (LOG.isDebugEnabled() && terms == null) {
@@ -1567,18 +1873,21 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         try {
             writer = index.getWriter();
             // docId and nodeId are stored as doc value
-            BinaryDocValuesField fNodeId = new BinaryDocValuesField(LuceneUtil.FIELD_NODE_ID, new BytesRef(8));
             // docId also needs to be indexed. IntField in Lucene 10+ also provides doc values.
-            IntField fDocIdIdx = new IntField(FIELD_DOC_ID, 0, Field.Store.NO);
+            // Create new field instances per doc to avoid shared mutable state (fixes vector search returning wrong nodeIds).
 
             for (final PendingDoc pending : nodesToWrite) {
                 final Document doc = new Document();
 
 
                 List<AbstractFieldConfig> facetConfigs = pending.idxConf.getFacetsAndFields();
-                facetConfigs.forEach(config ->
-                    config.build(broker, currentDoc, pending.nodeId, doc, pending.text)
-                );
+                final ReindexScope scope = broker.getIndexController().getReindexScope();
+                facetConfigs.forEach(config -> {
+                    if (scope == ReindexScope.VECTOR && !(config instanceof LuceneVectorFieldConfig)) {
+                        return; // Vector-only: skip fulltext fields and facets
+                    }
+                    config.build(broker, currentDoc, pending.nodeId, doc, pending.text);
+                });
                 // register field analyzers so indexing uses the same analyzer as querying
                 final LuceneConfig luceneConfig = pending.idxConf.getParent();
                 for (AbstractFieldConfig config : facetConfigs) {
@@ -1596,21 +1905,21 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     }
                 }
 
-                // store the node id
+                // store the node id (new field per doc to avoid shared mutable state)
                 int nodeIdLen = pending.nodeId.size();
                 byte[] data = new byte[nodeIdLen + 2];
                 ByteConversion.shortToByteH((short) pending.nodeId.units(), data, 0);
                 pending.nodeId.serialize(data, 2);
-                fNodeId.setBytesValue(data);
-                doc.add(fNodeId);
+                doc.add(new BinaryDocValuesField(LuceneUtil.FIELD_NODE_ID_DV, new BytesRef(data)));
 
-                // add separate index for node id
+                // add separate index for node id (FIELD_NODE_ID for Term queries)
                 BinaryTokenStream bts = new BinaryTokenStream(new BytesRef(data));
                 Field fNodeIdIdx = new Field(LuceneUtil.FIELD_NODE_ID, bts, TYPE_NODE_ID);
                 doc.add(fNodeIdIdx);
 
                 String contentField = null;
-                if (pending.idxConf.doIndex()) {
+                final boolean indexFulltext = scope != ReindexScope.VECTOR && pending.idxConf.doIndex();
+                if (indexFulltext) {
                     // the text content is indexed in a field using either
                     // the qname of the element or attribute or the field
                     // name defined in the configuration
@@ -1628,8 +1937,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
                 doc.add(new StringField(LuceneUtil.FIELD_INDEX_TYPE, contentField, Field.Store.NO));
 
-                fDocIdIdx.setIntValue(currentDoc.getDocId());
-                doc.add(fDocIdIdx);
+                doc.add(new IntField(FIELD_DOC_ID, currentDoc.getDocId(), Field.Store.NO));
                 doc.add(new SortedNumericDocValuesField(FIELD_DOC_ID, currentDoc.getDocId()));
                 doc.add(new StoredField(FIELD_DOC_ID, currentDoc.getDocId()));
 

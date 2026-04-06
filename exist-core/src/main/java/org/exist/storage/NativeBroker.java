@@ -591,6 +591,10 @@ public class NativeBroker implements DBBroker {
         }
         pool.getSymbols().backupToArchive(backup);
         pool.getBlobStore().backupToArchive(backup);
+        final org.exist.storage.vector.VectorStore vectorStore = pool.getVectorStore();
+        if (vectorStore != null) {
+            vectorStore.backupToArchive(backup);
+        }
         pool.getIndexManager().backupToArchive(backup);
         //TODO backup counters
         //TODO USE zip64 or tar to create snapshots larger then 4Gb
@@ -2031,12 +2035,21 @@ public class NativeBroker implements DBBroker {
 
     @Override
     public void reindexCollection(final Txn transaction, final XmldbURI collectionUri) throws PermissionDeniedException, IOException, LockException {
+        reindexCollection(transaction, collectionUri, org.exist.indexing.ReindexScope.ALL);
+    }
+
+    @Override
+    public void reindexCollection(final Txn transaction, final XmldbURI collectionUri, final org.exist.indexing.ReindexScope scope)
+            throws PermissionDeniedException, IOException, LockException {
         if(isReadOnly()) {
             throw new IOException(DATABASE_IS_READ_ONLY);
         }
 
         final XmldbURI fqUri = prepend(collectionUri.toCollectionPathURI());
         final long start = System.currentTimeMillis();
+        // Invalidate collection cache so we load fresh from disk; otherwise a cached collection
+        // may have a stale document list when store+reindex run in separate broker transactions.
+        pool.getCollectionsCache().invalidate(fqUri);
         try(final Collection collection = openCollection(fqUri, LockMode.READ_LOCK)) {
             if (collection == null) {
                 LOG.warn("Collection {} not found!", fqUri);
@@ -2045,7 +2058,7 @@ public class NativeBroker implements DBBroker {
 
             LOG.info("Start indexing collection {}", collection.getURI().toString());
             pool.getProcessMonitor().startJob(ProcessMonitor.ACTION_REINDEX_COLLECTION, collection.getURI());
-            reindexCollection(transaction, collection, IndexMode.STORE);
+            reindexCollection(transaction, collection, IndexMode.STORE, scope);
         } catch(final PermissionDeniedException | IOException e) {
             LOG.error("An error occurred during reindex: {}", e.getMessage(), e);
         } finally {
@@ -2056,6 +2069,13 @@ public class NativeBroker implements DBBroker {
 
     private void reindexCollection(final Txn transaction,
             @EnsureLocked(mode=LockMode.READ_LOCK) final Collection collection, final IndexMode mode)
+            throws PermissionDeniedException, IOException, LockException {
+        reindexCollection(transaction, collection, mode, org.exist.indexing.ReindexScope.ALL);
+    }
+
+    private void reindexCollection(final Txn transaction,
+            @EnsureLocked(mode=LockMode.READ_LOCK) final Collection collection, final IndexMode mode,
+            final org.exist.indexing.ReindexScope scope)
             throws PermissionDeniedException, IOException, LockException {
         if(!collection.getPermissionsNoLock().validate(getCurrentSubject(), Permission.WRITE)) {
             throw new PermissionDeniedException("Account " + getCurrentSubject().getName() + " have insufficient privileges on collection " + collection.getURI());
@@ -2068,10 +2088,20 @@ public class NativeBroker implements DBBroker {
 
         // reindex documents
         try {
+            int docCount = 0;
+            // Deterministic reindex order is important for doc()-based indexing expressions:
+            // dependent documents must see fully materialized external documents.
+            final java.util.List<DocumentImpl> docs = new java.util.ArrayList<>();
             for (final Iterator<DocumentImpl> i = collection.iterator(this); i.hasNext(); ) {
-                final DocumentImpl next = i.next();
-                reindexXMLResource(transaction, next, mode);
+                docs.add(i.next());
             }
+            docs.sort(java.util.Comparator.comparing(d -> d.getFileURI().toString()));
+            for (final DocumentImpl next : docs) {
+                docCount++;
+                LOG.debug("Reindex doc #{}: {}", docCount, next.getFileURI());
+                reindexXMLResource(transaction, next, mode, scope);
+            }
+            LOG.info("Reindex collection {}: iterated {} documents", collection.getURI(), docCount);
         } catch(final LockException e) {
             LOG.error("LockException while reindexing documents of collection '{}'. Skipping...", collection.getURI(), e);
         }
@@ -2085,7 +2115,7 @@ public class NativeBroker implements DBBroker {
                     if (child == null) {
                         throw new IOException("Collection '" + childUri + "' not found");
                     } else {
-                        reindexCollection(transaction, child, mode);
+                        reindexCollection(transaction, child, mode, scope);
                     }
                 }
             }
@@ -2513,7 +2543,8 @@ public class NativeBroker implements DBBroker {
             final Value key = new CollectionStore.DocumentKey(collectionInternalAccess.getId());
             final IndexQuery query = new IndexQuery(IndexQuery.TRUNC_RIGHT, key);
 
-            collectionsDb.query(query, new DocumentCallback(collectionInternalAccess));
+            final DocumentCallback callback = new DocumentCallback(collectionInternalAccess);
+            collectionsDb.query(query, callback);
         } catch(final LockException e) {
             LOG.error("Failed to acquire lock on {}", FileUtils.fileName(collectionsDb.getFile()));
         } catch(final IOException | BTreeException | TerminatedException e) {
@@ -3131,6 +3162,12 @@ public class NativeBroker implements DBBroker {
      */
     @Override
     public void reindexXMLResource(final Txn transaction, final DocumentImpl doc, final IndexMode mode) {
+        reindexXMLResource(transaction, doc, mode, org.exist.indexing.ReindexScope.ALL);
+    }
+
+    @Override
+    public void reindexXMLResource(final Txn transaction, final DocumentImpl doc, final IndexMode mode,
+            final org.exist.indexing.ReindexScope scope) {
         getIndexController().runWithReindexing(() -> {
             final StreamListener listener = getIndexController().getStreamListener(doc, ReindexMode.STORE);
             getIndexController().startIndexDocument(transaction, listener);
@@ -3149,7 +3186,7 @@ public class NativeBroker implements DBBroker {
                 getIndexController().endIndexDocument(transaction, listener);
             }
             flush();
-        });
+        }, scope);
     }
 
     @Override
@@ -4320,15 +4357,21 @@ public class NativeBroker implements DBBroker {
     private final class DocumentCallback implements BTreeCallback {
 
         private final Collection.InternalAccess collectionInternalAccess;
+        private int documentCount = 0;
 
         private DocumentCallback(final Collection.InternalAccess collectionInternalAccess) {
             this.collectionInternalAccess = collectionInternalAccess;
+        }
+
+        int getDocumentCount() {
+            return documentCount;
         }
 
         @Override
         public boolean indexInfo(final Value key, final long pointer) throws TerminatedException {
 
             try {
+                final int docId = CollectionStore.DocumentKey.getDocumentId(key);
                 final byte type = key.data()[key.start() + Collection.LENGTH_COLLECTION_ID + DocumentImpl.LENGTH_DOCUMENT_TYPE];
                 final VariableByteInput is = collectionsDb.getAsStream(pointer);
 
@@ -4340,6 +4383,7 @@ public class NativeBroker implements DBBroker {
                 }
 
                 collectionInternalAccess.addDocument(doc);
+                documentCount++;
             } catch(final EXistException | IOException e) {
                 LOG.error("Exception while reading document data", e);
             }

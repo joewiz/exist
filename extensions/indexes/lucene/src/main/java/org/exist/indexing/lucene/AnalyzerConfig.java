@@ -73,7 +73,7 @@ public class AnalyzerConfig {
 
      <analyzer id="sbstops" class="org.apache.lucene.analysis.snowball.SnowballAnalyzer">
      ..<param name="name" value="English"/>
-     ..<param name="stopwords" type="org.apache.lucene.analysis.util.CharArraySet">
+     ..<param name="stopwords" type="org.apache.lucene.analysis.CharArraySet">
      ....<value>the</value>
      ....<value>this</value>
      ....<value>and</value>
@@ -195,12 +195,16 @@ public class AnalyzerConfig {
             } else {
                 LOG.error(message, e);
             }
-        } catch (final Throwable e) {
-            if (e instanceof InterruptedException) {
-                // NOTE: must set interrupted flag
-                Thread.currentThread().interrupt();
+        } catch (final InterruptedException e) {
+            // NOTE: must set interrupted flag
+            Thread.currentThread().interrupt();
+            final String message = String.format("Exception while instantiating analyzer class %s: %s", className, e.getMessage());
+            if (warnOnError) {
+                LOG.warn("{}. Will retry...", message);
+            } else {
+                LOG.error(message, e);
             }
-
+        } catch (final Throwable e) {
             final String message = String.format("Exception while instantiating analyzer class %s: %s", className, e.getMessage());
             if (warnOnError) {
                 LOG.warn("{}. Will retry...", message);
@@ -271,7 +275,6 @@ public class AnalyzerConfig {
                     // Retrieve value from Field
                     final Class<?> fieldClazz = Class.forName(clazzName);
                     final Field field = fieldClazz.getField(fieldName);
-                    field.setAccessible(true);
                     final Object fValue = field.get(fieldClazz.getDeclaredConstructor().newInstance());
                     yield new KeyTypedValue<>(name, fValue, Object.class);
 
@@ -313,7 +316,7 @@ public class AnalyzerConfig {
             }
             case "java.util.Set" -> {
                 LOG.info("Type '{}' has been deprecated in recent Lucene versions, "
-                        + "please use 'org.apache.lucene.analysis.util.CharArraySet' (short 'set') instead.", type);
+                        + "please use 'org.apache.lucene.analysis.CharArraySet' (short 'set') instead.", type);
 
                 final Set<String> s = getConstructorParameterSetValues(param);
                 yield new KeyTypedValue<>(name, s, Set.class);
@@ -326,7 +329,7 @@ public class AnalyzerConfig {
                 final char[] ary = getConstructorParameterCharArrayValues(param);
                 yield new KeyTypedValue<>(name, ary, char[].class);
             }
-            case "org.apache.lucene.analysis.util.CharArraySet", "set" -> {
+            case "org.apache.lucene.analysis.util.CharArraySet", "org.apache.lucene.analysis.CharArraySet", "set" -> {
                 // This is mandatory to use instead of a normal Set since Lucene 4
                 final CharArraySet s = getConstructorParameterCharArraySetValues(param);
                 yield new KeyTypedValue<>(name, s, CharArraySet.class);

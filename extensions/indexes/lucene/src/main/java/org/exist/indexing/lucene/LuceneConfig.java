@@ -38,6 +38,8 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import javax.annotation.Nullable;
+
 public class LuceneConfig {
 
     public final static LuceneConfig DEFAULT_CONFIG = new LuceneConfig();
@@ -53,6 +55,9 @@ public class LuceneConfig {
     private static final String IGNORE_ELEMENT = "ignore";
     private final static String BOOST_ATTRIB = "boost";
     private static final String DIACRITICS = "diacritics";
+    private static final String VECTOR_STORE = "vector-store";
+    private static final String VECTOR_STORE_LUCENE = "lucene";
+    private static final String VECTOR_STORE_DB = "db";
     private static final String MODULE_ELEMENT = "module";
     private static final String ATTR_MODULE_URI = "uri";
     private static final String ATTR_MODULE_PREFIX = "prefix";
@@ -70,6 +75,9 @@ public class LuceneConfig {
     private final PathIterator iterator = new PathIterator();
     
     private float boost = -1;
+
+    /** "lucene" = Lucene only (US-I6); "db" = Lucene + vector.dbx (default). */
+    private String vectorStore = VECTOR_STORE_DB;
 
     private AnalyzerConfig analyzers = new AnalyzerConfig();
 
@@ -100,8 +108,21 @@ public class LuceneConfig {
     	this.inlineNodes = other.inlineNodes;
     	this.ignoreNodes = other.ignoreNodes;
     	this.boost = other.boost;
+    	this.vectorStore = other.vectorStore;
     	this.analyzers = other.analyzers;
     	this.facetsConfig = other.facetsConfig;
+    }
+
+    /**
+     * Returns vector-store mode: "lucene" (Lucene only, reindex recomputes) or "db" (Lucene + vector.dbx, default).
+     * <p>
+     * When {@code xmldb:reindex($col, "fulltext")} is used: with {@code vector-store="db"}, vectors are read from
+     * vector.dbx (no recomputation). With {@code vector-store="lucene"}, fulltext-only is not supported and the
+     * reindex behaves as "all" (recomputes vectors from source text).
+     * </p>
+     */
+    public String getVectorStore() {
+        return vectorStore;
     }
 
     /**
@@ -233,49 +254,65 @@ public class LuceneConfig {
      */
     public LuceneIndexConfig getIndexConfigForQName(QName qname) {
         LuceneIndexConfig idxConf = paths.get(qname);
-        boolean foundByFallback = false;
         if (idxConf == null && qname != null) {
-            final String local = qname.getLocalPart();
-            final String ns = qname.getNamespaceURI();
-            if (local != null && !local.equals(QName.WILDCARD)) {
-                for (LuceneIndexConfig config : paths.values()) {
-                    LuceneIndexConfig c = config;
-                    while (c != null) {
-                        if (!c.isNamed()) {
-                            QName pathQName = c.getNodePathPattern().getLastComponent();
-                            if (pathQName == null) {
-                                c = c.getNext();
-                                continue;
-                            }
-                            String pathNs = pathQName.getNamespaceURI();
-                            boolean nsMatch = (ns == null || ns.isEmpty())
-                                    ? (pathNs == null || pathNs.isEmpty())
-                                    : ns.equals(pathNs);
-                            if (pathQName != null
-                                    && local.equals(pathQName.getLocalPart())
-                                    && nsMatch) {
-                                idxConf = c;
-                                foundByFallback = true;
-                                break;
-                            }
-                        }
-                        c = c.getNext();
-                    }
-                    if (idxConf != null) break;
-                }
+            idxConf = findByFallback(qname);
+            if (idxConf != null) {
+                return idxConf;
             }
         }
-        if (!foundByFallback) {
-            while (idxConf != null) {
-                if (!idxConf.isNamed() && idxConf.getNodePathPattern().match(qname))
-                    break;
-                idxConf = idxConf.getNext();
+        while (idxConf != null) {
+            if (!idxConf.isNamed() && idxConf.getNodePathPattern().match(qname)) {
+                break;
             }
+            idxConf = idxConf.getNext();
         }
         return idxConf;
     }
 
+    @Nullable
+    private LuceneIndexConfig findByFallback(final QName qname) {
+        final String local = qname.getLocalPart();
+        final String ns = qname.getNamespaceURI();
+        if (local == null || local.equals(QName.WILDCARD)) {
+            return null;
+        }
+        for (LuceneIndexConfig config : paths.values()) {
+            LuceneIndexConfig c = config;
+            while (c != null) {
+                if (!c.isNamed()) {
+                    QName pathQName = c.getNodePathPattern().getLastComponent();
+                    if (pathQName != null
+                            && local.equals(pathQName.getLocalPart())
+                            && namespaceMatches(ns, pathQName.getNamespaceURI())) {
+                        return c;
+                    }
+                }
+                c = c.getNext();
+            }
+        }
+        return null;
+    }
+
+    private static boolean namespaceMatches(@Nullable final String ns, @Nullable final String pathNs) {
+        if (ns == null || ns.isEmpty()) {
+            return pathNs == null || pathNs.isEmpty();
+        }
+        return ns.equals(pathNs);
+    }
+
+    /**
+     * Returns all index configurations (for iterating searchable fields etc.).
+     *
+     * @return collection of index configs
+     */
+    public Collection<LuceneIndexConfig> getIndexConfigurations() {
+        return paths.values();
+    }
+
     public Analyzer getAnalyzer(QName qname) {
+        if (qname == null) {
+            return analyzers.getDefaultAnalyzer();
+        }
         LuceneIndexConfig idxConf = getIndexConfigForQName(qname);
         if (idxConf != null) {
             final Analyzer analyzer = idxConf.getAnalyzer();
@@ -287,8 +324,9 @@ public class LuceneConfig {
     }
 
     public Analyzer getAnalyzer(NodePath nodePath) {
-        if (nodePath.length() == 0)
-            throw new RuntimeException();
+        if (nodePath.length() == 0) {
+            throw new IllegalArgumentException("NodePath must not be empty");
+        }
         LuceneIndexConfig idxConf = paths.get(nodePath.getLastComponent());
         while (idxConf != null) {
             if (!idxConf.isNamed() && idxConf.match(nodePath))
@@ -461,6 +499,14 @@ public class LuceneConfig {
                                 if (!Configuration.parseBooleanAttribute(elem, DIACRITICS, true)) {
                                     analyzers.setDefaultAnalyzer(new NoDiacriticsStandardAnalyzer());
                                 }
+                                final String vs = elem.getAttribute(VECTOR_STORE).trim();
+                                if (!vs.isEmpty()) {
+                                    if (VECTOR_STORE_LUCENE.equalsIgnoreCase(vs) || VECTOR_STORE_DB.equalsIgnoreCase(vs)) {
+                                        vectorStore = vs.toLowerCase();
+                                    } else {
+                                        throw new DatabaseConfigurationException("lucene vector-store must be 'lucene' or 'db', got: " + vs);
+                                    }
+                                }
                                 parseConfig(node.getChildNodes(), namespaces);
                                 break;
                             }
@@ -518,6 +564,8 @@ public class LuceneConfig {
                                 ignoreNodes.add(qname);
                                 break;
                             }
+                            default:
+                                break;
                         }
                     }
                     

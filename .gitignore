@@ -25,5 +25,12 @@ work/
 
 # Claude planning files
 plans/
+<<<<<<< HEAD
 work/
 .xqts-runner/
+=======
+.codacy/
+
+# Debug logs (e.g. from reindex investigation)
+reindex-dbg.log
+>>>>>>> duncdrum/dp-feature-lucene10

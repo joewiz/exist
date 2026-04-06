@@ -51,6 +51,8 @@ import javax.xml.XMLConstants;
 public class LuceneUtil {
 
     public static final String FIELD_NODE_ID = "nodeId";
+    /** DocValues-only field for nodeId; avoids conflict with indexed Field of same name (LUCENE-6019). */
+    public static final String FIELD_NODE_ID_DV = "nodeId_dv";
 
     public static final String FIELD_DOC_ID = "docId";
     public static final String FIELD_DOC_URI = "docUri";
@@ -137,8 +139,8 @@ public class LuceneUtil {
      * The terms are put into a map with the term as key and the
      * corresponding query object as value.
      *
-     * This method is used by {@link #extractFields(Query, IndexReader)}
-     * to determine which fields a query targets.
+     * This method is used by {@link LuceneMatchListener}
+     * to highlight matches in the search results.
      *
      * @param query the query
      * @param terms the terms

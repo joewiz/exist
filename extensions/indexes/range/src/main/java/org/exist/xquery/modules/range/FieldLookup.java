@@ -175,7 +175,7 @@ public class FieldLookup extends Function implements Optimizable, IndexUseReport
         for (int i = j; i < arguments.size(); i++) {
             Expression arg = arguments.get(i).simplify();
             arg = new DynamicCardinalityCheck(context, Cardinality.ZERO_OR_MORE, arg,
-                    new org.exist.xquery.util.Error(org.exist.xquery.util.Error.FUNC_PARAM_CARDINALITY, String.valueOf(i + 1), getSignature()));
+                    new Error(Error.FUNC_PARAM_CARDINALITY, String.valueOf(i + 1), getSignature()));
             steps.add(arg);
         }
     }
@@ -240,15 +240,14 @@ public class FieldLookup extends Function implements Optimizable, IndexUseReport
 
     @Override
     public Sequence eval(Sequence contextSequence, Item contextItem) throws XPathException {
-        if (contextItem != null)
-            contextSequence = contextItem.toSequence();
+        final Sequence effectiveContextSequence = contextItem != null ? contextItem.toSequence() : contextSequence;
 
-        if (contextSequence != null && !contextSequence.isPersistentSet())
+        if (effectiveContextSequence != null && !effectiveContextSequence.isPersistentSet())
             // in-memory docs won't have an index
             if (fallback == null) {
                 return Sequence.EMPTY_SEQUENCE;
             } else {
-                return fallback.eval(contextSequence, contextItem);
+                return fallback.eval(effectiveContextSequence, contextItem);
             }
 
         NodeSet result;
@@ -256,18 +255,19 @@ public class FieldLookup extends Function implements Optimizable, IndexUseReport
             long start = System.currentTimeMillis();
 
             DocumentSet docs;
-            if (contextSequence == null)
+            if (effectiveContextSequence == null)
                 docs = context.getStaticallyKnownDocuments();
             else
-                docs = contextSequence.getDocumentSet();
+                docs = effectiveContextSequence.getDocumentSet();
             NodeSet contextSet = null;
-            if (contextSequence != null)
-                contextSet = contextSequence.toNodeSet();
+            if (effectiveContextSequence != null)
+                contextSet = effectiveContextSequence.toNodeSet();
 
-            if (hasEmptyArgs(contextSequence)) {
+            // If any of the lookup arguments is the empty sequence, the overall result is empty.
+            if (hasEmptyArgs(effectiveContextSequence)) {
                 return Sequence.EMPTY_SEQUENCE;
             }
-            Sequence fields = getArgument(0).eval(contextSequence, null);
+            Sequence fields = getArgument(0).eval(effectiveContextSequence, null);
             RangeIndex.Operator[] operators = null;
             int j = 1;
             if (isCalledAs("field")) {
@@ -408,14 +408,6 @@ public class FieldLookup extends Function implements Optimizable, IndexUseReport
     public int getDependencies() {
         final Expression stringArg = getArgument(0);
         if (!Dependency.dependsOn(stringArg, Dependency.CONTEXT_ITEM)) {
-            // Check if any other argument depends on local/context variables.
-            // If so, the expression cannot be bulk-evaluated during ForExpr preEval
-            // because the variable value changes per iteration. (GH-2204)
-            for (int i = 1; i < getArgumentCount(); i++) {
-                if (Dependency.dependsOnVar(getArgument(i))) {
-                    return Dependency.CONTEXT_SET + Dependency.CONTEXT_ITEM;
-                }
-            }
             return Dependency.CONTEXT_SET;
         } else {
             return Dependency.CONTEXT_SET + Dependency.CONTEXT_ITEM;

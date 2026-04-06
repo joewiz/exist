@@ -268,7 +268,8 @@ public class XSuite extends ParentRunner<Runner> {
                 if (Files.isDirectory(path)) {
                     // directory of files of test(s)
                     try (final Stream<Path> children = Files.list(path)) {
-                        final List<Path> sorted = children.toList().stream().sorted(Comparator.comparing(Path::toString)).collect(Collectors.toList());
+                        final List<Path> sorted = children.collect(Collectors.toList());
+                        sorted.sort(Comparator.comparing(Path::toString));
                         for (final Path child : sorted) {
                             if (!Files.isDirectory(child)) {
                                 final Runner runner = getRunner(child, parallel);
