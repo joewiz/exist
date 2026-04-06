@@ -19,14 +19,795 @@
  : License along with this library; if not, write to the Free Software
  : Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  :)
-xquery version "4.0";
+xquery version "3.1";
 
 (:~
- : Tests for XQuery 4.0 parser features implemented in eXist-db.
+ : Tests for XQuery 4.0 functions implemented in eXist-db.
  :)
 module namespace t = "http://exist-db.org/xquery/test/fn-xquery40";
 
 declare namespace test = "http://exist-db.org/xquery/xqsuite";
+
+(: fn:foot :)
+
+declare
+    %test:assertEquals(5)
+function t:foot-sequence() {
+    foot(1 to 5)
+};
+
+declare
+    %test:assertEmpty
+function t:foot-empty() {
+    foot(())
+};
+
+declare
+    %test:assertEquals("c")
+function t:foot-string-sequence() {
+    foot(("a", "b", "c"))
+};
+
+(: fn:trunk :)
+
+declare
+    %test:assertEquals(1, 2, 3, 4)
+function t:trunk-sequence() {
+    trunk(1 to 5)
+};
+
+declare
+    %test:assertEmpty
+function t:trunk-empty() {
+    trunk(())
+};
+
+declare
+    %test:assertEmpty
+function t:trunk-single() {
+    trunk("a")
+};
+
+declare
+    %test:assertEquals("a", "b")
+function t:trunk-string-sequence() {
+    trunk(("a", "b", "c"))
+};
+
+(: fn:identity :)
+
+declare
+    %test:assertEquals(0)
+function t:identity-zero() {
+    identity(0)
+};
+
+declare
+    %test:assertEmpty
+function t:identity-empty() {
+    identity(())
+};
+
+declare
+    %test:assertEquals(1, 2, 3)
+function t:identity-sequence() {
+    identity((1, 2, 3))
+};
+
+(: fn:void :)
+
+declare
+    %test:assertEmpty
+function t:void-value() {
+    void(1 to 1000000)
+};
+
+declare
+    %test:assertEmpty
+function t:void-no-args() {
+    void()
+};
+
+(: fn:is-NaN :)
+
+declare
+    %test:assertFalse
+function t:isNaN-integer() {
+    is-NaN(23)
+};
+
+declare
+    %test:assertFalse
+function t:isNaN-string() {
+    is-NaN("NaN")
+};
+
+declare
+    %test:assertTrue
+function t:isNaN-number-invalid() {
+    is-NaN(number("twenty-three"))
+};
+
+(: fn:characters :)
+
+declare
+    %test:assertEquals("T", "h", "e")
+function t:characters-basic() {
+    characters("The")
+};
+
+declare
+    %test:assertEmpty
+function t:characters-empty-string() {
+    characters("")
+};
+
+declare
+    %test:assertEmpty
+function t:characters-empty-sequence() {
+    characters(())
+};
+
+(: fn:replicate :)
+
+declare
+    %test:assertEquals(0, 0, 0)
+function t:replicate-basic() {
+    replicate(0, 3)
+};
+
+declare
+    %test:assertEmpty
+function t:replicate-zero-count() {
+    replicate("A", 0)
+};
+
+declare
+    %test:assertEmpty
+function t:replicate-empty-input() {
+    replicate((), 5)
+};
+
+(: fn:insert-separator :)
+
+declare
+    %test:assertEquals(1, "|", 2, "|", 3)
+function t:insertSeparator-basic() {
+    insert-separator(1 to 3, "|")
+};
+
+declare
+    %test:assertEmpty
+function t:insertSeparator-empty() {
+    insert-separator((), "|")
+};
+
+declare
+    %test:assertEquals("A")
+function t:insertSeparator-single() {
+    insert-separator("A", "|")
+};
+
+(: fn:all-equal :)
+
+declare
+    %test:assertFalse
+function t:allEqual-different() {
+    all-equal((1, 2, 3))
+};
+
+declare
+    %test:assertTrue
+function t:allEqual-same() {
+    all-equal((1, 1, 1))
+};
+
+declare
+    %test:assertFalse
+function t:allEqual-mixed-numeric-types() {
+    (: XQ4: decimal 1.2 and double 1.2 differ in exact mathematical value :)
+    all-equal((xs:decimal('1.2'), xs:double('1.2')))
+};
+
+declare
+    %test:assertTrue
+function t:allEqual-empty() {
+    all-equal(())
+};
+
+declare
+    %test:assertTrue
+function t:allEqual-single() {
+    all-equal("one")
+};
+
+(: fn:all-different :)
+
+declare
+    %test:assertTrue
+function t:allDifferent-different() {
+    all-different((1, 2, 3))
+};
+
+declare
+    %test:assertFalse
+function t:allDifferent-duplicates() {
+    all-different((1, 2, 1))
+};
+
+declare
+    %test:assertTrue
+function t:allDifferent-empty() {
+    all-different(())
+};
+
+(: fn:items-at :)
+
+declare
+    %test:assertEquals(14)
+function t:itemsAt-single() {
+    items-at(11 to 20, 4)
+};
+
+declare
+    %test:assertEquals(17, 13)
+function t:itemsAt-reorder() {
+    items-at(11 to 20, (7, 3))
+};
+
+declare
+    %test:assertEmpty
+function t:itemsAt-empty-input() {
+    items-at((), 832)
+};
+
+(: fn:index-where :)
+
+declare
+    %test:assertEquals(2, 3)
+function t:indexWhere-basic() {
+    index-where((0, 4, 9), boolean#1)
+};
+
+declare
+    %test:assertEmpty
+function t:indexWhere-empty() {
+    index-where((), boolean#1)
+};
+
+(: fn:take-while :)
+
+declare
+    %test:assertEquals(10, 11, 12)
+function t:takeWhile-basic() {
+    take-while(10 to 20, function($x) { $x le 12 })
+};
+
+declare
+    %test:assertEmpty
+function t:takeWhile-empty() {
+    take-while((), boolean#1)
+};
+
+(: fn:slice :)
+
+declare
+    %test:assertEquals("b", "c", "d")
+function t:slice-startEnd() {
+    let $in := ("a", "b", "c", "d", "e")
+    return slice($in, 2, 4)
+};
+
+declare
+    %test:assertEquals("e")
+function t:slice-negative-start() {
+    let $in := ("a", "b", "c", "d", "e")
+    return slice($in, -1)
+};
+
+(: fn:duplicate-values :)
+
+declare
+    %test:assertEquals(1)
+function t:duplicateValues-basic() {
+    duplicate-values((1, 2, 3, 1))
+};
+
+declare
+    %test:assertEmpty
+function t:duplicateValues-noDups() {
+    duplicate-values((1, 2, 3))
+};
+
+(: fn:hash :)
+
+declare
+    %test:assertEquals("900150983CD24FB0D6963F7D28E17F72")
+function t:hash-md5() {
+    string(hash("abc"))
+};
+
+declare
+    %test:assertEmpty
+function t:hash-empty() {
+    hash(())
+};
+
+(: fn:while-do :)
+
+declare
+    %test:assertEquals(16)
+function t:whileDo-doubling() {
+    while-do(1, function($x) { $x lt 10 }, function($x) { $x * 2 })
+};
+
+(: fn:do-until :)
+
+declare
+    %test:assertEquals(16)
+function t:doUntil-doubling() {
+    do-until(1, function($x) { $x * 2 }, function($x) { $x ge 10 })
+};
+
+(: fn:sort-with :)
+
+declare
+    %test:assertEquals(1, 1, 3, 4, 5)
+function t:sortWith-ascending() {
+    sort-with((3, 1, 4, 1, 5), function($a, $b) { compare(string($a), string($b)) })
+};
+
+(: fn:op :)
+
+declare
+    %test:assertEquals(7)
+function t:op-add() {
+    op("+")(3, 4)
+};
+
+declare
+    %test:assertTrue
+function t:op-lt() {
+    op("lt")(3, 4)
+};
+
+declare
+    %test:assertEquals(7)
+function t:op-subtract() {
+    op("-")(10, 3)
+};
+
+(: fn:char :)
+
+declare
+    %test:assertEquals("A")
+function t:char-codepoint() {
+    char(65)
+};
+
+declare
+    %test:assertEquals("&amp;")
+function t:char-name() {
+    char("amp")
+};
+
+(: fn:atomic-equal :)
+
+declare
+    %test:assertTrue
+function t:atomicEqual-same() {
+    atomic-equal(1, 1)
+};
+
+declare
+    %test:assertFalse
+function t:atomicEqual-different-type() {
+    atomic-equal("1", 1)
+};
+
+declare
+    %test:assertTrue
+function t:atomicEqual-nan() {
+    atomic-equal(number("NaN"), number("NaN"))
+};
+
+(: fn:expanded-QName :)
+
+declare
+    %test:assertEquals("Q{}local")
+function t:expandedQName-noNS() {
+    expanded-QName(QName("", "local"))
+};
+
+declare
+    %test:assertEquals("Q{http://example.com}test")
+function t:expandedQName-withNS() {
+    expanded-QName(QName("http://example.com", "test"))
+};
+
+(: fn:highest / fn:lowest :)
+
+declare
+    %test:assertEquals(5)
+function t:highest-basic() {
+    highest((3, 1, 5, 2, 4))
+};
+
+declare
+    %test:assertEquals(1)
+function t:lowest-basic() {
+    lowest((3, 1, 5, 2, 4))
+};
+
+(: fn:partition :)
+
+declare
+    %test:assertEquals(3)
+function t:partition-basic() {
+    count(partition(1 to 6, function($current, $next, $pos) { $pos mod 2 eq 1 }))
+};
+
+(: fn:parse-uri :)
+
+declare
+    %test:assertEquals("http")
+function t:parseUri-scheme() {
+    parse-uri("http://example.com/path")?scheme
+};
+
+declare
+    %test:assertTrue
+function t:parseUri-hierarchical() {
+    parse-uri("http://example.com/path")?hierarchical
+};
+
+declare
+    %test:assertEquals("example.com")
+function t:parseUri-host() {
+    parse-uri("http://example.com/path")?host
+};
+
+declare
+    %test:assertEquals("/path")
+function t:parseUri-path() {
+    parse-uri("http://example.com/path")?path
+};
+
+declare
+    %test:assertFalse
+function t:parseUri-opaque() {
+    parse-uri("mailto:user@example.com")?hierarchical
+};
+
+(: fn:scan-left :)
+
+declare
+    %test:assertEquals(3)
+function t:scanLeft-count() {
+    count(scan-left(1 to 2, 0, function($acc, $item) { $acc + $item }))
+};
+
+declare
+    %test:assertEquals(0, 1, 3)
+function t:scanLeft-sums() {
+    for $arr in scan-left(1 to 2, 0, function($acc, $item) { $acc + $item })
+    return $arr?1
+};
+
+(: fn:scan-right :)
+
+declare
+    %test:assertEquals(3)
+function t:scanRight-count() {
+    count(scan-right(1 to 2, 0, function($item, $acc) { $acc + $item }))
+};
+
+declare
+    %test:assertEquals(3, 2, 0)
+function t:scanRight-sums() {
+    for $arr in scan-right(1 to 2, 0, function($item, $acc) { $acc + $item })
+    return $arr?1
+};
+
+(: fn:build-uri :)
+
+declare
+    %test:assertEquals("https://qt4cg.org/specifications/index.html")
+function t:buildUri-basic() {
+    build-uri(map {
+        "scheme": "https",
+        "host": "qt4cg.org",
+        "path": "/specifications/index.html"
+    })
+};
+
+(: fn:every :)
+
+declare
+    %test:assertTrue
+function t:every-all-true() {
+    every((1, 2, 3), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertFalse
+function t:every-one-false() {
+    every((1, -1, 3), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertTrue
+function t:every-empty() {
+    every((), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertTrue
+function t:every-1arg-truthy() {
+    every((1, true(), "yes"))
+};
+
+declare
+    %test:assertFalse
+function t:every-1arg-falsy() {
+    every((1, 0, "yes"))
+};
+
+(: fn:some :)
+
+declare
+    %test:assertTrue
+function t:some-one-true() {
+    some((-1, 0, 3), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertFalse
+function t:some-none-true() {
+    some((-1, -2, -3), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertFalse
+function t:some-empty() {
+    some((), function($x) { $x gt 0 })
+};
+
+declare
+    %test:assertTrue
+function t:some-1arg-truthy() {
+    some((0, false(), 1))
+};
+
+(: fn:sort-by :)
+
+declare
+    %test:assertEquals("a", "bb", "ccc")
+function t:sortBy-stringLength() {
+    sort-by(("ccc", "a", "bb"), map { "key": string-length#1 })
+};
+
+declare
+    %test:assertEquals("ccc", "bb", "a")
+function t:sortBy-descending() {
+    sort-by(("a", "bb", "ccc"), map { "key": string-length#1, "order": "descending" })
+};
+
+declare
+    %test:assertEmpty
+function t:sortBy-empty() {
+    sort-by((), map { "key": string-length#1 })
+};
+
+(: fn:contains-subsequence :)
+
+declare
+    %test:assertTrue
+function t:containsSubseq-present() {
+    contains-subsequence((1, 2, 3, 4, 5), (2, 3, 4))
+};
+
+declare
+    %test:assertFalse
+function t:containsSubseq-absent() {
+    contains-subsequence((1, 2, 3, 4, 5), (2, 4))
+};
+
+declare
+    %test:assertTrue
+function t:containsSubseq-emptySubseq() {
+    contains-subsequence((1, 2, 3), ())
+};
+
+(: fn:starts-with-subsequence :)
+
+declare
+    %test:assertTrue
+function t:startsWithSubseq-true() {
+    starts-with-subsequence((1, 2, 3, 4), (1, 2))
+};
+
+declare
+    %test:assertFalse
+function t:startsWithSubseq-false() {
+    starts-with-subsequence((1, 2, 3, 4), (2, 3))
+};
+
+declare
+    %test:assertTrue
+function t:startsWithSubseq-empty() {
+    starts-with-subsequence((1, 2, 3), ())
+};
+
+(: fn:ends-with-subsequence :)
+
+declare
+    %test:assertTrue
+function t:endsWithSubseq-true() {
+    ends-with-subsequence((1, 2, 3, 4), (3, 4))
+};
+
+declare
+    %test:assertFalse
+function t:endsWithSubseq-false() {
+    ends-with-subsequence((1, 2, 3, 4), (2, 3))
+};
+
+(: fn:decode-from-uri :)
+
+declare
+    %test:assertEquals("hello world")
+function t:decodeFromUri-plus() {
+    decode-from-uri("hello+world")
+};
+
+declare
+    %test:assertEquals("a/b")
+function t:decodeFromUri-percent() {
+    decode-from-uri("a%2Fb")
+};
+
+declare
+    %test:assertEquals("")
+function t:decodeFromUri-empty() {
+    decode-from-uri(())
+};
+
+(: fn:parse-integer :)
+
+declare
+    %test:assertEquals(42)
+function t:parseInteger-decimal() {
+    parse-integer("42")
+};
+
+declare
+    %test:assertEquals(255)
+function t:parseInteger-hex() {
+    parse-integer("FF", 16)
+};
+
+declare
+    %test:assertEquals(7)
+function t:parseInteger-binary() {
+    parse-integer("111", 2)
+};
+
+declare
+    %test:assertEquals(1000)
+function t:parseInteger-underscores() {
+    parse-integer("1_000")
+};
+
+declare
+    %test:assertEmpty
+function t:parseInteger-empty() {
+    parse-integer(())
+};
+
+(: fn:divide-decimals :)
+
+declare
+    %test:assertEquals(3)
+function t:divideDecimals-quotient() {
+    divide-decimals(10, 3)?quotient
+};
+
+declare
+    %test:assertEquals(1)
+function t:divideDecimals-remainder() {
+    divide-decimals(10, 3)?remainder
+};
+
+declare
+    %test:assertEquals(3.3)
+function t:divideDecimals-precision() {
+    divide-decimals(10, 3, 1)?quotient
+};
+
+(: fn:distinct-ordered-nodes :)
+
+declare
+    %test:assertEquals(3)
+function t:distinctOrderedNodes-basic() {
+    let $doc := <root><a/><b/><c/></root>
+    return count(distinct-ordered-nodes(($doc/a, $doc/c, $doc/b, $doc/a)))
+};
+
+(: fn:siblings :)
+
+declare
+    %test:assertEquals(3)
+function t:siblings-count() {
+    let $doc := <root><a/><b/><c/></root>
+    return count(siblings($doc/b))
+};
+
+declare
+    %test:assertEmpty
+function t:siblings-empty() {
+    siblings(())
+};
+
+(: fn:type-of :)
+
+declare
+    %test:assertEquals("xs:integer")
+function t:typeOf-integer() {
+    type-of(42)
+};
+
+declare
+    %test:assertEquals("xs:string")
+function t:typeOf-string() {
+    type-of("hello")
+};
+
+declare
+    %test:assertEquals("empty-sequence()")
+function t:typeOf-empty() {
+    type-of(())
+};
+
+declare
+    %test:assertEquals("element()")
+function t:typeOf-element() {
+    type-of(<foo/>)
+};
+
+declare
+    %test:assertEquals("map(*)")
+function t:typeOf-map() {
+    type-of(map { "a": 1 })
+};
+
+(: fn:unix-dateTime :)
+
+declare
+    %test:assertEquals("1970-01-01T00:00:00Z")
+function t:unixDateTime-epoch() {
+    string(unix-dateTime(0))
+};
+
+declare
+    %test:assertEquals("1970-01-01T00:00:01Z")
+function t:unixDateTime-oneSecond() {
+    string(unix-dateTime(1000))
+};
+
+(: fn:message :)
+
+declare
+    %test:assertEmpty
+function t:message-basic() {
+    message("test output")
+};
+
+declare
+    %test:assertEmpty
+function t:message-withLabel() {
+    message("test output", "DEBUG")
+};
 
 (: String templates :)
 declare
@@ -209,7 +990,80 @@ function t:pipeline-chain() {
     5 -> (1, 2, .) -> sum(.)
 };
 
-(: ordered maps — requires MapType changes from XQ4 functions branch :)
+(: ordered maps :)
+
+declare
+    %test:assertEquals("a", "b", "c")
+function t:ordered-map-keys() {
+    map:keys(map { "a": 1, "b": 2, "c": 3 })
+};
+
+declare
+    %test:assertEquals("x", "y", "z")
+function t:ordered-map-literal-order() {
+    let $m := map { "x": 10, "y": 20, "z": 30 }
+    return map:keys($m)
+};
+
+declare
+    %test:assertEquals("a", "b", "c", "d")
+function t:ordered-map-put-appends() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    let $m2 := map:put($m, "d", 4)
+    return map:keys($m2)
+};
+
+declare
+    %test:assertEquals("a", "b", "c")
+function t:ordered-map-put-existing-keeps-position() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    let $m2 := map:put($m, "b", 99)
+    return map:keys($m2)
+};
+
+declare
+    %test:assertEquals("a", "c")
+function t:ordered-map-remove-preserves-order() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    let $m2 := map:remove($m, "b")
+    return map:keys($m2)
+};
+
+declare
+    %test:assertEquals("a", "b", "c", "d")
+function t:ordered-map-merge-preserves-order() {
+    let $m1 := map { "a": 1, "b": 2 }
+    let $m2 := map { "c": 3, "d": 4 }
+    return map:keys(map:merge(($m1, $m2)))
+};
+
+declare
+    %test:assertEquals("a", "b", "c")
+function t:ordered-map-merge-existing-keeps-position() {
+    let $m1 := map { "a": 1, "b": 2 }
+    let $m2 := map { "b": 99, "c": 3 }
+    return map:keys(map:merge(($m1, $m2)))
+};
+
+declare
+    %test:assertEquals(1, 2, 3)
+function t:ordered-map-for-each-preserves-order() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    return map:for-each($m, function($k, $v) { $v })
+};
+
+declare
+    %test:assertEquals("x", "s", "a")
+function t:ordered-map-mixed-types() {
+    let $m := map { "x": 0, "s": 0, "a": 0 }
+    return map:keys($m)
+};
+
+declare
+    %test:assertEquals(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+function t:ordered-map-merge-entries() {
+    map:keys(map:merge(for $n in 1 to 10 return map:entry($n, $n+1)))
+};
 
 (: optional map keyword :)
 
@@ -231,13 +1085,195 @@ function t:bare-map-multi-entry() {
     map:size({"a": 1, "b": 2})
 };
 
-(: bare-map-keys-ordered: requires ordered MapType from functions branch :)
+declare
+    %test:assertEquals("a", "b", "c")
+function t:bare-map-keys-ordered() {
+    map:keys({"a": 1, "b": 2, "c": 3})
+};
 
 declare
     %test:assertEquals(2)
 function t:bare-map-after-return() {
     let $m := {1: 2}
     return $m(1)
+};
+
+(: ========== map:empty ========== :)
+
+declare
+    %test:assertTrue
+function t:map-empty-true() {
+    map:empty(map {})
+};
+
+declare
+    %test:assertFalse
+function t:map-empty-false() {
+    map:empty(map { "a": 1 })
+};
+
+declare
+    %test:assertFalse
+function t:map-empty-with-empty-value() {
+    map:empty(map { 1: () })
+};
+
+(: ========== map:items ========== :)
+
+declare
+    %test:assertEquals("yes", "no")
+function t:map-items-basic() {
+    map:items(map { 1: "yes", 2: "no" })
+};
+
+declare
+    %test:assertEquals("red", "green", "blue", "yellow")
+function t:map-items-multi-value() {
+    map:items(map { 1: ("red", "green"), 2: ("blue", "yellow"), 3: () })
+};
+
+declare
+    %test:assertEmpty
+function t:map-items-empty-map() {
+    map:items(map {})
+};
+
+(: ========== map:entries ========== :)
+
+declare
+    %test:assertEquals(2)
+function t:map-entries-count() {
+    count(map:entries(map { 1: "yes", 0: "no" }))
+};
+
+declare
+    %test:assertTrue
+function t:map-entries-are-single-entry-maps() {
+    let $entries := map:entries(map { "a": 1, "b": 2 })
+    return every $e in $entries satisfies (map:size($e) eq 1)
+};
+
+declare
+    %test:assertEquals("a", "b", "c")
+function t:map-entries-preserve-order() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    return map:entries($m) ! map:keys(.)
+};
+
+(: ========== map:keys-where ========== :)
+
+declare
+    %test:assertEquals(2, 3)
+function t:map-keys-where-basic() {
+    let $numbers := map { 0: "zero", 1: "one", 2: "two", 3: "three" }
+    return map:keys-where($numbers, function($key, $value) { $value = ("two", "three") })
+};
+
+declare
+    %test:assertEquals(3, 4)
+function t:map-keys-where-square() {
+    let $square := map:merge((1 to 5) ! map:entry(., . * .))
+    return map:keys-where($square, function($key, $value) { $value > 5 and $value < 20 })
+};
+
+declare
+    %test:assertEmpty
+function t:map-keys-where-none-match() {
+    map:keys-where(map { 1: "a", 2: "b" }, function($k, $v) { $k > 10 })
+};
+
+(: ========== map:filter ========== :)
+
+declare
+    %test:assertEquals(2)
+function t:map-filter-by-key() {
+    map:size(map:filter(
+        map { 1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday",
+              5: "Thursday", 6: "Friday", 7: "Saturday" },
+        function($k, $v) { $k = (1, 7) }
+    ))
+};
+
+declare
+    %test:assertEquals(2)
+function t:map-filter-by-value() {
+    map:size(map:filter(
+        map { 1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday",
+              5: "Thursday", 6: "Friday", 7: "Saturday" },
+        function($k, $v) { $v = ("Saturday", "Sunday") }
+    ))
+};
+
+declare
+    %test:assertEquals(0)
+function t:map-filter-none() {
+    map:size(map:filter(map { 1: "a", 2: "b" }, function($k, $v) { false() }))
+};
+
+declare
+    %test:assertEquals("a", "c")
+function t:map-filter-preserves-order() {
+    let $m := map { "a": 1, "b": 2, "c": 3 }
+    return map:keys(map:filter($m, function($k, $v) { $v != 2 }))
+};
+
+(: ========== map:build ========== :)
+
+declare
+    %test:assertEquals(0)
+function t:map-build-empty-input() {
+    map:size(map:build(()))
+};
+
+declare
+    %test:assertEquals(5)
+function t:map-build-identity() {
+    map:size(map:build(1 to 5))
+};
+
+declare
+    %test:assertEquals(3)
+function t:map-build-with-key-fn() {
+    (: 1 mod 3 = 1, 2 mod 3 = 2, 3 mod 3 = 0, etc. — 3 distinct keys :)
+    map:size(map:build(1 to 10, function($x) { $x mod 3 }))
+};
+
+declare
+    %test:assertEquals("one", "two", "three")
+function t:map-build-with-value-fn() {
+    let $m := map:build(1 to 3, (), function($x) { ("one", "two", "three")[$x] })
+    return ($m(1), $m(2), $m(3))
+};
+
+declare
+    %test:assertEquals(3, 6, 9)
+function t:map-build-combine-duplicates() {
+    (: Default behavior: duplicate keys combine values :)
+    let $m := map:build(1 to 10, function($x) { $x mod 3 })
+    return $m(0)
+};
+
+declare
+    %test:assertEquals(12, 15, 6)
+function t:map-build-with-custom-duplicates-fn() {
+    let $m := map:build(
+        ("apple", "apricot", "banana", "blueberry", "cherry"),
+        function($s) { substring($s, 1, 1) },
+        string-length#1,
+        map { "duplicates": function($a, $b) { $a + $b } }
+    )
+    return ($m("a"), $m("b"), $m("c"))
+};
+
+declare
+    %test:assertEquals("Wang", "Liu", "Zhao")
+function t:map-build-keys-in-order() {
+    let $m := map:build(
+        ("Wang", "Liu", "Zhao"),
+        function($name) { $name },
+        function($name) { $name }
+    )
+    return map:keys($m)
 };
 
 (: ========== Braced if ========== :)
@@ -1043,7 +2079,25 @@ function t:focusFunction-withHigherOrder() {
     return $add1(2)
 };
 
-(: Keyword arguments — parser syntax test only, full dispatch tested with XQ4 functions :)
+(: Keyword arguments :)
+
+declare
+    %test:assertEquals("c", "d", "e")
+function t:keywordArgs-slice-start() {
+    slice(("a", "b", "c", "d", "e"), start := 3)
+};
+
+declare
+    %test:assertEquals("b", "c", "d")
+function t:keywordArgs-slice-startEnd() {
+    slice(("a", "b", "c", "d", "e"), start := 2, end := 4)
+};
+
+declare
+    %test:assertEmpty
+function t:keywordArgs-slice-empty() {
+    slice((), start := 1)
+};
 
 (: XQ4 annotation literals :)
 
@@ -1060,6 +2114,185 @@ declare
 function t:annotation-negative-numeric-literal() {
     let $f := %Q{http://example.com/test}range(-1, -3.14, -2.5e3) fn { . }
     return $f(1)
+};
+
+(: fn:parse-QName :)
+
+declare
+    %test:assertEmpty
+function t:parseQName-empty() {
+    parse-QName(())
+};
+
+declare
+    %test:assertEquals("foo")
+function t:parseQName-ncname() {
+    local-name-from-QName(parse-QName("foo"))
+};
+
+declare
+    %test:assertEquals("")
+function t:parseQName-ncname-ns() {
+    namespace-uri-from-QName(parse-QName("foo"))
+};
+
+declare
+    %test:assertEquals("local")
+function t:parseQName-uriQualified() {
+    local-name-from-QName(parse-QName("Q{http://example.com}local"))
+};
+
+declare
+    %test:assertEquals("http://example.com")
+function t:parseQName-uriQualified-ns() {
+    namespace-uri-from-QName(parse-QName("Q{http://example.com}local"))
+};
+
+declare
+    %test:assertEquals("integer")
+function t:parseQName-prefixed() {
+    local-name-from-QName(parse-QName("xs:integer"))
+};
+
+declare
+    %test:assertEquals("http://www.w3.org/2001/XMLSchema")
+function t:parseQName-prefixed-ns() {
+    namespace-uri-from-QName(parse-QName("xs:integer"))
+};
+
+(: fn:atomic-type-annotation :)
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-integer-name() {
+    let $r := atomic-type-annotation(42)
+    return $r?name eq xs:QName("xs:integer")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-integer-isSimple() {
+    atomic-type-annotation(42)?is-simple
+};
+
+declare
+    %test:assertEquals("atomic")
+function t:atomicTypeAnnotation-integer-variety() {
+    atomic-type-annotation(42)?variety
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-string-name() {
+    let $r := atomic-type-annotation("hello")
+    return $r?name eq xs:QName("xs:string")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-boolean-name() {
+    let $r := atomic-type-annotation(true())
+    return $r?name eq xs:QName("xs:boolean")
+};
+
+(: fn:node-type-annotation :)
+
+declare
+    %test:assertTrue
+function t:nodeTypeAnnotation-element() {
+    let $r := node-type-annotation(<x/>)
+    return $r?name eq xs:QName("xs:untyped")
+};
+
+declare
+    %test:assertFalse
+function t:nodeTypeAnnotation-element-isSimple() {
+    node-type-annotation(<x/>)?is-simple
+};
+
+declare
+    %test:assertEquals("mixed")
+function t:nodeTypeAnnotation-element-variety() {
+    node-type-annotation(<x/>)?variety
+};
+
+declare
+    %test:assertTrue
+function t:nodeTypeAnnotation-attribute() {
+    let $r := node-type-annotation((<x a="1"/>)/@a)
+    return $r?name eq xs:QName("xs:untypedAtomic")
+};
+
+declare
+    %test:assertTrue
+function t:nodeTypeAnnotation-attribute-isSimple() {
+    node-type-annotation((<x a="1"/>)/@a)?is-simple
+};
+
+declare
+    %test:assertEquals("atomic")
+function t:nodeTypeAnnotation-attribute-variety() {
+    node-type-annotation((<x a="1"/>)/@a)?variety
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-hasBaseType() {
+    let $r := atomic-type-annotation(true())
+    return map:contains($r, "base-type")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-hasMatches() {
+    let $r := atomic-type-annotation(true())
+    return map:contains($r, "matches")
+};
+
+declare
+    %test:assertTrue
+function t:atomicTypeAnnotation-hasConstructor() {
+    let $r := atomic-type-annotation(true())
+    return map:contains($r, "constructor")
+};
+
+declare
+    %test:assertTrue
+function t:nodeTypeAnnotation-element-hasBaseType() {
+    let $r := node-type-annotation(<x/>)
+    return map:contains($r, "base-type")
+};
+
+(: fn:civil-timezone :)
+
+declare
+    %test:assertEquals("PT1H")
+function t:civilTimezone-paris-winter() {
+    string(civil-timezone(xs:dateTime("2024-11-05T12:00:00"), "Europe/Paris"))
+};
+
+declare
+    %test:assertEquals("PT2H")
+function t:civilTimezone-paris-summer() {
+    string(civil-timezone(xs:dateTime("2024-05-05T12:00:00"), "Europe/Paris"))
+};
+
+declare
+    %test:assertEquals("PT5H30M")
+function t:civilTimezone-india() {
+    string(civil-timezone(xs:dateTime("2024-06-15T12:00:00"), "Asia/Kolkata"))
+};
+
+declare
+    %test:assertEquals("-PT5H")
+function t:civilTimezone-peru() {
+    string(civil-timezone(xs:dateTime("2024-06-15T12:00:00"), "America/Lima"))
+};
+
+declare
+    %test:assertError("FODT0004")
+function t:civilTimezone-unknown-place() {
+    civil-timezone(xs:dateTime("2024-06-15T12:00:00"), "North/Pole")
 };
 
 (: === try/catch/finally (XQ4) === :)
@@ -1156,6 +2389,77 @@ function t:switch-boolean-mode-no-braces() {
         default return "What's that odd noise?"
 };
 
+(: fn:function-annotations tests :)
+
+declare
+    %test:assertEmpty
+function t:function-annotations-builtin() {
+    (: Built-in functions have no annotations :)
+    fn:function-annotations(true#0)
+};
+
+declare
+    %test:assertTrue
+function t:function-annotations-exists() {
+    (: fn:function-annotations#1 exists :)
+    exists(fn:function-annotations#1)
+};
+
+declare
+    %test:assertEquals(1)
+function t:function-annotations-private() {
+    (: Test %private annotation on a user function :)
+    let $anns := fn:function-annotations(t:annotated-private#1)
+    return count($anns)
+};
+
+declare %private function t:annotated-private($x) { $x + 1 };
+
+declare
+    %test:assertEquals(1)
+function t:function-annotations-inline() {
+    (: Annotations on inline function expressions :)
+    let $f := %local:color("red") function ($c) { $c + 1 }
+    return count(fn:function-annotations($f))
+};
+
+declare
+    %test:assertEquals(1)
+function t:function-annotations-declared() {
+    (: Annotations on user-declared function ref :)
+    count(fn:function-annotations(t:annotated-private#1))
+};
+
+(: fn:function-identity tests :)
+
+declare
+    %test:assertTrue
+function t:function-identity-type() {
+    (: Returns a string :)
+    fn:function-identity(abs#1) instance of xs:string
+};
+
+declare
+    %test:assertTrue
+function t:function-identity-consistent() {
+    (: Same function item returns same identity :)
+    fn:function-identity(abs#1) eq fn:function-identity(abs#1)
+};
+
+declare
+    %test:assertFalse
+function t:function-identity-different() {
+    (: Different functions return different identities :)
+    fn:function-identity(abs#1) eq fn:function-identity(round#1)
+};
+
+declare
+    %test:assertTrue
+function t:function-identity-user-func() {
+    (: User function identity is consistent :)
+    fn:function-identity(t:annotated-private#1) eq fn:function-identity(t:annotated-private#1)
+};
+
 (: XQ4 focus constructors :)
 
 declare
@@ -1184,4 +2488,38 @@ function t:switch-nan-matches-nan() {
         case "42e0" return "Oink"
         case xs:float('NaN') return "Woof"
         default return "Expletive deleted" }</out>/string()
+};
+
+(: ==================== XQ4 No-Namespace Function Override (PR2200) ==================== :)
+
+declare
+    %test:assertEquals(8)
+function t:no-namespace-function-override() {
+    util:eval('
+        xquery version "4.0";
+        declare function f($x as xs:integer) as xs:integer { $x + 3 };
+        f(5)
+    ')
+};
+
+declare
+    %test:assertEquals(105)
+function t:no-namespace-override-builtin() {
+    util:eval('
+        xquery version "4.0";
+        declare function abs($x as xs:integer) as xs:integer { $x + 100 };
+        abs(5)
+    ')
+};
+
+(: ==================== fn:load-xquery-module content option ==================== :)
+
+declare
+    %test:assertEquals("world")
+function t:load-xquery-module-content() {
+    let $src := "module namespace m = 'http://example.com/test';
+                 declare function m:hello() as xs:string { 'world' };"
+    let $mod := fn:load-xquery-module('http://example.com/test', map { 'content': $src })
+    let $hello := $mod?functions(QName('http://example.com/test', 'hello'))
+    return $hello?0()
 };

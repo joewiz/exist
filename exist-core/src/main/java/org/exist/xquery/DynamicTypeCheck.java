@@ -92,10 +92,18 @@ public class DynamicTypeCheck extends AbstractExpression {
                 //Retrieve the actual node
                 {type= ((NodeProxy) item).getNode().getNodeType();}
         }
+<<<<<<< HEAD
         // XQuery 4.0: record type checking — a map can match a record type
         if (requiredType == Type.RECORD && Type.subTypeOf(type, Type.MAP_ITEM)) {
             if (result != null) { result.add(item); }
             return; // record type checking handled by SequenceType.checkType
+=======
+        // Record types: maps can satisfy record types structurally
+        if (requiredType == Type.RECORD && Type.subTypeOf(type, Type.MAP_ITEM)) {
+            // Let SequenceType.checkRecordType() handle structural validation
+            if (result != null) { result.add(item); }
+            return;
+>>>>>>> joewiz/v2/new-parser
         }
         if(type != requiredType && !Type.subTypeOf(type, requiredType)) {
             //TODO : how to make this block more generic ? -pb
@@ -125,8 +133,7 @@ public class DynamicTypeCheck extends AbstractExpression {
             //Then, if duration, try to refine the type
             //No test on the type hierarchy ; this has to pass :
             //fn:months-from-duration(xs:duration("P1Y2M3DT10H30M"))
-            //TODO : find a way to enforce the test (by making a difference between casting and treating as ?)
-            } else if (Type.subTypeOf(requiredType, Type.DURATION) /*&& Type.subTypeOf(type, requiredType)*/) {
+            } else if (Type.subTypeOf(requiredType, Type.DURATION) && Type.subTypeOf(type, requiredType)) {
                 try {
                     item = item.convertTo(requiredType);
                 //No way
@@ -136,9 +143,7 @@ public class DynamicTypeCheck extends AbstractExpression {
                             item.getStringValue() + ")'");
                 }
             //Then, if date, try to refine the type
-            //No test on the type hierarchy
-            //TODO : find a way to enforce the test (by making a difference between casting and treating as ?)
-            } else if (Type.subTypeOf(requiredType, Type.DATE) /*&& Type.subTypeOf(type, requiredType)*/) {
+            } else if (Type.subTypeOf(requiredType, Type.DATE) && Type.subTypeOf(type, requiredType)) {
                 try {
                     item = item.convertTo(requiredType);
                 //No way

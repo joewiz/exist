@@ -24,6 +24,7 @@ package org.exist.xquery.functions.fn;
 import com.fasterxml.jackson.core.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.exist.Namespaces;
 import org.exist.dom.QName;
 import org.exist.xquery.*;
 import org.exist.xquery.functions.map.MapType;
@@ -148,21 +149,14 @@ public class FunXmlToJson extends BasicFunction {
             case "map":
                 gen.writeStartObject();
                 final org.w3c.dom.NodeList mapChildren = element.getChildNodes();
-                final java.util.Set<String> seenKeys = new java.util.HashSet<>();
                 for (int i = 0; i < mapChildren.getLength(); i++) {
                     final org.w3c.dom.Node child = mapChildren.item(i);
                     if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
                         final org.w3c.dom.Element childElem = (org.w3c.dom.Element) child;
                         final String keyValue = getKeyAttribute(childElem);
-                        if (keyValue == null) {
-                            throw new XPathException(this, ErrorCodes.FOJS0006,
-                                    "Invalid XML representation of JSON. Map entry missing 'key' attribute.");
+                        if (keyValue != null) {
+                            gen.writeFieldName(keyValue);
                         }
-                        if (!seenKeys.add(keyValue)) {
-                            throw new XPathException(this, ErrorCodes.FOJS0006,
-                                    "Invalid XML representation of JSON. Duplicate key '" + keyValue + "' in map.");
-                        }
-                        gen.writeFieldName(keyValue);
                         writeJsonElement(childElem, gen);
                     }
                 }
@@ -223,11 +217,10 @@ public class FunXmlToJson extends BasicFunction {
 
     private String getKeyAttribute(final org.w3c.dom.Element element) throws XPathException {
         final String escapedKey = element.getAttribute("escaped-key");
-        // getAttribute returns "" for missing attributes, so check hasAttribute
-        if (!element.hasAttribute("key")) {
+        final String key = element.getAttribute("key");
+        if (key == null || key.isEmpty()) {
             return null;
         }
-        final String key = element.getAttribute("key");
         if ("true".equals(escapedKey)) {
             try {
                 return unescapeEscapedJsonString(key);
@@ -274,6 +267,12 @@ public class FunXmlToJson extends BasicFunction {
                 switch (status) {
                     case XMLStreamReader.START_ELEMENT:
                         tempStringBuilder.setLength(0);
+                        final String elementNamespaceURI = reader.getNamespaceURI();
+                        if (!Namespaces.XPATH_FUNCTIONS_NS.equals(elementNamespaceURI)) {
+                            throw new XPathException(this, ErrorCodes.FOJS0006,
+                                    "Invalid XML representation of JSON. Element '" + reader.getLocalName()
+                                    + "' is not in the required namespace '" + Namespaces.XPATH_FUNCTIONS_NS + "'.");
+                        }
                         final String elementAttributeEscapedValue = reader.getAttributeValue(null, "escaped");
                         elementValueIsEscaped = "true".equals(elementAttributeEscapedValue);
                         final String elementAttributeEscapedKeyValue = reader.getAttributeValue(null, "escaped-key");

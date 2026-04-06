@@ -30,7 +30,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
-import org.exist.xquery.ft.FTMatchOptions;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -331,14 +330,14 @@ public class XQueryContext implements BinaryValueManager, Context {
     /**
      * XQFT 3.0: default full-text match options declared via "declare ft-option".
      */
-    private FTMatchOptions defaultFTMatchOptions;
+    private org.exist.xquery.ft.FTMatchOptions defaultFTMatchOptions;
 
     /**
      * XQFT 3.0: thesaurus URI-to-file mapping.
      * Maps thesaurus URIs (e.g., "http://bstore1.example.com/UsabilityThesaurus.xml")
      * to local file paths.
      */
-    private final Map<String, Path> thesaurusRegistry = new HashMap<>();
+    private final java.util.Map<String, java.nio.file.Path> thesaurusRegistry = new java.util.HashMap<>();
 
     /**
      * The default language
@@ -403,6 +402,12 @@ public class XQueryContext implements BinaryValueManager, Context {
     private int expressionCounter = 0;
 
     private LockedDocumentMap protectedDocuments = null;
+
+    // --- Preclaiming lock targets (BaseX-style two-phase locking) ---
+    private Set<XmldbURI> preclaimDocumentTargets;
+    private Set<XmldbURI> preclaimCollectionTargets;
+    private boolean preclaimRequiresGlobalLock = false;
+    private final List<AutoCloseable> preclaimedLocks = new ArrayList<>();
 
     /**
      * The profiler instance used by this context.
@@ -1126,19 +1131,19 @@ public class XQueryContext implements BinaryValueManager, Context {
         return defaultCollation;
     }
 
-    public void setDefaultFTMatchOptions(final FTMatchOptions opts) {
+    public void setDefaultFTMatchOptions(final org.exist.xquery.ft.FTMatchOptions opts) {
         this.defaultFTMatchOptions = opts;
     }
 
-    public FTMatchOptions getDefaultFTMatchOptions() {
+    public org.exist.xquery.ft.FTMatchOptions getDefaultFTMatchOptions() {
         return defaultFTMatchOptions;
     }
 
-    public void registerThesaurus(final String uri, final Path file) {
+    public void registerThesaurus(final String uri, final java.nio.file.Path file) {
         thesaurusRegistry.put(uri, file);
     }
 
-    public Path resolveThesaurusURI(final String uri) {
+    public java.nio.file.Path resolveThesaurusURI(final String uri) {
         return thesaurusRegistry.get(uri);
     }
 
@@ -1406,6 +1411,90 @@ public class XQueryContext implements BinaryValueManager, Context {
     @Override
     public boolean lockDocumentsOnLoad() {
         return false;
+    }
+
+    /**
+     * Collect lock targets from the compiled expression tree using
+     * a {@link org.exist.xquery.lock.LockTargetCollector}.
+     *
+     * @param root the compiled expression tree root
+     */
+    public void collectLockTargets(final Expression root) {
+        if (root == null) {
+            return;
+        }
+        final org.exist.xquery.lock.LockTargetCollector collector =
+                new org.exist.xquery.lock.LockTargetCollector();
+        collector.collect(root);
+        this.preclaimDocumentTargets = collector.getDocumentTargets();
+        this.preclaimCollectionTargets = collector.getCollectionTargets();
+        this.preclaimRequiresGlobalLock = collector.requiresGlobalLock();
+    }
+
+    /**
+     * Returns true if lock targets have been collected and preclaiming
+     * should be performed before evaluation.
+     */
+    public boolean hasPreclaimTargets() {
+        return preclaimDocumentTargets != null &&
+                (preclaimRequiresGlobalLock ||
+                 !preclaimDocumentTargets.isEmpty() ||
+                 !preclaimCollectionTargets.isEmpty());
+    }
+
+    /**
+     * Acquire preclaimed locks on all collected document and collection
+     * targets. If static analysis could not determine all targets,
+     * acquires a global collection write lock on /db as a safe fallback.
+     *
+     * <p>Locks are acquired in a consistent order (TreeSet natural ordering)
+     * to prevent deadlocks.</p>
+     *
+     * @throws LockException if lock acquisition fails
+     */
+    public void preclaimLocks() throws LockException {
+        if (preclaimDocumentTargets == null) {
+            return;
+        }
+        final org.exist.storage.lock.LockManager lockManager =
+                getBroker().getBrokerPool().getLockManager();
+
+        if (preclaimRequiresGlobalLock) {
+            // Fall back to global collection write lock on /db
+            preclaimedLocks.add(lockManager.acquireCollectionWriteLock(XmldbURI.ROOT_COLLECTION_URI));
+        } else {
+            // Acquire collection write locks first (sorted order)
+            for (final XmldbURI collectionUri : preclaimCollectionTargets) {
+                preclaimedLocks.add(lockManager.acquireCollectionWriteLock(collectionUri));
+            }
+            // Then acquire document write locks (sorted order)
+            for (final XmldbURI docUri : preclaimDocumentTargets) {
+                preclaimedLocks.add(lockManager.acquireDocumentWriteLock(docUri));
+            }
+        }
+    }
+
+    /**
+     * Release all preclaimed locks. Should be called in a finally block
+     * after query evaluation completes.
+     */
+    public void releasePreclaimedLocks() {
+        // Release in reverse order of acquisition
+        for (int i = preclaimedLocks.size() - 1; i >= 0; i--) {
+            try {
+                preclaimedLocks.get(i).close();
+            } catch (final Exception e) {
+                LOG.warn("Error releasing preclaimed lock", e);
+            }
+        }
+        preclaimedLocks.clear();
+    }
+
+    /**
+     * Returns true if preclaimed locks are currently held.
+     */
+    public boolean hasPreclaimedLocks() {
+        return !preclaimedLocks.isEmpty();
     }
 
     @Override
@@ -2172,6 +2261,26 @@ public class XQueryContext implements BinaryValueManager, Context {
         return null;
     }
 
+    /**
+     * Returns the first (earliest-declared) local variable currently in scope, or
+     * {@code null} if there are no local variables in scope.
+     *
+     * <p>Walks backward from {@code lastVar} to find the oldest variable declared in the
+     * current scope, stopping at the context-stack boundary.  Used by
+     * {@link OrderByClause#eval} to recover the true first active variable when
+     * {@link AbstractFLWORClause#getStartVariable()} returns a stale reference
+     * (e.g. in a FLWOR with two {@code order by} clauses where the inner one is
+     * evaluated during the outer one's {@code postEval} replay).</p>
+     */
+    LocalVariable getFirstLocalVariable() {
+        final LocalVariable end = contextStack.peek();
+        LocalVariable first = null;
+        for (LocalVariable var = lastVar; var != null && var != end; var = var.before) {
+            first = var;
+        }
+        return first;
+    }
+
     @Override
     public boolean isVarDeclared(final QName qname) {
         final Module[] modules = getModules(qname.getNamespaceURI());
@@ -2901,6 +3010,82 @@ public class XQueryContext implements BinaryValueManager, Context {
 
             final XQueryContext modContext = new ModuleContext(this, namespaceURI, prefix, location);
             modExternal.setContext(modContext);
+            // rd parser compileModule routing: GeneralComparison PathExpr unwrapping
+            // bug is fixed. Remaining blocker: rd parser fails on inline functions
+            // inside parenthesized sequences — e.g., (function ($a) {1}, ...) in
+            // bang.xql line 258. The parser doesn't recognize `function` as starting
+            // an inline function in this context. This is a general rd parser bug,
+            // not compileModule-specific. Re-enable once inline function parsing is fixed.
+            if (false && XQuery.useRdParser()) {
+                try {
+                    final StringBuilder sb = new StringBuilder(4096);
+                    final char[] buf = new char[4096];
+                    int n;
+                    while ((n = reader.read(buf)) != -1) sb.append(buf, 0, n);
+                    final String sourceText = sb.toString();
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("compileModule rd-parser: source length={}, namespace={}, first200={}",
+                                sourceText.length(), namespaceURI,
+                                sourceText.substring(0, Math.min(200, sourceText.length())).replace("\n", "\\n"));
+                    }
+                    final org.exist.xquery.parser.next.XQueryParser rdParser =
+                            new org.exist.xquery.parser.next.XQueryParser(modContext, sourceText);
+                    final Expression parsedExpr = rdParser.parse();
+                    // Wrap in LibraryModuleRoot for function dispatch
+                    final Expression rootExpr;
+                    if (rdParser.isLibraryModule()) {
+                        final LibraryModuleRoot libRoot = new LibraryModuleRoot(modContext);
+                        if (parsedExpr instanceof PathExpr) {
+                            for (int ii = 0; ii < ((PathExpr) parsedExpr).getLength(); ii++) {
+                                libRoot.add(((PathExpr) parsedExpr).getExpression(ii));
+                            }
+                        }
+                        rootExpr = libRoot;
+                    } else {
+                        rootExpr = parsedExpr;
+                    }
+                    modContext.setRootExpression(rootExpr);
+                    modContext.resolveForwardReferences();
+
+                    for (final java.util.Iterator<UserDefinedFunction> it = modContext.localFunctions(); it.hasNext(); ) {
+                        modExternal.declareFunction(it.next());
+                    }
+                    // Register module-level variables from the parsed expression tree.
+                    // The rd parser adds VariableDeclaration expressions to rootExpr,
+                    // which need to be registered on the module (like ANTLR 2's
+                    // myModule.declareVariable(qn, decl) during tree walking).
+                    if (parsedExpr instanceof PathExpr) {
+                        final PathExpr rootPath = (PathExpr) parsedExpr;
+                        for (int vi = 0; vi < rootPath.getLength(); vi++) {
+                            final Expression step = rootPath.getExpression(vi);
+                            if (step instanceof VariableDeclaration) {
+                                final VariableDeclaration decl = (VariableDeclaration) step;
+                                modExternal.declareVariable(decl.getName(), decl);
+                            }
+                        }
+                    }
+                    // Also register any variables already in the context
+                    for (final Variable var : modContext.getVariables().values()) {
+                        if (var.getQName().getNamespaceURI().equals(namespaceURI)) {
+                            modExternal.declareVariable(var);
+                        }
+                    }
+                    modExternal.setRootExpression(rootExpr);
+
+                    if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
+                        throw new XPathException(rootExpression, ErrorCodes.XQST0059,
+                                "namespace URI declared by module (" + modExternal.getNamespaceURI() +
+                                ") does not match namespace URI in import statement, which was: " + namespaceURI);
+                    }
+                    modExternal.setSource(source);
+                    modContext.setSource(source);
+                    modExternal.setIsReady(true);
+                    return modExternal;
+                } catch (final XPathException e) {
+                    e.prependMessage("Error while loading module " + location + ": ");
+                    throw e;
+                }
+            }
             final XQueryLexer lexer = new XQueryLexer(modContext, reader);
             final XQueryParser parser = new XQueryParser(lexer);
             final XQueryTreeParser astParser = new XQueryTreeParser(modContext, modExternal);
@@ -2929,12 +3114,6 @@ public class XQueryContext implements BinaryValueManager, Context {
                 if (namespaceURI != null && !modExternal.getNamespaceURI().equals(namespaceURI)) {
                     throw new XPathException(rootExpression, ErrorCodes.XQST0059, "namespace URI declared by module (" + modExternal.getNamespaceURI() + ") does not match namespace URI in import statement, which was: " + namespaceURI);
                 }
-
-                // Set source information on module context
-//            String sourceClassName = source.getClass().getName();
-//            modContext.setSourceKey(source.getKey().toString());
-                // Extract the source type from the classname by removing the package prefix and the "Source" suffix
-//            modContext.setSourceType( sourceClassName.substring( 17, sourceClassName.length() - 6 ) );
 
                 modExternal.setSource(source);
                 modContext.setSource(source);
@@ -3403,16 +3582,9 @@ public class XQueryContext implements BinaryValueManager, Context {
     @Override
     public void checkOptions(final Properties properties) throws XPathException {
         checkLegacyOptions(properties);
-
-        // Phase 1: Process parameter-document first (provides base settings)
-        processParameterDocument(dynamicOptions, properties);
-        processParameterDocument(staticOptions, properties);
-
-        // Phase 2: Process inline options (override parameter-document settings)
         if (dynamicOptions != null) {
             for (final Option option : dynamicOptions) {
-                if (Namespaces.XSLT_XQUERY_SERIALIZATION_NS.equals(option.getQName().getNamespaceURI())
-                        && !"parameter-document".equals(option.getQName().getLocalPart())) {
+                if (Namespaces.XSLT_XQUERY_SERIALIZATION_NS.equals(option.getQName().getNamespaceURI())) {
                     SerializerUtils.setProperty(option.getQName().getLocalPart(), option.getContents(), properties,
                             inScopeNamespaces::get);
                 }
@@ -3422,59 +3594,9 @@ public class XQueryContext implements BinaryValueManager, Context {
         if (staticOptions != null) {
             for (final Option option : staticOptions) {
                 if (Namespaces.XSLT_XQUERY_SERIALIZATION_NS.equals(option.getQName().getNamespaceURI())
-                        && !"parameter-document".equals(option.getQName().getLocalPart())
                         && !properties.containsKey(option.getQName().getLocalPart())) {
                     SerializerUtils.setProperty(option.getQName().getLocalPart(), option.getContents(), properties,
                             inScopeNamespaces::get);
-                }
-            }
-        }
-    }
-
-    /**
-     * Process the parameter-document serialization option if present.
-     * Loads the referenced XML file and extracts serialization parameters.
-     */
-    private void processParameterDocument(final java.util.List<Option> options, final Properties properties) throws XPathException {
-        if (options == null) return;
-        for (final Option option : options) {
-            if (Namespaces.XSLT_XQUERY_SERIALIZATION_NS.equals(option.getQName().getNamespaceURI())
-                    && "parameter-document".equals(option.getQName().getLocalPart())) {
-                final String docPath = option.getContents().trim();
-                if (docPath.isEmpty()) continue;
-                try {
-                    // Resolve relative to static base URI
-                    java.net.URI resolvedUri;
-                    final AnyURIValue baseURI = getBaseURI();
-                    if (baseURI != null && !baseURI.getStringValue().isEmpty()) {
-                        resolvedUri = new java.net.URI(baseURI.getStringValue()).resolve(docPath);
-                    } else {
-                        resolvedUri = new java.net.URI(docPath);
-                    }
-
-                    // Load and parse the XML document
-                    final java.io.InputStream is;
-                    if ("file".equals(resolvedUri.getScheme())) {
-                        is = new java.io.FileInputStream(new java.io.File(resolvedUri));
-                    } else if (resolvedUri.getScheme() == null) {
-                        // Bare path — try as file
-                        is = new java.io.FileInputStream(resolvedUri.getPath());
-                    } else {
-                        is = resolvedUri.toURL().openStream();
-                    }
-
-                    try (is) {
-                        final org.exist.dom.memtree.DocumentImpl doc = org.exist.xquery.util.DocUtils.parse(this, is);
-                        if (doc != null) {
-                            SerializerUtils.getSerializationOptions(
-                                    getRootExpression(), doc, properties);
-                        }
-                    }
-                } catch (final Exception e) {
-                    // Parameter document loading failure is not fatal — log and continue
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("Failed to load parameter-document '{}': {}", docPath, e.getMessage());
-                    }
                 }
             }
         }

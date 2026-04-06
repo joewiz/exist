@@ -77,7 +77,7 @@ public class FunLang extends Function {
 			new QName("lang", Function.BUILTIN_FUNCTION_NS),
 			FUNCTION_DESCRIPTION_1_PARAM + FUNCTION_DESCRIPTION_BOTH,
 			new SequenceType[] {
-				 new FunctionParameterSequenceType("lang", Type.STRING, Cardinality.ZERO_OR_ONE, "The language code")
+				 new FunctionParameterSequenceType("language", Type.STRING, Cardinality.ZERO_OR_ONE, "The language code")
 			},
 			new FunctionReturnSequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE, "true if the language code matches, false otherwise")
 		),
@@ -85,7 +85,7 @@ public class FunLang extends Function {
 				new QName("lang", Function.BUILTIN_FUNCTION_NS),
 				FUNCTION_DESCRIPTION_2_PARAMS + FUNCTION_DESCRIPTION_BOTH,
 				new SequenceType[] {
-					 new FunctionParameterSequenceType("lang", Type.STRING, Cardinality.ZERO_OR_ONE, "The language code"),
+					 new FunctionParameterSequenceType("language", Type.STRING, Cardinality.ZERO_OR_ONE, "The language code"),
 					 new FunctionParameterSequenceType("node", Type.NODE, Cardinality.EXACTLY_ONE, "The node")
 				},
 				new FunctionReturnSequenceType(Type.BOOLEAN, Cardinality.EXACTLY_ONE, "true if the language code matches, false otherwise")
@@ -99,10 +99,11 @@ public class FunLang extends Function {
 	public void analyze(AnalyzeContextInfo contextInfo) throws XPathException {
 		super.analyze(contextInfo);
 		try {
-			query = context.getBroker().getBrokerPool().getXQueryService().compile(context, queryString);
+			final XQueryContext innerContext = context.copyContext();
+			query = context.getBroker().getBrokerPool().getXQueryService().compile(innerContext, queryString);
 		} catch (final PermissionDeniedException e) {
 			throw new XPathException(this, e);
-		}		
+		}
 	}
 	
 	public Sequence eval(Sequence contextSequence, Item contextItem) throws XPathException {

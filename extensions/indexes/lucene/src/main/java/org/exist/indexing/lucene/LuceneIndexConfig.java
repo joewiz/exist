@@ -30,6 +30,7 @@ import org.exist.dom.QName;
 import org.exist.dom.persistent.AttrImpl;
 import org.exist.storage.ElementValue;
 import org.exist.storage.NodePath;
+import org.exist.util.Configuration;
 import org.exist.util.DatabaseConfigurationException;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Element;
@@ -73,6 +74,10 @@ public class LuceneIndexConfig {
 
     private boolean doIndex = true;
 
+    private int passageWidth = -1;
+    private String passageBreak = null;
+
+    protected final LuceneConfig parent;
     // This is for the @attr match boosting
     // and the intention is to do a proper predicate check instead in the future. /ljo
     private MultiMap matchAttrs;
@@ -81,6 +86,7 @@ public class LuceneIndexConfig {
 
     public LuceneIndexConfig(LuceneConfig parent, Element config, Map<String, String> namespaces, AnalyzerConfig analyzers,
                              Map<String, FieldType> fieldTypes) throws DatabaseConfigurationException {
+        this.parent = parent;
         if (config.hasAttribute(QNAME_ATTR)) {
             QName qname = parseQName(config, namespaces);
             path = new NodePathPattern(qname);
@@ -112,9 +118,25 @@ public class LuceneIndexConfig {
             type = new FieldType(config, analyzers);
         }
 
-        String indexParam = config.getAttribute(INDEX_ATTR);
-        if (!indexParam.isEmpty()) {
-            doIndex = "yes".equalsIgnoreCase(indexParam) || "true".equalsIgnoreCase(indexParam);
+        doIndex = Configuration.parseBooleanAttribute(config, INDEX_ATTR, true);
+
+        final String pwStr = config.getAttribute("passage-width");
+        if (pwStr != null && !pwStr.isEmpty()) {
+            try {
+                passageWidth = Integer.parseInt(pwStr);
+            } catch (NumberFormatException e) {
+                throw new DatabaseConfigurationException(
+                        "Invalid value for 'passage-width': integer expected, got " + pwStr);
+            }
+        }
+
+        final String pbStr = config.getAttribute("passage-break");
+        if (pbStr != null && !pbStr.isEmpty()) {
+            if (!"sentence".equals(pbStr) && !"character".equals(pbStr)) {
+                throw new DatabaseConfigurationException(
+                        "Invalid value for 'passage-break': expected 'sentence' or 'character', got " + pbStr);
+            }
+            passageBreak = pbStr;
         }
 
         parse(parent, config, namespaces, analyzers);
@@ -244,6 +266,20 @@ public class LuceneIndexConfig {
     }
 
     /**
+     * @return true if this config or any in the chain uses attribute/element boosts
+     */
+    public boolean usesBoost() {
+        LuceneIndexConfig c = this;
+        while (c != null) {
+            if (c.matchAttrs != null || (c.type != null && c.type.getBoost() > 0)) {
+                return true;
+            }
+            c = c.nextConfig;
+        }
+        return false;
+    }
+
+    /**
      * Get boost by matching the config with given attributes
      * (e.g. sibling or child atributes)
      * if no match, the value from getBoost() is returned
@@ -299,6 +335,10 @@ public class LuceneIndexConfig {
 	    nextConfig.add(config);
     }
 
+    public LuceneConfig getParent() {
+        return parent;
+    }
+
     public LuceneIndexConfig getNext() {
 	return nextConfig;
     }
@@ -324,6 +364,36 @@ public class LuceneIndexConfig {
 
     public List<AbstractFieldConfig> getFacetsAndFields() {
         return facetsAndFields;
+    }
+
+    /**
+     * @return configured passage width, or -1 if not set (use default)
+     */
+    public int getPassageWidth() {
+        return passageWidth;
+    }
+
+    /**
+     * @return configured passage break type ("sentence" or "character"), or null if not set
+     */
+    public String getPassageBreak() {
+        return passageBreak;
+    }
+
+    /**
+     * Get the searchable field names (from LuceneFieldConfig only, not facets).
+     * Used for MultiFieldQueryParser when the index has nested fields.
+     *
+     * @return array of field names, or empty array if none
+     */
+    public String[] getSearchableFieldNames() {
+        if (facetsAndFields.isEmpty()) {
+            return new String[0];
+        }
+        return facetsAndFields.stream()
+                .filter(LuceneFieldConfig.class::isInstance)
+                .map(fc -> ((LuceneFieldConfig) fc).getName())
+                .toArray(String[]::new);
     }
 
     public static QName parseQName(Element config, Map<String, String> namespaces) throws DatabaseConfigurationException {

@@ -21,6 +21,8 @@
  */
 package org.exist.xquery.modules.range;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.exist.collections.Collection;
 import org.exist.dom.persistent.DocumentSet;
 import org.exist.dom.persistent.NodeProxy;
@@ -44,7 +46,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-public class Lookup extends Function implements Optimizable {
+public class Lookup extends Function implements Optimizable, IndexUseReporter {
+
+    private static final Logger LOG = LogManager.getLogger(Lookup.class);
 
     private final static SequenceType[] PARAMETER_TYPE = new SequenceType[] {
             new FunctionParameterSequenceType("nodes", Type.NODE, Cardinality.ZERO_OR_MORE,
@@ -521,6 +525,14 @@ public class Lookup extends Function implements Optimizable {
     public int getDependencies() {
         final Expression stringArg = getArgument(0);
         if (!Dependency.dependsOn(stringArg, Dependency.CONTEXT_ITEM)) {
+            // Check if any other argument depends on local/context variables.
+            // If so, the expression cannot be bulk-evaluated during ForExpr preEval
+            // because the variable value changes per iteration. (GH-2204)
+            for (int i = 1; i < getArgumentCount(); i++) {
+                if (Dependency.dependsOnVar(getArgument(i))) {
+                    return Dependency.CONTEXT_SET + Dependency.CONTEXT_ITEM;
+                }
+            }
             return Dependency.CONTEXT_SET;
         } else {
             return Dependency.CONTEXT_SET + Dependency.CONTEXT_ITEM;
@@ -529,5 +541,10 @@ public class Lookup extends Function implements Optimizable {
 
     public int returnsType() {
         return Type.NODE;
+    }
+
+    @Override
+    public boolean hasUsedIndex() {
+        return true; // Lookup is only used when range index optimization was applied
     }
 }

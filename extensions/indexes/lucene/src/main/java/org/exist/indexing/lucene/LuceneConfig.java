@@ -32,6 +32,7 @@ import org.exist.dom.QName;
 import org.exist.indexing.lucene.analyzers.NoDiacriticsStandardAnalyzer;
 import org.exist.storage.NodePath;
 import org.exist.storage.NodePath2;
+import org.exist.util.Configuration;
 import org.exist.util.DatabaseConfigurationException;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -173,13 +174,109 @@ public class LuceneConfig {
         return false;
     }
 
-    public Analyzer getAnalyzer(QName qname) {
-        LuceneIndexConfig idxConf = paths.get(qname);
-        while (idxConf != null) {
-            if (!idxConf.isNamed() && idxConf.getNodePathPattern().match(qname))
-                break;
-            idxConf = idxConf.getNext();
+    /**
+     * Returns the set of configured field and facet dimension names.
+     * Terms from these fields should not produce highlights in util:expand,
+     * since they match metadata rather than main content.
+     * @see <a href="https://github.com/eXist-db/exist/pull/3467">PR #3467</a>
+     */
+    public Set<String> getConfiguredFieldNames() {
+        final Set<String> excluded = new HashSet<>();
+        for (LuceneIndexConfig c : paths.values()) {
+            collectFieldNames(c, excluded);
         }
+        for (LuceneIndexConfig c : wildcardPaths) {
+            collectFieldNames(c, excluded);
+        }
+        for (LuceneIndexConfig c : namedIndexes.values()) {
+            collectFieldNames(c, excluded);
+        }
+        return excluded;
+    }
+
+    private static void collectFieldNames(LuceneIndexConfig config, Set<String> excluded) {
+        LuceneIndexConfig c = config;
+        while (c != null) {
+            for (AbstractFieldConfig fc : c.getFacetsAndFields()) {
+                if (fc instanceof LuceneFieldConfig lfc) {
+                    excluded.add(lfc.getName());
+                } else if (fc instanceof LuceneFacetConfig lfacet) {
+                    excluded.add(lfacet.getDimension());
+                }
+            }
+            c = c.getNext();
+        }
+    }
+
+    /**
+     * @return true if any index config uses boosts (match-attribute, has-attribute, or boost attr)
+     */
+    public boolean hasBoostConfig() {
+        for (LuceneIndexConfig config : paths.values()) {
+            if (config.usesBoost()) {
+                return true;
+            }
+        }
+        for (LuceneIndexConfig config : wildcardPaths) {
+            if (config.usesBoost()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get the LuceneIndexConfig that matches the given QName.
+     *
+     * @param qname the QName to match
+     * @return the matching config, or null if none
+     */
+    public LuceneIndexConfig getIndexConfigForQName(QName qname) {
+        LuceneIndexConfig idxConf = paths.get(qname);
+        boolean foundByFallback = false;
+        if (idxConf == null && qname != null) {
+            final String local = qname.getLocalPart();
+            final String ns = qname.getNamespaceURI();
+            if (local != null && !local.equals(QName.WILDCARD)) {
+                for (LuceneIndexConfig config : paths.values()) {
+                    LuceneIndexConfig c = config;
+                    while (c != null) {
+                        if (!c.isNamed()) {
+                            QName pathQName = c.getNodePathPattern().getLastComponent();
+                            if (pathQName == null) {
+                                c = c.getNext();
+                                continue;
+                            }
+                            String pathNs = pathQName.getNamespaceURI();
+                            boolean nsMatch = (ns == null || ns.isEmpty())
+                                    ? (pathNs == null || pathNs.isEmpty())
+                                    : ns.equals(pathNs);
+                            if (pathQName != null
+                                    && local.equals(pathQName.getLocalPart())
+                                    && nsMatch) {
+                                idxConf = c;
+                                foundByFallback = true;
+                                break;
+                            }
+                        }
+                        c = c.getNext();
+                    }
+                    if (idxConf != null) break;
+                }
+            }
+        }
+        if (!foundByFallback) {
+            while (idxConf != null) {
+                if (!idxConf.isNamed() && idxConf.getNodePathPattern().match(qname))
+                    break;
+                idxConf = idxConf.getNext();
+            }
+        }
+        return idxConf;
+    }
+
+    public Analyzer getAnalyzer(QName qname) {
+        LuceneIndexConfig idxConf = getIndexConfigForQName(qname);
         if (idxConf != null) {
             final Analyzer analyzer = idxConf.getAnalyzer();
             if (analyzer != null) {
@@ -215,21 +312,60 @@ public class LuceneConfig {
 
     public Analyzer getAnalyzer(String field) {
         LuceneIndexConfig config = namedIndexes.get(field);
-        String id = config != null ? config.getAnalyzerId() : null;
-        if (id == null)
-            return analyzers.getDefaultAnalyzer();
+        if (config != null) {
+            String id = config.getAnalyzerId();
+            if (id != null) {
+                final String indexSuffix = ":index";
+                if (id.endsWith(indexSuffix)) {
+                    // Substitute <analyzer-id>:index with <analyzer-id>:query
+                    String qid = id.substring(0, id.length() - indexSuffix.length()) + ":query";
+                    Analyzer queryAnalyzer = analyzers.getAnalyzerById(qid);
+                    if (queryAnalyzer != null)
+                        return queryAnalyzer;
 
-        final String indexSuffix = ":index";
-        if (id.endsWith(indexSuffix)) {
-            // Substitute <analyzer-id>:index with <analyzer-id>:query
-            String qid = id.substring(0, id.length() - indexSuffix.length()) + ":query";
-            Analyzer queryAnalyzer = analyzers.getAnalyzerById(qid);
-            if (queryAnalyzer != null)
-                return queryAnalyzer;
-
-            LOG.warn(String.format("Failed to substitute %s with %s analyzer", id, qid));
+                    LOG.warn(String.format("Failed to substitute %s with %s analyzer", id, qid));
+                }
+                return analyzers.getAnalyzerById(id);
+            }
         }
-        return analyzers.getAnalyzerById(config.getAnalyzerId());
+        // Look up field analyzer from nested <field name="..."> configs
+        Analyzer fieldAnalyzer = getFieldAnalyzer(field);
+        return fieldAnalyzer != null ? fieldAnalyzer : analyzers.getDefaultAnalyzer();
+    }
+
+    /**
+     * Find analyzer for a named field from nested &lt;field name="..."&gt; configs.
+     * When a field has no explicit analyzer, inherits from the parent index.
+     *
+     * @param field the field name
+     * @return the analyzer or null if not found
+     */
+    protected Analyzer getFieldAnalyzer(String field) {
+        for (LuceneIndexConfig idxConf : paths.values()) {
+            LuceneIndexConfig config = idxConf;
+            while (config != null) {
+                Analyzer a = getFieldAnalyzerFromConfig(config, field);
+                if (a != null) return a;
+                config = config.getNext();
+            }
+        }
+        for (LuceneIndexConfig config : wildcardPaths) {
+            Analyzer a = getFieldAnalyzerFromConfig(config, field);
+            if (a != null) return a;
+        }
+        return null;
+    }
+
+    private Analyzer getFieldAnalyzerFromConfig(LuceneIndexConfig config, String field) {
+        for (AbstractFieldConfig fc : config.getFacetsAndFields()) {
+            if (fc instanceof LuceneFieldConfig lfc && field.equals(lfc.getName())) {
+                if (lfc.getAnalyzer() != null) return lfc.getAnalyzer();
+                // Field exists but has no analyzer: inherit from parent index
+                String id = config.getAnalyzerId();
+                return id != null ? analyzers.getAnalyzerById(id) : null;
+            }
+        }
+        return null;
     }
 
     /**
@@ -322,11 +458,8 @@ public class LuceneConfig {
                                                 + "lucene index config: float expected, got " + value);
                                     }
                                 }
-                                if (elem.hasAttribute(DIACRITICS)) {
-                                    String value = elem.getAttribute(DIACRITICS);
-                                    if ("no".equalsIgnoreCase(value)) {
-                                        analyzers.setDefaultAnalyzer(new NoDiacriticsStandardAnalyzer(LuceneIndex.LUCENE_VERSION_IN_USE));
-                                    }
+                                if (!Configuration.parseBooleanAttribute(elem, DIACRITICS, true)) {
+                                    analyzers.setDefaultAnalyzer(new NoDiacriticsStandardAnalyzer());
                                 }
                                 parseConfig(node.getChildNodes(), namespaces);
                                 break;

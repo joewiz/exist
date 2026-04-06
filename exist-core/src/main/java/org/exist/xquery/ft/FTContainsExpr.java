@@ -59,11 +59,6 @@ public class FTContainsExpr extends AbstractExpression {
     private FTSelection ftSelection;
     private Expression ignoreExpr;
 
-    // Cached URI maps — captured during analyze() to avoid reading from
-    // context attributes during eval() (context may be reset concurrently)
-    private Map<String, Path> cachedStopWordURIMap;
-    private Map<String, Path> cachedThesaurusURIMap;
-
     public FTContainsExpr(final XQueryContext context) {
         super(context);
     }
@@ -102,7 +97,6 @@ public class FTContainsExpr extends AbstractExpression {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public void analyze(final AnalyzeContextInfo contextInfo) throws XPathException {
         contextInfo.setParent(this);
         source.analyze(contextInfo);
@@ -110,23 +104,16 @@ public class FTContainsExpr extends AbstractExpression {
         if (ignoreExpr != null) {
             ignoreExpr.analyze(contextInfo);
         }
-        // Cache URI maps from context attributes at analyze time.
-        // Reading them during eval() is unreliable because context.reset()
-        // (called between test executions in the XQTS runner) clears attributes.
-        cachedStopWordURIMap = (Map<String, Path>) context.getAttribute("ft.stopWordURIMap");
-        cachedThesaurusURIMap = (Map<String, Path>) context.getAttribute("ft.thesaurusURIMap");
     }
 
     @Override
-    @SuppressWarnings("PMD.NPathComplexity")
-    public Sequence eval(final Sequence contextSequence, final Item contextItem) throws XPathException {
-        Sequence effectiveContext = contextSequence;
+    public Sequence eval(Sequence contextSequence, final Item contextItem) throws XPathException {
         if (contextItem != null) {
-            effectiveContext = contextItem.toSequence();
+            contextSequence = contextItem.toSequence();
         }
 
         // Evaluate source expression to get the search context
-        final Sequence sourceSeq = source.eval(effectiveContext, null);
+        final Sequence sourceSeq = source.eval(contextSequence, null);
 
         // Per XQFT 3.0 §2.1: if the source evaluates to an empty sequence,
         // there is no text to search — return false immediately.
@@ -137,7 +124,7 @@ public class FTContainsExpr extends AbstractExpression {
         // Collect ignored nodes if FTIgnoreOption is present
         Set<Node> ignoredNodes = null;
         if (ignoreExpr != null) {
-            final Sequence ignoredSeq = ignoreExpr.eval(effectiveContext, null);
+            final Sequence ignoredSeq = ignoreExpr.eval(contextSequence, null);
             if (!ignoredSeq.isEmpty()) {
                 // XQFT 3.0 §3.7: FTIgnoreOption must evaluate to a node sequence.
                 // Non-node values raise XPTY0004.
@@ -179,17 +166,13 @@ public class FTContainsExpr extends AbstractExpression {
                 sourceText = sourceItem.getStringValue();
             }
 
-            // Use cached URI maps (captured during analyze), falling back to context attributes.
-            // The cache avoids the race condition where context.reset() clears attributes
-            // between analyze and eval in concurrent test runner scenarios.
+            // Pass stop word and thesaurus URI mappings from context (set by XQTS runner or application)
             @SuppressWarnings("unchecked")
-            final Map<String, Path> stopWordURIMap = cachedStopWordURIMap != null
-                    ? cachedStopWordURIMap
-                    : (Map<String, Path>) context.getAttribute("ft.stopWordURIMap");
+            final Map<String, Path> stopWordURIMap =
+                    (Map<String, Path>) context.getAttribute("ft.stopWordURIMap");
             @SuppressWarnings("unchecked")
-            final Map<String, Path> thesaurusURIMap = cachedThesaurusURIMap != null
-                    ? cachedThesaurusURIMap
-                    : (Map<String, Path>) context.getAttribute("ft.thesaurusURIMap");
+            final Map<String, Path> thesaurusURIMap =
+                    (Map<String, Path>) context.getAttribute("ft.thesaurusURIMap");
             final FTEvaluator evaluator = new FTEvaluator(sourceText, stopWordURIMap, thesaurusURIMap,
                     elementBoundaries);
             // Provide XQuery context for dynamic expressions in positional filters

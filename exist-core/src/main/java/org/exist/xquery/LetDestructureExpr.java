@@ -50,6 +50,7 @@ public class LetDestructureExpr extends AbstractFLWORClause {
     private final List<QName> varNames;
     private final List<SequenceType> varTypes;
     private Expression inputSequence;
+    private SequenceType overallType;
 
     public LetDestructureExpr(final XQueryContext context, final DestructureMode mode) {
         super(context);
@@ -68,7 +69,7 @@ public class LetDestructureExpr extends AbstractFLWORClause {
     }
 
     public void setOverallType(final SequenceType type) {
-        // Reserved for future type checking of overall destructure type
+        this.overallType = type;
     }
 
     @Override
@@ -124,8 +125,6 @@ public class LetDestructureExpr extends AbstractFLWORClause {
                     case MAP:
                         bindMapVars(input);
                         break;
-                    default:
-                        throw new XPathException(this, ErrorCodes.ERROR, "Unknown destructure mode: " + mode);
                 }
 
                 resultSequence = returnExpr.eval(contextSequence, null);
@@ -265,7 +264,6 @@ public class LetDestructureExpr extends AbstractFLWORClause {
             case SEQUENCE: dumper.display("$("); break;
             case ARRAY: dumper.display("$["); break;
             case MAP: dumper.display("${"); break;
-            default: break;
         }
         for (int i = 0; i < varNames.size(); i++) {
             if (i > 0) dumper.display(", ");
@@ -275,7 +273,6 @@ public class LetDestructureExpr extends AbstractFLWORClause {
             case SEQUENCE: dumper.display(")"); break;
             case ARRAY: dumper.display("]"); break;
             case MAP: dumper.display("}"); break;
-            default: break;
         }
         dumper.display(" := ");
         inputSequence.dump(dumper);
@@ -290,7 +287,6 @@ public class LetDestructureExpr extends AbstractFLWORClause {
             case SEQUENCE: sb.append("$("); break;
             case ARRAY: sb.append("$["); break;
             case MAP: sb.append("${"); break;
-            default: break;
         }
         for (int i = 0; i < varNames.size(); i++) {
             if (i > 0) sb.append(", ");
@@ -300,7 +296,6 @@ public class LetDestructureExpr extends AbstractFLWORClause {
             case SEQUENCE: sb.append(")"); break;
             case ARRAY: sb.append("]"); break;
             case MAP: sb.append("}"); break;
-            default: break;
         }
         sb.append(" := ").append(inputSequence.toString());
         sb.append(" return ").append(returnExpr.toString());

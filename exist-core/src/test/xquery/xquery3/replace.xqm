@@ -19,7 +19,7 @@
  : License along with this library; if not, write to the Free Software
  : Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  :)
-xquery version "4.0";
+xquery version "3.1";
 
 module namespace rt="http://exist-db.org/xquery/test/replace";
 
@@ -35,8 +35,8 @@ declare
     %test:args("(.*)")
     %test:assertEquals("")
 function rt:empty-match-allowed($p as xs:string) {
-    (: XQ4: empty-matching regex no longer raises FORX0003 :)
-    replace("",$p,"")
+    (: XQ4: empty-matching regex no longer raises FORX0003 when ! flag is used :)
+    replace("",$p,"","!")
 };
 
 declare

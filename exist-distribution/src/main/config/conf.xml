@@ -968,6 +968,7 @@
             <module uri="http://www.w3.org/2005/xpath-functions/array" class="org.exist.xquery.functions.array.ArrayModule"/>
             <module uri="http://exist-db.org/xquery/backups" class="org.exist.backup.xquery.BackupModule"/>
             <module uri="http://exist-db.org/xquery/inspection" class="org.exist.xquery.functions.inspect.InspectionModule"/>
+            <module uri="http://exist-db.org/xquery/lsp" class="org.exist.xquery.functions.lsp.LspModule"/>
             <module uri="http://exist-db.org/xquery/kwic" src="resource:org/exist/xquery/lib/kwic.xql"/>
             <module uri="http://exist-db.org/xquery/request" class="org.exist.xquery.functions.request.RequestModule"/>
             <module uri="http://exist-db.org/xquery/response" class="org.exist.xquery.functions.response.ResponseModule"/>
@@ -981,6 +982,8 @@
                 <parameter name="evalDisabled" value="false"/>
             </module>
             <module uri="http://exist-db.org/xquery/validation" class="org.exist.xquery.functions.validation.ValidationModule"/>
+            <module uri="http://exist-db.org/xquery/websocket" class="org.exist.xquery.functions.websocket.WebSocketModule"/>
+            <module uri="http://exist-db.org/xquery/console" class="org.exist.xquery.functions.websocket.ConsoleCompatModule"/>
             <module uri="http://exist-db.org/xquery/xmldb" class="org.exist.xquery.functions.xmldb.XMLDBModule">
                 <!-- set to false to disable the use of xs:anyURI as a $contents value for xmldb:store and xmldb:store-as-binary function -->
                 <parameter name="allowAnyUri" value="false"/>
@@ -1048,7 +1051,7 @@
             <module uri="http://exist-db.org/xquery/cqlparser" class="org.exist.xquery.modules.cqlparser.CQLParserModule"/>
             <!-- module uri="http://exist-db.org/xquery/exi" class="org.exist.xquery.modules.exi.ExiModule"/ -->
             <module uri="http://exist-db.org/xquery/repo" class="org.exist.xquery.modules.expathrepo.ExpathPackageModule"/>
-            <module uri="http://exist-db.org/xquery/file" class="org.exist.xquery.modules.file.FileModule"/>
+            <module uri="http://expath.org/ns/file" class="org.expath.exist.file.ExpathFileModule"/>
             <module uri="http://exist-db.org/xquery/image" class="org.exist.xquery.modules.image.ImageModule"/>
             <module uri="http://exist-db.org/xquery/jndi" class="org.exist.xquery.modules.jndi.JNDIModule"/>
             <module uri="http://exist-db.org/xquery/mail" class="org.exist.xquery.modules.mail.MailModule"/>

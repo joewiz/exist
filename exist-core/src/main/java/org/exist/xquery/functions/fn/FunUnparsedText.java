@@ -44,8 +44,8 @@ import static org.exist.xquery.FunctionDSL.*;
 
 public class FunUnparsedText extends BasicFunction {
 
-    private final static FunctionParameterSequenceType PARAM_HREF = optParam("href", Type.STRING, "the URI to load text from");
-    private final static FunctionParameterSequenceType PARAM_ENCODING = param("encoding", Type.STRING, "character encoding of the resource");
+    private final static FunctionParameterSequenceType PARAM_HREF = optParam("source", Type.STRING, "the URI to load text from");
+    private final static FunctionParameterSequenceType PARAM_ENCODING = param("options", Type.STRING, "character encoding of the resource");
 
     static final FunctionSignature [] FS_UNPARSED_TEXT = functionSignatures(
         new QName("unparsed-text", Function.BUILTIN_FUNCTION_NS),
@@ -88,7 +88,7 @@ public class FunUnparsedText extends BasicFunction {
             } else if (isCalledAs("unparsed-text-available")) {
                 return BooleanValue.valueOf(contentAvailable(href, encoding));
             } else {
-                return new StringValue(this, stripBOM(readContent(href, encoding)));
+                return new StringValue(this, readContent(href, encoding));
             }
         }
         return Sequence.EMPTY_SEQUENCE;
@@ -176,12 +176,7 @@ public class FunUnparsedText extends BasicFunction {
 
                 try (final BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, charset))) {
                     String line;
-                    boolean firstLine = true;
                     while ((line = reader.readLine()) != null) {
-                        if (firstLine) {
-                            line = stripBOM(line);
-                            firstLine = false;
-                        }
                         result.add(new StringValue(this, line));
                     }
                 }
@@ -216,17 +211,6 @@ public class FunUnparsedText extends BasicFunction {
     /**
      * Resolve a charset name, mapping common aliases that Java doesn't recognize.
      */
-    /**
-     * Strip the Unicode BOM (U+FEFF) from the beginning of a string.
-     * Per XQuery spec: "If the text resource has a BOM, the BOM is excluded from the result."
-     */
-    private static String stripBOM(final String s) {
-        if (s != null && !s.isEmpty() && s.charAt(0) == '\uFEFF') {
-            return s.substring(1);
-        }
-        return s;
-    }
-
     private static Charset resolveCharset(final String encoding) {
         try {
             return Charset.forName(encoding);

@@ -182,7 +182,7 @@ module namespace idx="http://exist-db.org/lucene/test/";
 
 declare function idx:place-hierarchy($key as xs:string?) {
     if (exists($key)) then
-        doc('/db/lucenetest/places.xml')//place[@name=$key]/ancestor-or-self::place/@name
+        doc('/db/lucene-test-facets/places.xml')//place[@name=$key]/ancestor-or-self::place/@name
     else
         ()
 };
@@ -190,14 +190,14 @@ declare function idx:place-hierarchy($key as xs:string?) {
 declare function idx:subject-hierarchy($key as xs:string*) {
     if (exists($key)) then
          array:for-each(array {$key}, function($k) {
-             doc('/db/lucenetest/subjects.xml')//subject[@name=$k]/ancestor-or-self::subject/@name
+             doc('/db/lucene-test-facets/subjects.xml')//subject[@name=$k]/ancestor-or-self::subject/@name
          })
     else
         ()
 };
 
 declare function idx:city-id-to-label($id as xs:string) {
-    let $city := doc('/db/lucenetest/cities.xml')//city[id eq $id]
+    let $city := doc('/db/lucene-test-facets/cities.xml')//city[id eq $id]
     return
         if (exists($city)) then
             $city/label/string()
@@ -206,7 +206,7 @@ declare function idx:city-id-to-label($id as xs:string) {
 };
 
 declare function idx:people-from-city($city-id as xs:string) {
-    let $people := collection('/db/lucenetest')//person[city-id eq $city-id]/id/string()
+    let $people := collection('/db/lucene-test-facets')//person[city-id eq $city-id]/id/string()
     return
         if (exists($people)) then
             $people
@@ -267,7 +267,7 @@ declare variable $facet:XCONF1 :=
                     <field name="english2" if="ancestor::body[@xml:lang = 'en']" analyzer="english"/>
                     <facet dimension="language" expression="ancestor::body/@xml:lang"/>
                     <ignore qname="note"/>
-                </text>`
+                </text>
                 <text qname="person">
                     <facet dimension="city" expression="idx:city-id-to-label(city-id)"/>
                 </text>
@@ -282,13 +282,16 @@ declare variable $facet:XCONF1 :=
         </index>
     </collection>;
 
+declare variable $facet:COLLECTION_PATH := "/db/lucene-test-facets";
+declare variable $facet:CONFIG_PATH := "/db/system/config/db/lucene-test-facets";
+
 declare
     %test:setUp
 function facet:setup() {
     let $_ := (xmldb:create-collection("/db/system", "config"), xmldb:create-collection("/db/system/config", "db"))
-    let $testCol := xmldb:create-collection("/db", "lucenetest")
-    let $personsCol := xmldb:create-collection("/db/lucenetest", "persons")
-    let $confCol := xmldb:create-collection("/db/system/config/db", "lucenetest")
+    let $testCol := xmldb:create-collection("/db", "lucene-test-facets")
+    let $personsCol := xmldb:create-collection($testCol, "persons")
+    let $confCol := xmldb:create-collection("/db/system/config/db", "lucene-test-facets")
     return (
         xmldb:store($testCol, "module.xql", $facet:MODULE, "application/xquery"),
         xmldb:store($confCol, "collection.xconf", $facet:XCONF1),
@@ -299,6 +302,7 @@ function facet:setup() {
         xmldb:store($testCol, "multi-lang.xml", $facet:MULTI_LANGUAGE),
         $facet:PERSONS ! xmldb:store($personsCol, ./id || ".xml", .),
         xmldb:store($testCol, "cities.xml", $facet:CITIES),
+        xmldb:reindex($testCol),
         xmldb:reindex($personsCol)
     )
 };
@@ -306,8 +310,8 @@ function facet:setup() {
 declare
     %test:tearDown
 function facet:tearDown() {
-    xmldb:remove("/db/lucenetest"),
-    xmldb:remove("/db/system/config/db/lucenetest")
+    xmldb:remove($facet:COLLECTION_PATH),
+    xmldb:remove($facet:CONFIG_PATH)
 };
 
 declare
@@ -321,7 +325,7 @@ function facet:map-to-string($map) as xs:string* {
 declare
     %test:assertEquals(2, 1, 1, 2)
 function facet:query-all-and-facets() {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $where := ft:facets($result, "place", ())
     let $from := ft:facets($result, "from", ())
     let $to := ft:facets($result, "to", ())
@@ -333,7 +337,7 @@ function facet:query-all-and-facets() {
 declare
     %test:assertEmpty
 function facet:query-all-and-non-existing-facet() {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $facet := ft:facets($result, "does-not-exist", ())
     return
         $facet?*
@@ -353,7 +357,7 @@ function facet:query-and-drill-down($from as xs:string+) {
         }
     }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., "Berlin", $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., "Berlin", $options)])
 };
 
 declare
@@ -367,7 +371,7 @@ function facet:query-and-drill-down-hierarchical-sequence() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 declare
@@ -381,7 +385,7 @@ function facet:query-and-drill-down-hierarchical-array-single() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 declare
@@ -395,7 +399,7 @@ function facet:query-and-drill-down-hierarchical-array-multi() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 declare
@@ -409,7 +413,7 @@ function facet:query-and-drill-down-hierarchical-array-multi2() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 declare
@@ -423,7 +427,7 @@ function facet:query-and-drill-down-hierarchical-array-multi3() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 declare
@@ -437,7 +441,7 @@ function facet:query-and-drill-down-hierarchical-array-multi4() {
             }
         }
     return
-        count(collection("/db/lucenetest")//letter[ft:query(., (), $options)])
+        count(collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)])
 };
 
 (:~
@@ -448,10 +452,10 @@ function facet:query-and-drill-down-hierarchical-array-multi4() {
 declare
     %test:assertEquals(1, 2)
 function facet:multiple-indexes-with-same-facet() {
-    let $result := doc("/db/lucenetest/documents.xml")//document[ft:query(., ())]
+    let $result := doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., ())]
     return
         ft:facets($result, "cat")?nature,
-    let $result := doc("/db/lucenetest/documents.xml")//document/abstract[ft:query(., ())]
+    let $result := doc("/db/lucene-test-facets/documents.xml")//document/abstract[ft:query(., ())]
     return
         ft:facets($result, "cat")?nature
 };
@@ -459,13 +463,13 @@ function facet:multiple-indexes-with-same-facet() {
 declare
     %test:assertEquals(4, 2)
 function facet:store-and-remove() {
-    let $stored := xmldb:store("/db/lucenetest", "test2.xml", $facet:XML)
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $stored := xmldb:store("/db/lucene-test-facets", "test2.xml", $facet:XML)
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $where := ft:facets($result, "place", 10)
     return
         $where?Berlin,
-    xmldb:remove("/db/lucenetest", "test2.xml"),
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    xmldb:remove("/db/lucene-test-facets", "test2.xml"),
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $where := ft:facets($result, "place", 10)
     return
         $where?Berlin
@@ -488,7 +492,7 @@ function facet:hierarchical-facets-query($paths as xs:string+) {
                 "date": $paths
             }
         }
-    let $result := collection("/db/lucenetest")//letter[ft:query(., (), $options)]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)]
     return
         count($result)
 };
@@ -510,7 +514,7 @@ function facet:hierarchical-facets-query-subjects($paths as xs:string+) {
                 "subject": $paths
             }
         }
-    let $result := collection("/db/lucenetest")//letter[ft:query(., (), $options)]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., (), $options)]
     return
         count($result)
 };
@@ -521,7 +525,7 @@ declare
     %test:arg("paths", "2019")
     %test:assertEqualsPermutation("03=1", "04=1")
 function facet:hierarchical-facets-retrieve-1($paths as xs:string*) {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $facets := ft:facets($result, "date", (), $paths)
     return
         facet:map-to-string($facets)
@@ -531,7 +535,7 @@ declare
     %test:arg("paths", "science")
     %test:assertEqualsPermutation("math=1", "engineering=1")
 function facet:hierarchical-facets-query-and-sort-by-dateretrieve-2($paths as xs:string*) {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $facets := ft:facets($result, "subject", (), $paths)
     return
         facet:map-to-string($facets)
@@ -540,7 +544,7 @@ function facet:hierarchical-facets-query-and-sort-by-dateretrieve-2($paths as xs
 declare
     %test:assertEqualsPermutation("Berlin=2", "Hamburg=1", "Wrocław=2")
 function facet:hierarchical-place() {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $facets := ft:facets($result, "location", 10) (: Returns facet counts for "Germany" and "Poland" :)
     for $country in map:keys($facets)
     order by $country
@@ -553,7 +557,7 @@ function facet:hierarchical-place() {
 declare
     %test:assertEqualsPermutation("history=5", "art=1", "math=1", "engineering=1")
 function facet:hierarchical-subject() {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., ())]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $facets := ft:facets($result, "subject", 10) (: Returns facet counts for "science" and "humanities" :)
     for $topic in map:keys($facets)
     order by $topic
@@ -566,7 +570,7 @@ function facet:hierarchical-subject() {
 declare
     %test:assertEqualsPermutation("history=1", "engineering=1")
 function facet:hierarchical-multivalue-subject() {
-    let $result := collection("/db/lucenetest")//letter[ft:query(., 'from:susi')]
+    let $result := collection("/db/lucene-test-facets")//letter[ft:query(., 'from:susi')]
     let $facets := ft:facets($result, "subject", 10) (: Returns facet counts for "science" and "humanities" :)
     for $topic in map:keys($facets)
     order by $topic
@@ -594,13 +598,37 @@ declare
     %test:args('foo:berlin')
     %test:assertEquals(0)
 function facet:query-field($query as xs:string) {
-    count(collection("/db/lucenetest")//letter[ft:query(., $query)])
+    count(collection("/db/lucene-test-facets")//letter[ft:query(., $query)])
+};
+
+(:~
+ : Single-term field query on place. Place values are indexed with NoDiacriticsStandardAnalyzer;
+ : "Wrocław" normalizes to "wroclaw", so place:wroclaw matches 2 letters.
+ : New test for Lucene 10; counterpart: facet:query-field.
+ :)
+declare
+    %test:args("place:wroclaw")
+    %test:assertEquals(2)
+function facet:query-field-place-term($query as xs:string) {
+    count(collection("/db/lucene-test-facets")//letter[ft:query(., $query)])
+};
+
+(:~
+ : Field query with prefix in to field. to:(ba* müller) matches letters to "Basia Müller",
+ : "Basia Kowalska", "Babsi Müller" – prefix ba* matches Basia, Babsi.
+ : New test for Lucene 10; counterpart: facet:query-field.
+ :)
+declare
+    %test:args('to:(ba* müller)')
+    %test:assertEquals(2)
+function facet:query-field-to-prefix($query as xs:string) {
+    count(collection("/db/lucene-test-facets")//letter[ft:query(., $query)])
 };
 
 declare
     %test:assertEquals("Babsi Müller", "Basia Kowalska", "Basia Müller")
 function facet:query-and-sort() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "from:heinz")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:heinz")]
     order by ft:field($letter, "to")
     return
         $letter/to/text()
@@ -609,7 +637,7 @@ function facet:query-and-sort() {
 declare
     %test:assertEquals("Basia Kowalska", "Basia Müller", "Babsi Müller")
 function facet:query-and-sort-by-date() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "from:heinz")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:heinz")]
     order by ft:field($letter, "date", "xs:date")
     return
         $letter/to/text()
@@ -618,10 +646,20 @@ function facet:query-and-sort-by-date() {
 declare
     %test:assertEquals("Hans", "Rudi")
 function facet:query-and-sort-by-time() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "place:berlin")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "place:berlin")]
     order by ft:field($letter, "time", "xs:time")
     return
         $letter/from/text()
+};
+
+(:~ #3042 baseline: document[ft:query(.,...)] + order by ft:field — matched node = result node works. :)
+declare
+    %test:assertEquals("D-37/2", "Z-49/2")
+function facet:query-and-sort-by-ident() {
+    for $doc in doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., ())]
+    order by ft:field($doc, "ident")
+    return
+        $doc/@id/string()
 };
 
 declare
@@ -630,7 +668,7 @@ declare
     %test:args("score", "xs:float")
     %test:assertEquals(6, 8.25, 14.25, 16, 16.5, 29.5)
 function facet:query-and-sort-by-numeric($field as xs:string, $type as xs:string) {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $likes := ft:field($letter, $field, $type)
     order by $likes
     return
@@ -640,7 +678,7 @@ function facet:query-and-sort-by-numeric($field as xs:string, $type as xs:string
 declare
     %test:assertEmpty
 function facet:retrieve-non-existant-field() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     return
         ft:field($letter, "foo")
 };
@@ -648,7 +686,7 @@ function facet:retrieve-non-existant-field() {
 declare
     %test:assertEmpty
 function facet:retrieve-not-stored() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     return
         ft:field($letter, "from")
 };
@@ -656,7 +694,7 @@ function facet:retrieve-not-stored() {
 declare
     %test:assertEquals("Egon", "Berlin")
 function facet:retrieve-multiple-fields() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "from:rudi")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:rudi")]
     return
         (ft:field($letter, "to"), ft:field($letter, "place"))
 };
@@ -664,7 +702,7 @@ function facet:retrieve-multiple-fields() {
 declare
     %test:assertEquals("2017-03-13", 19, 8.25)
 function facet:test-field-type() {
-    let $letter := collection("/db/lucenetest")//letter[ft:query(., "from:rudi")]
+    let $letter := collection("/db/lucene-test-facets")//letter[ft:query(., "from:rudi")]
     return (
         ft:field($letter, "date", "xs:date"),
         ft:field($letter, "likes", "xs:integer"),
@@ -672,10 +710,35 @@ function facet:test-field-type() {
     )
 };
 
+(:~
+ : ft:field($node, "field", ()) returns same raw values as ft:field($node, "field").
+ : @see https://github.com/eXist-db/exist/issues/4539
+ :)
+declare
+    %test:assertTrue
+function facet:field-empty-type-same-as-two-arg() {
+    let $letter := collection("/db/lucene-test-facets")//letter[ft:query(., "from:rudi")][1]
+    return deep-equal(ft:field($letter, "to", ()), ft:field($letter, "to"))
+};
+
+(:~
+ : Dynamic type $type := () in ft:field over multiple hits with order by.
+ : Re-enabled after getFieldByExistDocId fix for stable docID resolution.
+ : @see https://github.com/eXist-db/exist/issues/4539
+ :)
+declare
+    %test:assertEquals("Babsi Müller", "Basia Kowalska", "Basia Müller")
+function facet:field-dynamic-empty-type() {
+    let $type := ()
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:heinz")]
+    order by ft:field($letter, "to", $type)
+    return ft:field($letter, "to", $type)
+};
+
 declare
     %test:assertEquals(4)
 function facet:index-keys() {
-    count(collection("/db/lucenetest")/ft:index-keys-for-field("from", (), function($key, $count) { $key }, 10))
+    count(collection("/db/lucene-test-facets")/ft:index-keys-for-field("from", (), function($key, $count) { $key }, 10))
 };
 
 (:~
@@ -687,14 +750,14 @@ declare
     %test:args("english:birds")
     %test:assertEquals("<p>And the birds are singing</p>")
 function facet:query-no-index($query as xs:string) {
-    doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., $query)]/p
+    doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., $query)]/p
 };
 
 declare
     %test:args("müller")
     %test:assertEquals(2)
 function facet:default-analyzer-no-diacritics($query as xs:string) {
-    count(collection("/db/lucenetest")//letter[ft:query(., $query)])
+    count(collection("/db/lucene-test-facets")//letter[ft:query(., $query)])
 };
 
 (:~
@@ -705,7 +768,7 @@ function facet:default-analyzer-no-diacritics($query as xs:string) {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-but-facet() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         ft:facets($result, "language")?en
 };
@@ -724,7 +787,7 @@ declare
     %test:args("title:streit AND abstract:streit")
     %test:assertEmpty
 function facet:query-field-with-analyzer($query as xs:string) {
-    doc("/db/lucenetest/documents.xml")//document[ft:query(., $query)]/title
+    doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)]/title
 };
 
 (: Index on 'abstract' uses default analyzer but has a field
@@ -746,14 +809,14 @@ declare
     %test:args("german:(streit AND gott)")
     %test:assertEquals("<title>Streiten und Hoffen</title>")
 function facet:query-field-no-expression($query as xs:string) {
-    doc("/db/lucenetest/documents.xml")//abstract[ft:query(., $query)]/../title
+    doc("/db/lucene-test-facets/documents.xml")//abstract[ft:query(., $query)]/../title
 };
 
 declare
     %test:args('<query><term field="ident">Z-49/2</term></query>')
     %test:assertEquals("<title>Streiten und Hoffen</title>")
 function facet:query-field-with-keyword-analyzer($query as element()) {
-    doc("/db/lucenetest/documents.xml")//document[ft:query(., $query)]/title
+    doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)]/title
 };
 
 declare
@@ -768,14 +831,14 @@ declare
     %test:args('english:vögel')
     %test:assertEquals(0)
 function facet:query-field-with-condition($query as xs:string) {
-    count(doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., $query)])
+    count(doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., $query)])
 };
 
 declare
     %test:args('german:singen')
     %test:assertEmpty
 function facet:field-respects-ignore($query as xs:string) {
-    doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., $query)]
+    doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., $query)]
 };
 
 declare
@@ -784,8 +847,8 @@ declare
     %test:args("walde")
     %test:assertEquals(3)
 function facet:query-with-union-and-facets($query as xs:string) {
-    let $results := doc("/db/lucenetest/documents.xml")//document[ft:query(., $query)] |
-        doc("/db/lucenetest/documents.xml")//document[ft:query(abstract, $query)]
+    let $results := doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)] |
+        doc("/db/lucene-test-facets/documents.xml")//document[ft:query(abstract, $query)]
     return
         ft:facets($results, "cat")?nature
 };
@@ -793,7 +856,7 @@ function facet:query-with-union-and-facets($query as xs:string) {
 declare
     %test:assertEmpty
 function facet:avoid-range-index-conflict-person() {
-    let $people := collection("/db/lucenetest")//person[ft:query(., ())]
+    let $people := collection("/db/lucene-test-facets")//person[ft:query(., ())]
     let $city-facet := ft:facets($people, "city")
     return
         if ($people and $city-facet?unknown) then
@@ -805,7 +868,7 @@ function facet:avoid-range-index-conflict-person() {
 declare
     %test:assertEmpty
 function facet:avoid-range-index-conflict-city() {
-    let $cities := collection("/db/lucenetest")//city[ft:query(., ())]
+    let $cities := collection("/db/lucene-test-facets")//city[ft:query(., ())]
     let $persons-facet := ft:facets($cities, "person")
     return
         if ($cities and $persons-facet?none) then
@@ -814,6 +877,36 @@ function facet:avoid-range-index-conflict-city() {
             ()
 };
 
+(:~
+ : Phrase in abstract field should highlight as single span. abstract:"Götter sich streiten"
+ : matches one contiguous phrase; ft:highlight-field-matches should wrap the whole phrase
+ : in one exist:match.
+ : New test for Lucene 10; counterpart: facet:query-field-expand-matches.
+ :)
+declare
+    %test:args('abstract:"Götter sich streiten"', "abstract")
+    %test:assertEquals("<exist:field xmlns:exist='http://exist.sourceforge.net/NS/exist'>Da nun einmal der Himmel zerrissen und die <exist:match>Götter sich streiten</exist:match></exist:field>")
+function facet:query-field-expand-phrase-span($query as xs:string, $field as xs:string) {
+    let $result := doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)]
+    return
+        ft:highlight-field-matches($result, $field)[.//exist:match]
+};
+
+(:~
+ : Title phrase should highlight as single span. title:"Streiten und Hoffen" matches
+ : the full title; each term wrapped separately indicates phrase span merge is needed.
+ : New test for Lucene 10; counterpart: facet:query-field-expand-matches.
+ :)
+declare
+    %test:args('title:"Streiten und Hoffen"', "title")
+    %test:assertEquals("<exist:field xmlns:exist='http://exist.sourceforge.net/NS/exist'><exist:match>Streiten und Hoffen</exist:match></exist:field>")
+function facet:query-field-expand-title-phrase-span($query as xs:string, $field as xs:string) {
+    let $result := doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)]
+    return
+        ft:highlight-field-matches($result, $field)[.//exist:match]
+};
+
+(: FIXME: After Lucene 10 FIELD_INDEX_TYPE fix, some cases return 2 items when 1 expected (e.g. abstract:"Walde weht ein Wind" on docs with multiple abstracts). Review whether expectations need updating. :)
 declare
     %test:args("abstract:vogel", "abstract")
     %test:assertEquals("<exist:field xmlns:exist='http://exist.sourceforge.net/NS/exist'>Es zwitschern die <exist:match>Vögel</exist:match> im Walde</exist:field>")
@@ -828,7 +921,7 @@ declare
     %test:args('title:"Streiten und Hoffen"', "title")
     %test:assertEquals("<exist:field xmlns:exist='http://exist.sourceforge.net/NS/exist'><exist:match>Streiten und Hoffen</exist:match></exist:field>")
 function facet:query-field-expand-matches($query as xs:string, $field as xs:string) {
-    let $result := doc("/db/lucenetest/documents.xml")//document[ft:query(., $query)]
+    let $result := doc("/db/lucene-test-facets/documents.xml")//document[ft:query(., $query)]
     return
         ft:highlight-field-matches($result, $field)[.//exist:match]
 };
@@ -836,7 +929,7 @@ function facet:query-field-expand-matches($query as xs:string, $field as xs:stri
 declare
     %test:assertEquals("Basia Kowalska", "Babsi Müller", "Basia Müller")
 function facet:query-and-sort-by-binary-date() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "from:heinz")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:heinz")]
     order by ft:binary-field($letter, "received", "xs:date")
     return
         $letter/to/text()
@@ -845,7 +938,7 @@ function facet:query-and-sort-by-binary-date() {
 declare
     %test:assertEquals("2017", "20")
 function facet:retrieve-binary-date-field() {
-    let $letter := collection("/db/lucenetest")//letter[ft:query(., "from:rudi")]
+    let $letter := collection("/db/lucene-test-facets")//letter[ft:query(., "from:rudi")]
     let $date := ft:binary-field($letter, "received", "xs:date")
     return (
         year-from-date($date),
@@ -856,7 +949,7 @@ function facet:retrieve-binary-date-field() {
 declare
     %test:assertEquals("Babsi Müller", "Basia Kowalska", "Basia Müller")
 function facet:query-and-sort-by-binary-string() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "from:heinz")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "from:heinz")]
     order by ft:binary-field($letter, "to-binary", "xs:string") empty least
     return
         $letter/to/text()
@@ -868,7 +961,7 @@ declare
     %test:args("score-binary", "xs:double")
     %test:assertEquals(6, 8.25, 14.25, 16, 16.5, 29.5)
 function facet:query-and-sort-by-binary-numeric($field as xs:string, $type as xs:string) {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $field-value := ft:binary-field($letter, $field, $type)
     order by $field-value
     return $field-value
@@ -880,7 +973,7 @@ declare
     %test:args("date-binary", "xs:date")
     %test:assertEquals("2013-06-22", "2015-06-22", "2017-03-11", "2017-03-13", "2019-03-14", "2019-04-01")
 function facet:query-and-sort-by-binary-dates-and-times($field as xs:string, $type as xs:string) {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $field-value := ft:binary-field($letter, $field, $type)
     order by $field-value
     return $field-value
@@ -890,7 +983,7 @@ declare
     %test:args("dateTime-binary", "xs:dateTime")
     %test:assertEquals("1970-07-03T00:00:00-05:00", "1972-06-08T10:00:00-05:00")
 function facet:query-and-sort-by-binary-dateTime($field as xs:string, $type as xs:string) {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., ())]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., ())]
     let $field-value := ft:binary-field($letter, $field, $type)
     order by $field-value
     return $field-value
@@ -899,7 +992,7 @@ function facet:query-and-sort-by-binary-dateTime($field as xs:string, $type as x
 declare
     %test:assertEquals("Hans", "Rudi")
 function facet:query-and-sort-by-binary-time() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "to:Egon")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "to:Egon")]
     order by ft:binary-field($letter, "time-binary", "xs:time")
     return
         $letter/from/text()
@@ -908,7 +1001,7 @@ function facet:query-and-sort-by-binary-time() {
 declare
     %test:assertEquals("Rudi", "Hans")
 function facet:query-and-sort-by-binary-dateTime() {
-    for $letter in collection("/db/lucenetest")//letter[ft:query(., "place:berlin")]
+    for $letter in collection("/db/lucene-test-facets")//letter[ft:query(., "place:berlin")]
     order by ft:binary-field($letter, "dateTime-binary", "xs:dateTime")
     return
         $letter/from/text()
@@ -917,7 +1010,7 @@ function facet:query-and-sort-by-binary-dateTime() {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-count() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result)
 };
@@ -925,7 +1018,7 @@ function facet:query-no-default-index-count() {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         ft:facets($result, "language")?en
 };
@@ -933,7 +1026,7 @@ function facet:query-no-default-index-facets() {
 declare
     %test:assertEquals("1 1")
 function facet:query-no-default-index-count-and-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//div[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result) || " " || ft:facets($result, "language")?en
 };
@@ -941,7 +1034,7 @@ function facet:query-no-default-index-count-and-facets() {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-bracketed-element-count() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result)
 };
@@ -949,7 +1042,7 @@ function facet:query-no-default-index-bracketed-element-count() {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-bracketed-element-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         ft:facets($result, "language")?en
 };
@@ -957,7 +1050,7 @@ function facet:query-no-default-index-bracketed-element-facets() {
 declare
     %test:assertEquals("1 1")
 function facet:query-no-default-index-bracketed-element-count-and-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result) || " " || ft:facets($result, "language")?en
 };
@@ -965,7 +1058,7 @@ function facet:query-no-default-index-bracketed-element-count-and-facets() {
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-bracketed-element-one-nonexistent-element-count() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result)
 };
@@ -973,7 +1066,7 @@ function facet:query-no-default-index-bracketed-element-one-nonexistent-element-
 declare
     %test:assertEquals(1)
 function facet:query-no-default-index-bracketed-element-one-nonexistent-element-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         ft:facets($result, "language")?en
 };
@@ -981,7 +1074,7 @@ function facet:query-no-default-index-bracketed-element-one-nonexistent-element-
 declare
     %test:assertEquals("1 1")
 function facet:query-no-default-index-bracketed-element-one-nonexistent-element-count-and-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|other)[ft:query(., "english:*", map { "leading-wildcard": "yes" })]
     return
         count($result) || " " || ft:facets($result, "language")?en
 };
@@ -990,7 +1083,7 @@ function facet:query-no-default-index-bracketed-element-one-nonexistent-element-
 declare
     %test:assertEquals(2)
 function facet:query-no-default-index-bracketed-two-elements-count() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
     return
         count($result)
 };
@@ -998,7 +1091,7 @@ function facet:query-no-default-index-bracketed-two-elements-count() {
 declare
     %test:assertEquals(2)
 function facet:query-no-default-index-bracketed-two-elements-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
     return
         ft:facets($result, "language")?en
 };
@@ -1006,7 +1099,7 @@ function facet:query-no-default-index-bracketed-two-elements-facets() {
 declare
     %test:assertEquals("2 2")
 function facet:query-no-default-index-bracketed-two-elements-count-and-facets() {
-    let $result := doc("/db/lucenetest/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
+    let $result := doc("/db/lucene-test-facets/multi-lang.xml")//(div|span)[ft:query(., "english:* OR english2:*", map { "leading-wildcard": "yes" })]
     return
         count($result) || " " || ft:facets($result, "language")?en
 };
