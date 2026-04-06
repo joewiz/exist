@@ -795,20 +795,15 @@ public class Deployment {
 
     private void storeBinaryResources(final DBBroker broker, final Txn transaction, final Path directory, final Collection targetCollection,
                                       final Optional<RequestedPerms> requestedPerms, final List<String> errors) throws IOException {
-        final MimeTable mimeTab = MimeTable.getInstance();
         try (final DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
             for (final Path entry : stream) {
                 if (!Files.isDirectory(entry)) {
                     final XmldbURI name = XmldbURI.create(FileUtils.fileName(entry));
-                    MimeType mime = mimeTab.getContentTypeFor(FileUtils.fileName(entry));
-                    if (mime == null) {
-                        mime = MimeType.BINARY_TYPE;
-                    }
                     try {
                         final Permission permission = PermissionFactory.getDefaultResourcePermission(broker.getBrokerPool().getSecurityManager());
-                        setPermissions(broker, requestedPerms, false, mime, permission);
+                        setPermissions(broker, requestedPerms, false, MimeType.BINARY_TYPE, permission);
 
-                        storeBinary(broker, transaction, targetCollection, entry, mime, name, permission);
+                        storeBinary(broker, transaction, targetCollection, entry, MimeType.BINARY_TYPE, name, permission);
                     } catch (final Exception e) {
                         LOG.error(e.getMessage(), e);
                         errors.add(e.getMessage());
