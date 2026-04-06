@@ -410,6 +410,33 @@ public class PathExpr extends AbstractExpression implements CompiledXQuery,
     }
 
     @Override
+    public boolean isUpdating() {
+        if (steps.isEmpty()) {
+            return false;
+        }
+        if (steps.size() == 1) {
+            return steps.getFirst().isUpdating();
+        }
+        for (final Expression step : steps) {
+            if (step.isUpdating()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isVacuous() {
+        if (steps.isEmpty()) {
+            return true;
+        }
+        if (steps.size() == 1) {
+            return steps.getFirst().isVacuous();
+        }
+        return !isUpdating() && getCardinality() == Cardinality.EMPTY_SEQUENCE;
+    }
+
+    @Override
     public boolean allowMixedNodesInReturn() {
         if (steps.size() == 1) {
             return steps.getFirst().allowMixedNodesInReturn();
