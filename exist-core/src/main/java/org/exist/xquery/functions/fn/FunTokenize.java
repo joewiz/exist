@@ -110,17 +110,13 @@ public class FunTokenize extends BasicFunction {
                         flagsStr = flagsStr.replace("!", "");
                     }
 
-                    // XQ4: 'c' flag — strip regex comments
-                    final boolean hasCommentFlag = flagsStr.indexOf('c') >= 0 && flagsStr.indexOf('q') < 0;
+                    // XQ4: 'c' flag — strip regex comments (handled by Saxon's 'x' flag)
                     if (flagsStr.indexOf('c') >= 0) {
                         flagsStr = flagsStr.replace("c", "");
                     }
                     final int flags = parseFlags(this, flagsStr);
 
-                    String rawPattern = args[1].itemAt(0).getStringValue();
-                    if (hasCommentFlag) {
-                        rawPattern = FunReplace.stripRegexComments(rawPattern);
-                    }
+                    final String rawPattern = args[1].itemAt(0).getStringValue();
                     final String pattern;
                     if (hasLiteral(flags)) {
                         pattern = rawPattern;

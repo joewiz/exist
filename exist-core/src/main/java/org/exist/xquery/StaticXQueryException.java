@@ -68,13 +68,4 @@ public class StaticXQueryException extends XPathException
 		super(line, column, ErrorCodes.XPST0003, message);
 		initCause(cause);
 	}
-
-	public StaticXQueryException(int line, int column, ErrorCodes.ErrorCode errorCode, String message) {
-		super(line, column, errorCode, message);
-	}
-
-	public StaticXQueryException(int line, int column, ErrorCodes.ErrorCode errorCode, String message, Throwable cause) {
-		super(line, column, errorCode, message);
-		initCause(cause);
-	}
 }

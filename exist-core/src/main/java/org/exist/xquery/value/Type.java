@@ -133,11 +133,7 @@ public class Type {
     public final static int JAVA_OBJECT = 68;
     public final static int EMPTY_SEQUENCE = 69;  // NOTE(AR) this types does appear in the XQ 3.1 spec - https://www.w3.org/TR/xquery-31/#id-sequencetype-syntax
 
-<<<<<<< HEAD
-    // XQuery 4.0 record type — a subtype of map(*)
-=======
     /* XQuery 4.0 types */
->>>>>>> joewiz/v2/new-parser
     public final static int RECORD = 70;
 
     private final static int[] superTypes = new int[71];
