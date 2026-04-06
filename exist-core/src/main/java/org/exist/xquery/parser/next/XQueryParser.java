@@ -2448,7 +2448,9 @@ public final class XQueryParser {
     Expression parseOtherwiseExpr() throws XPathException {
         Expression left = parseStringConcatExpr();
         while (checkKeyword(Keywords.OTHERWISE)) {
-            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
+            if (!isXQ4()) {
+                throw xq4Required("'otherwise' operator");
+            }
             advance();
             final Expression right = parseStringConcatExpr();
             left = new OtherwiseExpression(context, left, right);
@@ -2555,7 +2557,9 @@ public final class XQueryParser {
     Expression parsePipelineExpr() throws XPathException {
         Expression left = parseArrowExpr();
         while (check(Token.PIPELINE)) {
-            // XQ4 feature accepted in all versions (matching ANTLR 2 behavior)
+            if (!isXQ4()) {
+                throw xq4Required("'->' pipeline operator");
+            }
             advance();
             left = parseArrowCall(left, false);
         }

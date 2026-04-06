@@ -208,6 +208,7 @@ public class NativeParserIntegrationTest {
         assertQuery("2 4 6", "array:flatten(array { for $i in 1 to 3 return $i * 2 })");
     }
 
+    @Ignore("array:get 3-arg is XQ4, requires v2/xq4-core-functions")
     @Test
     public void arrayGetThreeArgs() throws Exception {
         assertQuery("2", "array:get([1,2,3], 2, ())");
