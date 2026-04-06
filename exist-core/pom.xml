@@ -324,6 +324,12 @@
         </dependency>
 
         <dependency>
+            <groupId>nu.validator</groupId>
+            <artifactId>htmlparser</artifactId>
+            <version>1.4.16</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.apache.ws.commons.util</groupId>
             <artifactId>ws-commons-util</artifactId>
             <version>1.0.2</version>
@@ -391,16 +397,8 @@
         </dependency>
 
         <dependency>
-            <groupId>org.exist-db</groupId>
-            <artifactId>exist-saxon-regex</artifactId>
-            <version>9.4.0-9.e1</version>
-            <exclusions>
-                <exclusion>
-                    <!-- we have our own dependency on Saxon -->
-                    <groupId>net.sf.saxon</groupId>
-                    <artifactId>Saxon-HE</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>de.bottlecaps</groupId>
+            <artifactId>markup-blitz</artifactId>
         </dependency>
 
         <dependency>
