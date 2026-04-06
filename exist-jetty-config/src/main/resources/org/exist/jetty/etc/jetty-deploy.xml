@@ -2,12 +2,14 @@
 <!DOCTYPE Configure PUBLIC "-//Jetty//Configure//EN" "https://www.eclipse.org/jetty/configure_10_0.dtd">
 
 <!-- =============================================================== -->
-<!-- Deploy the eXist webapp context by adding it directly to the    -->
-<!-- ContextHandlerCollection.                                       -->
+<!-- Deploy the eXist webapp context and portal redirect at /        -->
+<!-- by adding them directly to the ContextHandlerCollection.        -->
 <!-- =============================================================== -->
 <Configure id="Server" class="org.eclipse.jetty.server.Server">
 
   <Ref refid="Contexts">
+
+    <!-- eXist webapp at /exist -->
     <Call name="addHandler">
       <Arg>
         <New class="org.exist.jetty.WebAppContext">
@@ -31,6 +33,18 @@
         </New>
       </Arg>
     </Call>
+
+    <!-- Portal webapp at / — serves the redirect page to /exist -->
+    <Call name="addHandler">
+      <Arg>
+        <New id="portal" class="org.eclipse.jetty.ee10.webapp.WebAppContext">
+          <Set name="contextPath">/</Set>
+          <Set name="war"><SystemProperty name="exist.jetty.portal.dir"><Default><Property name="jetty.home" default="."/>/../../../exist-jetty-config/src/main/resources/org/exist/jetty/etc/webapps/portal/</Default></SystemProperty></Set>
+          <Set name="defaultsDescriptor"><Property name="jetty.home" default="."/>/etc/webdefault.xml</Set>
+        </New>
+      </Arg>
+    </Call>
+
   </Ref>
 
 </Configure>
