@@ -28,6 +28,18 @@ public class EXistOutputKeys {
      */
     public static final String ITEM_SEPARATOR = "item-separator";
 
+    // --- QT4 Serialization 4.0 parameters ---
+    public static final String CANONICAL = "canonical";
+    public static final String ESCAPE_SOLIDUS = "escape-solidus";
+    public static final String JSON_LINES = "json-lines";
+
+    // --- CSV serialization parameters ---
+    public static final String CSV_FIELD_DELIMITER = "csv.field-delimiter";
+    public static final String CSV_ROW_DELIMITER = "csv.row-delimiter";
+    public static final String CSV_QUOTE_CHARACTER = "csv.quote-character";
+    public static final String CSV_HEADER = "csv.header";
+    public static final String CSV_QUOTES = "csv.quotes";
+
     public static final String OMIT_ORIGINAL_XML_DECLARATION = "omit-original-xml-declaration";
 
     public static final String OUTPUT_DOCTYPE = "output-doctype";
