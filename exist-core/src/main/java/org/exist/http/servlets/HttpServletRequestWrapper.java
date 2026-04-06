@@ -441,7 +441,6 @@ public class HttpServletRequestWrapper implements HttpServletRequest, Closeable 
         return request.isRequestedSessionIdFromURL();
     }
 
-
     @Override
     public boolean authenticate(final HttpServletResponse httpServletResponse) throws IOException, ServletException {
         return request.authenticate(httpServletResponse);
