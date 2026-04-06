@@ -28,6 +28,7 @@ import org.exist.xquery.AnalyzeContextInfo;
 import org.exist.xquery.Cardinality;
 import org.exist.xquery.Constants;
 import org.exist.xquery.Dependency;
+import org.exist.xquery.DynamicCardinalityCheck;
 import org.exist.xquery.Expression;
 import org.exist.xquery.LocationStep;
 import org.exist.xquery.Function;
@@ -90,9 +91,16 @@ public class FunNot extends Function {
 		// must iterate per-item. LocationStep.getDependencies() does not report
 		// CONTEXT_ITEM inside predicates (for the set-difference optimization),
 		// so we add it here to ensure correct per-item evaluation (GitHub #2308).
-		if (inPredicate && arg instanceof LocationStep) {
-			final LocationStep step = (LocationStep) arg;
-			if (step.getAxis() == Constants.SELF_AXIS
+		if (inPredicate) {
+			// Unwrap DynamicCardinalityCheck and similar wrappers to find the
+			// underlying LocationStep, since fn:not()'s argument signature
+			// accepts zero-or-more items which triggers cardinality wrapping.
+			Expression unwrapped = arg;
+			while (unwrapped instanceof DynamicCardinalityCheck) {
+				unwrapped = ((DynamicCardinalityCheck) unwrapped).getExpression();
+			}
+			if (unwrapped instanceof LocationStep step
+					&& step.getAxis() == Constants.SELF_AXIS
 					&& step.getTest().getType() == Type.NODE) {
 				deps = deps | Dependency.CONTEXT_ITEM;
 			}
