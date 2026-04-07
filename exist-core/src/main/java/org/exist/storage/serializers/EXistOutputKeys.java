@@ -118,4 +118,11 @@ public class EXistOutputKeys {
     public static final String INSERT_FINAL_NEWLINE = "insert-final-newline";
 
     public static final String USE_CHARACTER_MAPS = "use-character-maps";
+
+    // --- CSV serialization parameters ---
+    public static final String CSV_FIELD_DELIMITER = "csv.field-delimiter";
+    public static final String CSV_ROW_DELIMITER = "csv.row-delimiter";
+    public static final String CSV_QUOTE_CHARACTER = "csv.quote-character";
+    public static final String CSV_HEADER = "csv.header";
+    public static final String CSV_QUOTES = "csv.quotes";
 }
