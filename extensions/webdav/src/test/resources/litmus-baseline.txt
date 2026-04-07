@@ -1,0 +1,15 @@
+# Litmus WebDAV compliance test baseline
+# Lines starting with # are comments.
+# Each non-empty, non-comment line is a test name that is expected to FAIL.
+# CI passes if actual failures match this baseline exactly.
+#
+# Update this file when:
+# - A previously-failing test is fixed (remove the line)
+# - A new test starts failing for a known reason (add the line with comment)
+#
+# Jackrabbit upstream: JCR-406 / JCR-2638
+# IfListEntryToken.match() returns true for null token, so state token
+# conditions in If headers pass on unlocked resources.
+# Open since 2006, patch submitted 2010 but never applied.
+cond_put_corrupt_token
+fail_cond_put_unlocked
