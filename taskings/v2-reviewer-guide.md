@@ -29,7 +29,7 @@ Or review individual branches: each `v2/` branch is on `joewiz/exist` and target
 
 These touch no shared infrastructure. Each can be reviewed and merged independently.
 
-### `v2/xq31-compliance-fixes` — XQuery 3.1 Compliance Bugfixes
+### `v2/xq31-compliance-fixes` ([#6207](https://github.com/eXist-db/exist/pull/6207)) — XQuery 3.1 Compliance Bugfixes
 
 **Priority**: High — fixes real bugs users have reported
 **Reviewer effort**: Medium (23 commits, 36 files — but each commit is a focused bugfix)
@@ -41,7 +41,7 @@ These touch no shared infrastructure. Each can be reviewed and merged independen
 
 ---
 
-### `v2/query-profiling` — Query Profiling Functions
+### `v2/query-profiling` ([#6208](https://github.com/eXist-db/exist/pull/6208)) — Query Profiling Functions
 
 **Priority**: Medium — useful developer tooling, no risk to core
 **Reviewer effort**: Low (5 commits, 11 files — all new code, no existing code modified)
@@ -53,7 +53,7 @@ Adds `util:time()`, `util:memory()`, `util:track()`, `util:explain()`, `util:pro
 
 ---
 
-### `v2/xq4-axes` — XQuery 4.0 Axes
+### `v2/xq4-axes` ([#6209](https://github.com/eXist-db/exist/pull/6209)) — XQuery 4.0 Axes
 
 **Priority**: Low — XQ4 feature, not urgent
 **Reviewer effort**: Low (3 commits, 10 files)
@@ -65,7 +65,7 @@ Adds XQ4 axes (`following-or-self`, `preceding-or-self`, etc.) and fixes a pre-e
 
 ---
 
-### `v2/xq4-record-types` — XQuery 4.0 Record Types
+### `v2/xq4-record-types` ([#6210](https://github.com/eXist-db/exist/pull/6210)) — XQuery 4.0 Record Types
 
 **Priority**: Low — XQ4 feature
 **Reviewer effort**: Low (3 commits, 9 files)
@@ -77,7 +77,7 @@ Record type declarations and pattern matching per XQ4 spec.
 
 ---
 
-### `v2/xq4-filter-expr-am` — XQuery 4.0 Array/Map Filter
+### `v2/xq4-filter-expr-am` ([#6211](https://github.com/eXist-db/exist/pull/6211)) — XQuery 4.0 Array/Map Filter
 
 **Priority**: Low — XQ4 feature
 **Reviewer effort**: Very low (2 commits, 4 files — smallest PR)
@@ -93,7 +93,7 @@ Adds `?[expr]` filter syntax for arrays and maps. Includes grammar changes and e
 
 These are major dependency upgrades. They don't conflict with each other but should merge before the grammar PRs in Wave 3.
 
-### `v2/saxon-12-upgrade` — Saxon 9.9 → 12.5
+### `v2/saxon-12-upgrade` ([#6212](https://github.com/eXist-db/exist/pull/6212)) — Saxon 9.9 → 12.5
 
 **Priority**: High — eliminates the unmaintained exist-saxon-regex fork
 **Reviewer effort**: Medium (7 commits, 143 files — but most changes are mechanical API migration)
@@ -105,7 +105,7 @@ Eliminates the `exist-saxon-regex` fork module entirely. The main work is migrat
 
 ---
 
-### `v2/jetty-12-upgrade` — Jetty 11 → 12 (Jakarta Servlet 6.0)
+### `v2/jetty-12-upgrade` ([#6213](https://github.com/eXist-db/exist/pull/6213)) — Jetty 11 → 12 (Jakarta Servlet 6.0)
 
 **Priority**: High — Jetty 11 is EOL
 **Reviewer effort**: Medium (2 commits, 41 files)
@@ -121,7 +121,7 @@ Eliminates the `exist-saxon-regex` fork module entirely. The main work is migrat
 
 These PRs modify the ANTLR 2 grammar. They use **labeled sections** to minimize conflicts, but should be merged in the order listed. The grammar conflicts between them are trivial (keyword list sections).
 
-### `v2/w3c-xquery-update-3.0` — W3C XQuery Update Facility 3.0
+### `v2/w3c-xquery-update-3.0` ([#6214](https://github.com/eXist-db/exist/pull/6214)) — W3C XQuery Update Facility 3.0
 
 **Priority**: High — long-requested feature, 100% non-schema XQTS compliance
 **Reviewer effort**: High (6 commits, 47 files — new subsystem)
@@ -135,7 +135,7 @@ XQTS: 656/666 non-schema, non-fn-put (98.5%).
 
 ---
 
-### `v2/xqft-phase2` — W3C Full Text 3.0
+### `v2/xqft-phase2` ([#6215](https://github.com/eXist-db/exist/pull/6215)) — W3C Full Text 3.0
 
 **Priority**: Medium — niche but powerful feature
 **Reviewer effort**: High (4 commits, 32 files — new subsystem)
@@ -149,7 +149,7 @@ XQTS FTTS: 1,320/1,334 (99.0%).
 
 ---
 
-### `v2/xquery-4.0-parser` — XQuery 4.0 Grammar + Version Gating
+### `v2/xquery-4.0-parser` ([#6216](https://github.com/eXist-db/exist/pull/6216)) — XQuery 4.0 Grammar + Version Gating
 
 **Priority**: High — enables all XQ4 features
 **Reviewer effort**: High (8 commits, 63 files — grammar is complex)
@@ -167,7 +167,7 @@ Also includes reserved-keywords-as-NCNames fix from #6103.
 
 ---
 
-### `v2/declare-decimal-format` — XQuery 3.1 Decimal Format
+### `v2/declare-decimal-format` ([#6217](https://github.com/eXist-db/exist/pull/6217)) — XQuery 3.1 Decimal Format
 
 **Priority**: Medium — spec compliance
 **Reviewer effort**: Low (2 commits, 6 files)
@@ -182,7 +182,7 @@ Also includes reserved-keywords-as-NCNames fix from #6103.
 
 ## Wave 4: Functions (merge after parser)
 
-### `v2/xq4-core-functions` — 82 XQuery 4.0 Functions
+### `v2/xq4-core-functions` ([#6218](https://github.com/eXist-db/exist/pull/6218)) — 82 XQuery 4.0 Functions
 
 **Priority**: High — the bulk of XQ4 user-facing features
 **Reviewer effort**: High (5 commits, 130 files — largest PR by file count)
@@ -198,7 +198,7 @@ XQTS QT4: 435/599 non-skipped (72.6%) — lower total because many tests require
 
 ## Wave 5: Serialization and Parser (independent, merge last)
 
-### `v2/serialization-compliance` — W3C Serialization Compliance
+### `v2/serialization-compliance` ([#6219](https://github.com/eXist-db/exist/pull/6219)) — W3C Serialization Compliance
 
 **Priority**: Medium — important for interop, fixes the eXide regression
 **Reviewer effort**: Medium (14 commits, 26 files)
@@ -210,7 +210,7 @@ Fixes across XML, HTML, XHTML, JSON, text, adaptive, and CSV serialization. The 
 
 ---
 
-### `v2/new-parser` — Hand-Written Recursive Descent Parser
+### `v2/new-parser` ([#6220](https://github.com/eXist-db/exist/pull/6220)) — Hand-Written Recursive Descent Parser
 
 **Priority**: Low for merge (opt-in only), high for long-term strategy
 **Reviewer effort**: Medium (12 files, ~5,700 lines — but self-contained)
@@ -314,7 +314,6 @@ These are not part of the v2/ consolidation but are approved and ready:
 | [#6153](https://github.com/eXist-db/exist/pull/6153) | Re-enable 9 skipped tests that now pass | (merged) |
 | [#6162](https://github.com/eXist-db/exist/pull/6162) | Fix negative double/float in value index | @reinhapa |
 | [#6163](https://github.com/eXist-db/exist/pull/6163) | Validate json-to-xml escape option (FOJS0005) | @duncdrum |
-| [#6165](https://github.com/eXist-db/exist/pull/6165) | Fix XQ 3.1 casting and numeric compliance | @reinhapa, @duncdrum |
 | [#6182](https://github.com/eXist-db/exist/pull/6182) | Unify module discovery | @line-o |
 | [#6184](https://github.com/eXist-db/exist/pull/6184) | Add repo:resource-available() | @duncdrum |
 | [#6186](https://github.com/eXist-db/exist/pull/6186) | Add surefire fork timeouts | @duncdrum |

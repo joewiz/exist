@@ -73,20 +73,20 @@ Each branch was tested individually: full exist-core unit tests (~6,500 tests), 
 
 | Branch | What It Does | Size | XQTS | Supersedes |
 |--------|-------------|------|------|------------|
-| `v2/xq31-compliance-fixes` | 23 XQ 3.1 bugfixes (casting, fn:not, path dedup, format-date, etc.) | 23 commits, 36 files | — | #6165, #6083, #6085, #6080 |
-| `v2/query-profiling` | util:time, memory, track, explain, profile | 5 commits, 11 files | — | #6194 |
-| `v2/xq4-axes` | XQ4 axes + preceding/following predicate fix | 3 commits, 10 files | — | #6076 |
-| `v2/xq4-record-types` | XQ4 record type declarations | 3 commits, 9 files | — | — |
-| `v2/xq4-filter-expr-am` | XQ4 `?[expr]` filter for arrays/maps | 2 commits, 4 files | — | — |
-| `v2/saxon-12-upgrade` | Saxon 9.9 → 12.5, eliminate regex fork | 7 commits, 143 files | — | #6143 |
-| `v2/jetty-12-upgrade` | Jetty 11 → 12, Jakarta Servlet 6.0 | 2 commits, 41 files | — | #6144 |
-| `v2/w3c-xquery-update-3.0` | W3C XQUF 3.0 (copy-modify, insert/delete/replace/rename) | 6 commits, 47 files | XQUF 98.5% | #6111 |
-| `v2/xqft-phase2` | W3C Full Text 3.0 (contains text, stemming, proximity) | 4 commits, 32 files | FTTS 99.0% | #6133 |
-| `v2/xquery-4.0-parser` | XQ4 grammar + version gating + feature flag | 8 commits, 63 files | QT4 89.3% | #6139, #6103 |
-| `v2/declare-decimal-format` | `declare decimal-format` (XQ 3.1) | 2 commits, 6 files | — | #6077 |
-| `v2/xq4-core-functions` | 82 XQ4 functions (fn:, array:, map:, math:) | 5 commits, 130 files | QT4 72.6% | (part of #6139) |
-| `v2/serialization-compliance` | XML/HTML/XHTML/JSON/text/adaptive/CSV serialization | 14 commits, 26 files | — | #6138 |
-| `v2/new-parser` | Hand-written rd parser (opt-in: `-Dexist.parser=rd`) | 12 files | — | — |
+| [#6207](https://github.com/eXist-db/exist/pull/6207) `v2/xq31-compliance-fixes` | 23 XQ 3.1 bugfixes (casting, fn:not, path dedup, format-date, etc.) | 23 commits, 36 files | — | #6165, #6083, #6085, #6080 |
+| [#6208](https://github.com/eXist-db/exist/pull/6208) `v2/query-profiling` | util:time, memory, track, explain, profile | 5 commits, 11 files | — | #6194 |
+| [#6209](https://github.com/eXist-db/exist/pull/6209) `v2/xq4-axes` | XQ4 axes + preceding/following predicate fix | 3 commits, 10 files | — | #6076 |
+| [#6210](https://github.com/eXist-db/exist/pull/6210) `v2/xq4-record-types` | XQ4 record type declarations | 3 commits, 9 files | — | — |
+| [#6211](https://github.com/eXist-db/exist/pull/6211) `v2/xq4-filter-expr-am` | XQ4 `?[expr]` filter for arrays/maps | 2 commits, 4 files | — | — |
+| [#6212](https://github.com/eXist-db/exist/pull/6212) `v2/saxon-12-upgrade` | Saxon 9.9 → 12.5, eliminate regex fork | 7 commits, 143 files | — | #6143 |
+| [#6213](https://github.com/eXist-db/exist/pull/6213) `v2/jetty-12-upgrade` | Jetty 11 → 12, Jakarta Servlet 6.0 | 2 commits, 41 files | — | #6144 |
+| [#6214](https://github.com/eXist-db/exist/pull/6214) `v2/w3c-xquery-update-3.0` | W3C XQUF 3.0 (copy-modify, insert/delete/replace/rename) | 6 commits, 47 files | XQUF 98.5% | #6111 |
+| [#6215](https://github.com/eXist-db/exist/pull/6215) `v2/xqft-phase2` | W3C Full Text 3.0 (contains text, stemming, proximity) | 4 commits, 32 files | FTTS 99.0% | #6133 |
+| [#6216](https://github.com/eXist-db/exist/pull/6216) `v2/xquery-4.0-parser` | XQ4 grammar + version gating + feature flag | 8 commits, 63 files | QT4 89.3% | #6139, #6103 |
+| [#6217](https://github.com/eXist-db/exist/pull/6217) `v2/declare-decimal-format` | `declare decimal-format` (XQ 3.1) | 2 commits, 6 files | — | #6077 |
+| [#6218](https://github.com/eXist-db/exist/pull/6218) `v2/xq4-core-functions` | 82 XQ4 functions (fn:, array:, map:, math:) | 5 commits, 130 files | QT4 72.6% | (part of #6139) |
+| [#6219](https://github.com/eXist-db/exist/pull/6219) `v2/serialization-compliance` | XML/HTML/XHTML/JSON/text/adaptive/CSV serialization | 14 commits, 26 files | — | #6138 |
+| [#6220](https://github.com/eXist-db/exist/pull/6220) `v2/new-parser` | Hand-written rd parser (opt-in: `-Dexist.parser=rd`) | 12 files | — | — |
 
 ## Integration Testing (next-v2)
 
