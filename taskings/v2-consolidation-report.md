@@ -86,7 +86,7 @@ Each branch was tested individually: full exist-core unit tests (~6,500 tests), 
 | [#6217](https://github.com/eXist-db/exist/pull/6217) `v2/declare-decimal-format` | `declare decimal-format` (XQ 3.1) | 2 commits, 6 files | — | #6077 |
 | [#6218](https://github.com/eXist-db/exist/pull/6218) `v2/xq4-core-functions` | 82 XQ4 functions (fn:, array:, map:, math:) | 5 commits, 130 files | QT4 72.6% | (part of #6139) |
 | [#6219](https://github.com/eXist-db/exist/pull/6219) `v2/serialization-compliance` | XML/HTML/XHTML/JSON/text/adaptive/CSV serialization | 14 commits, 26 files | — | #6138 |
-| [#6220](https://github.com/eXist-db/exist/pull/6220) `v2/new-parser` | Hand-written rd parser (opt-in: `-Dexist.parser=rd`) | 12 files | — | — |
+| [#6220](https://github.com/eXist-db/exist/pull/6220) `v2/new-parser` | Recursive descent (rd) parser (opt-in: `-Dexist.parser=rd`) | 12 files | — | — |
 
 ## Integration Testing (next-v2)
 
@@ -102,7 +102,7 @@ exist-core unit tests: 6,240 / 6,357 (98.2%) — 15 failures, all pre-existing o
 
 ## Parser Benchmark Results
 
-The hand-written rd parser (`v2/new-parser`) was benchmarked against 5 other parsers:
+The rd parser (`v2/new-parser`) was benchmarked against 5 other parsers:
 
 | Parser | Speed vs ANTLR 2 | Compliance (QT4 prod-*) |
 |--------|:-:|:-:|

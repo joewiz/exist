@@ -210,14 +210,14 @@ Fixes across XML, HTML, XHTML, JSON, text, adaptive, and CSV serialization. The 
 
 ---
 
-### `v2/new-parser` ([#6220](https://github.com/eXist-db/exist/pull/6220)) — Hand-Written Recursive Descent Parser
+### `v2/new-parser` ([#6220](https://github.com/eXist-db/exist/pull/6220)) — Recursive Descent Parser
 
 **Priority**: Low for merge (opt-in only), high for long-term strategy
 **Reviewer effort**: Medium (12 files, ~5,700 lines — but self-contained)
 **Risk**: Very low — opt-in via `-Dexist.parser=rd`, default remains ANTLR 2
 **Dependency**: Must merge after XQUF, XQFT, and parser PRs
 
-A complete hand-written XQuery parser supporting XQ 3.1, 4.0, XQUF 3.0, and XQFT 3.0. Benchmarks show it's 15-82x faster than ANTLR 2 and matches BaseX speed. Zero impact on existing behavior — the feature flag defaults to ANTLR 2.
+A complete recursive descent XQuery parser supporting XQ 3.1, 4.0, XQUF 3.0, and XQFT 3.0. Benchmarks show it's 15-82x faster than ANTLR 2 and matches BaseX speed. Zero impact on existing behavior — the feature flag defaults to ANTLR 2.
 
 **What to look for**: Parser architecture (single-pass, builds Expression tree directly). Keyword handling without ANTLR 2's testLiterals trap. Error reporting quality.
 
