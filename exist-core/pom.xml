@@ -815,6 +815,12 @@
                                 <exclude>src/main/java/org/exist/util/io/TemporaryFileManager.java</exclude>
                                 <exclude>src/test/java/org/exist/util/io/CachingFilterInputStreamNonMarkableByteArrayInputStreamTest.java</exclude>
                                 <exclude>src/main/java/org/exist/xquery/functions/fn/FnFormatNumbers.java</exclude>
+
+                                <!--
+                                    XInclude test suite contains UTF-16 encoded XML files which cannot
+                                    be read by the license plugin's UTF-8 reader
+                                -->
+                                <exclude>src/test/resources/xinclude-test-suite/**</exclude>
                             </excludes>
                         </licenseSet>
 
