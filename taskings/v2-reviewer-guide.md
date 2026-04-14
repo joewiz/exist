@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a guide to the 14 `v2/` PRs prepared for eXist-db 7.0. Each PR has been individually tested (build, exist-core tests, Codacy), and all 15 merge cleanly together in the `next-v2` integration branch.
+This is a guide to the 13 `v2/` PRs (plus one closely related PR, [#6145](https://github.com/eXist-db/exist/pull/6145)) prepared for eXist-db 7.0. Each PR has been individually tested (build, exist-core tests, Codacy), and all branches merge cleanly together in the `next-v2` integration branch.
 
 The PRs are organized into 5 waves by dependency and review complexity. **You can review in any order**, but merging should follow the wave order to avoid conflicts.
 
@@ -11,6 +11,17 @@ The PRs are organized into 5 waves by dependency and review complexity. **You ca
 Every branch was tested individually: build (`mvn install -pl exist-core -am`), full exist-core unit tests (~6,500 tests), and Codacy static analysis. Branches with grammar changes also ran XQTS compliance suites. All 14 branches were then merged together in the `next-v2` integration branch and tested again — final result: **6,240 / 6,357 (98.2%)**, with all 15 remaining failures pre-existing on develop.
 
 For full context on the consolidation process, see the [consolidation report](v2-consolidation-report.md).
+
+## CI Health Note
+
+All 13 `v2/` PRs were rebased on 2026-04-13 after [#6224](https://github.com/eXist-db/exist/pull/6224) (CI/Maven fixes) merged. The CI runs from that rebase are the current baseline.
+
+**Known noise in CI results** — do not treat these as blockers:
+
+- **Integration failures (ubuntu/windows/macOS)**: All PRs show 1–3 integration job failures. These are pre-existing test hangs (the surefire fork timeout fires; the CI job still reports FAILURE). Not caused by any v2 change.
+- **"Test and Publish Container Images" failure**: Caused by a transient HTTP 502 from `exist-db.org`'s public XAR repo during the build. Not a code issue.
+- **XQTS runner crash on #6212 (Saxon 12)**: The CI XQTS job uses the Saxon 9.9 runner against the Saxon 12 classpath and crashes with `NoSuchMethodError: AnyURIValue.<init>(CharSequence)`. This is expected; [exist-xqts-runner #49](https://github.com/eXist-db/exist-xqts-runner/pull/49) adds Saxon 12 compatibility and should merge alongside #6212.
+- **`replace.empty-match` unit tests (#6212 and #6218)**: These two PRs have complementary unit test failures. #6212 has `replace.empty-match-fails` failing (Saxon 12 permits empty matches; the XQ 3.1 gating is in #6218). #6218 has `replace.empty-match-allowed` failing (XQ4 mode expects empty matches; requires Saxon 12 from #6212). When both are merged together, both tests pass. Reviewers can ignore these failures when reviewing either PR individually.
 
 ## How to Test
 
@@ -105,15 +116,18 @@ Eliminates the `exist-saxon-regex` fork module entirely. The main work is migrat
 
 ---
 
-### `v2/jetty-12-upgrade` ([#6213](https://github.com/eXist-db/exist/pull/6213)) — Jetty 11 → 12 (Jakarta Servlet 6.0)
+### `feature/websocket-core` ([#6145](https://github.com/eXist-db/exist/pull/6145)) — Jetty 11 → 12 (Jakarta Servlet 6.0) + WebSocket
 
 **Priority**: High — Jetty 11 is EOL
-**Reviewer effort**: Medium (2 commits, 41 files)
+**Reviewer effort**: Medium (~41 files for Jetty migration + WebSocket module)
 **Risk**: Medium — servlet API migration affects all HTTP handling
+**Approvals**: @dizzzz ✓
 
-`javax.servlet` → `jakarta.servlet` across all modules. Addresses review feedback from @reinhapa and @dizzzz on the original PR #6144: `printStackTrace` replaced with logging, unhelpful comments removed, `sendError` evaluated but not used for RESTXQ (would commit response prematurely).
+`javax.servlet` → `jakarta.servlet` across all modules. Addresses review feedback from @reinhapa and @dizzzz on the original PR #6144: `printStackTrace` replaced with logging, unhelpful comments removed, `sendError` evaluated but not used for RESTXQ (would commit response prematurely). Also adds a WebSocket module with streaming XQuery evaluation.
 
-**What to look for**: The `setStatus` reason parameter decision (dropped, not replaced with `sendError` — see comment in HttpServletResponseAdapter.java). Servlet filter chain changes. WebSocket compatibility.
+> Note: The original `v2/jetty-12-upgrade` PR ([#6213](https://github.com/eXist-db/exist/pull/6213)) has been superseded by this broader PR.
+
+**What to look for**: The `setStatus` reason parameter decision (dropped, not replaced with `sendError` — see comment in HttpServletResponseAdapter.java). Servlet filter chain changes. WebSocket API.
 
 ---
 
@@ -233,7 +247,7 @@ Wave 1 (any order):     v2/xq31-compliance-fixes
                         v2/xq4-filter-expr-am
 
 Wave 2 (any order):     v2/saxon-12-upgrade
-                        v2/jetty-12-upgrade
+                        feature/websocket-core  (#6145)
 
 Wave 3 (in order):      v2/w3c-xquery-update-3.0
                         v2/xqft-phase2
@@ -250,16 +264,11 @@ Wave 5 (any order):     v2/serialization-compliance
 
 ### XQTS Runner (exist-xqts-runner repo)
 
-[PR #45](https://github.com/eXist-db/exist-xqts-runner/pull/45) — "Add QT4/FTTS test suites, XQuery Update support, and assertion reliability fixes" (approved by @duncdrum)
+[PR #49](https://github.com/eXist-db/exist-xqts-runner/pull/49) — "Extend XQTS runner: QT4/FTTS/Update suites, assertion fixes, batch runner, Saxon 12"
 
-This PR enables all the XQTS compliance scores cited in this guide. Without it, only XQ 3.1 tests can be run. It adds:
-- QT4 test suite support (XQuery 4.0)
-- FTTS test suite support (Full Text)
-- XQuery Update feature flag
-- Batch runner with parallel execution and jstack diagnostics
-- Saxon 12 / Jetty 12 compatibility
+This consolidated PR supersedes the previously approved [#45](https://github.com/eXist-db/exist-xqts-runner/pull/45) (now closed). It enables all the XQTS compliance scores cited in this guide and adds Saxon 12 compatibility. Without it, only XQ 3.1 tests can be run.
 
-**Should be merged alongside the v2/ PRs.**
+**Should be merged alongside the v2/ PRs.** Needs first review.
 
 ### W3C XInclude Test Suite
 
@@ -271,8 +280,8 @@ These PRs on other repositories are part of the 7.0 work:
 
 | Repo | PR | Title | Status |
 |------|----|-------|--------|
-| exist-xqts-runner | [#45](https://github.com/eXist-db/exist-xqts-runner/pull/45) | QT4/FTTS/XQUF test suite support | Approved (@duncdrum) |
-| exist-xqts-runner | [#49](https://github.com/eXist-db/exist-xqts-runner/pull/49) | Saxon 12 compatibility | Merge after v2/saxon-12-upgrade |
+| exist-xqts-runner | [#49](https://github.com/eXist-db/exist-xqts-runner/pull/49) | QT4/FTTS/XQUF suites + Saxon 12 | Needs review; merge alongside v2/ PRs |
+| exist-xqts-runner | [~~#45~~](https://github.com/eXist-db/exist-xqts-runner/pull/45) | ~~QT4/FTTS/XQUF test suite support~~ | Closed; superseded by #49 |
 | eXist-db/exist | [#6206](https://github.com/eXist-db/exist/pull/6206) | XInclude test suite + conformance | Review needed |
 | eXide | [#778](https://github.com/eXist-db/eXide/pull/778) | Modernize: CM6 editor, REx parser, LSP | Review needed |
 | exist-markdown | [#69](https://github.com/eXist-db/exist-markdown/pull/69) | CommonMark/GFM (flexmark-java) | Approved |
@@ -305,18 +314,18 @@ These repos were created for 7.0 apps and should be transferred to the eXist-db 
 
 These are not part of the v2/ consolidation but are approved and ready:
 
-| PR | Title | Approvals |
-|----|-------|-----------|
-| [#6087](https://github.com/eXist-db/exist/pull/6087) | Fix XInclude relative path resolution | @reinhapa |
-| [#6092](https://github.com/eXist-db/exist/pull/6092) | [ZN] timezone name modifier for format-dateTime | @duncdrum |
-| [#6142](https://github.com/eXist-db/exist/pull/6142) | Add weekly Prethink context refresh workflow | @line-o |
-| [#6146](https://github.com/eXist-db/exist/pull/6146) | Lucene 10 upgrade | @windauer, @line-o |
-| [#6153](https://github.com/eXist-db/exist/pull/6153) | Re-enable 9 skipped tests that now pass | (merged) |
-| [#6162](https://github.com/eXist-db/exist/pull/6162) | Fix negative double/float in value index | @reinhapa |
-| [#6163](https://github.com/eXist-db/exist/pull/6163) | Validate json-to-xml escape option (FOJS0005) | @duncdrum |
-| [#6182](https://github.com/eXist-db/exist/pull/6182) | Unify module discovery | @line-o |
-| [#6184](https://github.com/eXist-db/exist/pull/6184) | Add repo:resource-available() | @duncdrum |
-| [#6186](https://github.com/eXist-db/exist/pull/6186) | Add surefire fork timeouts | @duncdrum |
-| [#6191](https://github.com/eXist-db/exist/pull/6191) | Fix FLWOR sort race condition | @duncdrum |
+| PR | Title | Status |
+|----|-------|--------|
+| [#6087](https://github.com/eXist-db/exist/pull/6087) | Fix XInclude relative path resolution | 1 approval (@duncdrum) |
+| [#6092](https://github.com/eXist-db/exist/pull/6092) | [ZN] timezone name modifier for format-dateTime | 1 approval (@duncdrum) |
+| [~~#6142~~](https://github.com/eXist-db/exist/pull/6142) | ~~Add weekly Prethink context refresh workflow~~ | Merged 2026-04-13 |
+| [~~#6146~~](https://github.com/eXist-db/exist/pull/6146) | ~~Lucene 10 upgrade~~ | Merged 2026-04-13 |
+| [~~#6153~~](https://github.com/eXist-db/exist/pull/6153) | ~~Re-enable 9 skipped tests that now pass~~ | Merged |
+| [#6162](https://github.com/eXist-db/exist/pull/6162) | Fix negative double/float in value index | 2 approvals (@duncdrum, @reinhapa) — ready to merge |
+| [#6163](https://github.com/eXist-db/exist/pull/6163) | Validate json-to-xml escape option (FOJS0005) | 2 approvals (@duncdrum, @reinhapa) — ready to merge |
+| [#6182](https://github.com/eXist-db/exist/pull/6182) | Unify module discovery | 1 approval (@duncdrum); @adamretter has raised a concern about benchmark methodology |
+| [#6184](https://github.com/eXist-db/exist/pull/6184) | Add repo:resource-available() | 1 approval (@duncdrum); changes requested by @line-o |
+| [~~#6186~~](https://github.com/eXist-db/exist/pull/6186) | ~~Add surefire fork timeouts~~ | Closed; superseded by [#6224](https://github.com/eXist-db/exist/pull/6224) (merged 2026-04-13) |
+| [#6191](https://github.com/eXist-db/exist/pull/6191) | Fix FLWOR sort race condition | 1 approval (@duncdrum) — ready to merge |
 
 These can be merged at any time — they don't conflict with the v2/ branches.
