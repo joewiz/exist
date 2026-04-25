@@ -69,11 +69,12 @@ public class FloatValue extends NumericValue {
     public FloatValue(final Expression expression, String stringValue) throws XPathException {
         super(expression);
         try {
-            switch (stringValue) {
-                case "INF" -> value = Float.POSITIVE_INFINITY;
+            final String trimmed = stringValue != null ? stringValue.strip() : null;
+            switch (trimmed) {
+                case "INF", "+INF" -> value = Float.POSITIVE_INFINITY;
                 case "-INF" -> value = Float.NEGATIVE_INFINITY;
                 case "NaN" -> value = Float.NaN;
-                case null, default -> value = Float.parseFloat(stringValue);
+                case null, default -> value = Float.parseFloat(trimmed);
             }
         } catch (final NumberFormatException e) {
             throw new XPathException(getExpression(), ErrorCodes.FORG0001, "cannot construct "
