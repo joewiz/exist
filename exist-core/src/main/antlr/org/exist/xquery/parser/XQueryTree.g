@@ -1084,8 +1084,6 @@ throws XPathException
                 STAR
                 |
                 (
-                    // TODO: parameter types are collected, but not used!
-                    // Change SequenceType accordingly.
                     { List<SequenceType> paramTypes = new ArrayList<SequenceType>(5); }
                     (
                         { SequenceType paramType = new SequenceType(); }
@@ -1094,6 +1092,10 @@ throws XPathException
                     )*
                     { SequenceType returnType = new SequenceType(); }
                     "as" sequenceType [returnType]
+                    {
+                        type.setFunctionParamTypes(paramTypes.toArray(new SequenceType[0]));
+                        type.setFunctionReturnType(returnType);
+                    }
                 )
             )
         )
@@ -1104,14 +1106,15 @@ throws XPathException
                 STAR
                 |
                 (
-                    // TODO: parameter types are collected, but not used!
-                    // Change SequenceType accordingly.
                     { List<SequenceType> paramTypes = new ArrayList<SequenceType>(5); }
                     (
                         { SequenceType paramType = new SequenceType(); }
                         sequenceType [paramType]
                         { paramTypes.add(paramType); }
                     )*
+                    {
+                        type.setFunctionParamTypes(paramTypes.toArray(new SequenceType[0]));
+                    }
                 )
             )
         )
@@ -1122,14 +1125,15 @@ throws XPathException
                 STAR
                 |
                 (
-                    // TODO: parameter types are collected, but not used!
-                    // Change SequenceType accordingly.
                     { List<SequenceType> paramTypes = new ArrayList<SequenceType>(5); }
                     (
                         { SequenceType paramType = new SequenceType(); }
                         sequenceType [paramType]
                         { paramTypes.add(paramType); }
                     )*
+                    {
+                        type.setFunctionParamTypes(paramTypes.toArray(new SequenceType[0]));
+                    }
                 )
             )
         )
