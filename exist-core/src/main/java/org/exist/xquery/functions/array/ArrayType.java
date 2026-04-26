@@ -103,11 +103,16 @@ public class ArrayType extends FunctionReference implements Lookup.LookupSupport
 
     @Override
     public Sequence get(final AtomicValue key) throws XPathException {
-        if (!Type.subTypeOf(key.getType(), Type.INTEGER)) {
+        final long posLong;
+        if (Type.subTypeOf(key.getType(), Type.INTEGER)) {
+            posLong = ((IntegerValue) key).getLong();
+        } else if (key.getType() == Type.UNTYPED_ATOMIC) {
+            // XQ 3.1 spec: untypedAtomic is cast to xs:integer for array lookup
+            posLong = ((IntegerValue) key.convertTo(Type.INTEGER)).getLong();
+        } else {
             throw new XPathException(getExpression(), ErrorCodes.XPTY0004,
                     "Position argument for array lookup must be a positive integer");
         }
-        final long posLong = ((IntegerValue) key).getLong();
         if (posLong <= 0 || posLong > getSize()) {
             final String startIdx = vector.length() == 0 ? "0" : "1";
             final String endIdx = String.valueOf(vector.length());
