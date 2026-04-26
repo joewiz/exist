@@ -2480,10 +2480,19 @@ jsonMemberTest
 jnodeTest
 :
     "jnode"! LPAREN!
-    // Skip any parameters (wildcard or type arguments) for now
-    ( options { greedy = true; } : ~(RPAREN) )*
+    // Skip balanced parenthesized content (handles nested parens in record(), map(), etc.)
+    jnodeTestArgs
     RPAREN!
     { #jnodeTest = #[JSON_NODE_TEST, "json-node()"]; }
+    ;
+
+// Helper rule: skip balanced parenthesized content for jnode() arguments
+jnodeTestArgs
+:
+    ( options { greedy = true; } :
+      LPAREN jnodeTestArgs RPAREN
+      | ~(LPAREN | RPAREN)
+    )*
     ;
 
 // === End XQuery 4.0 JNode Kind Tests ===
