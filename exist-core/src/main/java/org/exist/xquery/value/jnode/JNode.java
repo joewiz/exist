@@ -351,6 +351,24 @@ public class JNode implements GNode, Sequence {
     // ===================== Node identity =====================
 
     /**
+     * Returns the position path from root to this node as an int array.
+     * Used for identity comparison, hashing, and document-order sorting.
+     */
+    private int[] getPositionPath() {
+        int depth = 0;
+        for (JNode n = this; n != null; n = n.parent) {
+            depth++;
+        }
+        final int[] path = new int[depth];
+        JNode n = this;
+        for (int i = depth - 1; i >= 0; i--) {
+            path[i] = n.position;
+            n = n.parent;
+        }
+        return path;
+    }
+
+    /**
      * Returns true if this node is the same node as the other node
      * (by identity, not value equality).
      */
@@ -376,6 +394,46 @@ public class JNode implements GNode, Sequence {
             n2 = n2.parent;
         }
         return n1 == null && n2 == null;
+    }
+
+    @Override
+    public boolean equals(final Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof JNode)) {
+            return false;
+        }
+        return isSameNode((JNode) obj);
+    }
+
+    @Override
+    public int hashCode() {
+        int h = System.identityHashCode(getRoot().value);
+        for (JNode n = this; n != null; n = n.parent) {
+            h = 31 * h + n.position;
+        }
+        return h;
+    }
+
+    /**
+     * Compares two JNodes by document order (depth-first traversal position).
+     * Returns negative if this node precedes other, positive if after, 0 if same.
+     */
+    public int compareDocumentOrder(final JNode other) {
+        if (this == other || this.equals(other)) {
+            return 0;
+        }
+        final int[] path1 = getPositionPath();
+        final int[] path2 = other.getPositionPath();
+        final int minLen = Math.min(path1.length, path2.length);
+        for (int i = 0; i < minLen; i++) {
+            if (path1[i] != path2[i]) {
+                return Integer.compare(path1[i], path2[i]);
+            }
+        }
+        // Shorter path = ancestor = comes first in document order
+        return Integer.compare(path1.length, path2.length);
     }
 
     // ===================== GNode interface =====================

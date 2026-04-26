@@ -1886,11 +1886,30 @@ public class LocationStep extends Step {
             }
         }
 
+        // Deduplicate and sort by document order
+        Sequence deduped = result;
+        if (result.getItemCount() > 1) {
+            final java.util.LinkedHashSet<org.exist.xquery.value.jnode.JNode> seen = new java.util.LinkedHashSet<>();
+            final java.util.List<org.exist.xquery.value.jnode.JNode> unique = new java.util.ArrayList<>();
+            for (final SequenceIterator dedupIt = result.iterate(); dedupIt.hasNext(); ) {
+                final org.exist.xquery.value.jnode.JNode jn = (org.exist.xquery.value.jnode.JNode) dedupIt.nextItem();
+                if (seen.add(jn)) {
+                    unique.add(jn);
+                }
+            }
+            unique.sort(org.exist.xquery.value.jnode.JNode::compareDocumentOrder);
+            final ValueSequence sorted = new ValueSequence(unique.size());
+            for (final org.exist.xquery.value.jnode.JNode jn : unique) {
+                sorted.add(jn);
+            }
+            deduped = sorted;
+        }
+
         // Apply predicates
-        if (result.isEmpty()) {
+        if (deduped.isEmpty()) {
             return Sequence.EMPTY_SEQUENCE;
         }
-        Sequence filtered = result;
+        Sequence filtered = deduped;
         final Predicate[] predicates = getPredicates();
         if (predicates != null) {
             for (final Predicate pred : predicates) {
