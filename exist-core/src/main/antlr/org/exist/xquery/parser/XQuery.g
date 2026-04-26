@@ -925,12 +925,12 @@ tryCatchExpr throws XPathException
 
 tryTargetExpr throws XPathException
 :
-	expr
+	(expr)?
 	;
 
 catchClause throws XPathException
 :
-	"catch"^ catchErrorList (catchVars)? LCURLY! expr RCURLY!
+	"catch"^ catchErrorList (catchVars)? LCURLY! (expr)? RCURLY!
 	;
 
 finallyClause throws XPathException
@@ -1662,7 +1662,7 @@ nodeTest throws XPathException
 nameTest throws XPathException
 { String name= null; }
 :
-	( ( ncnameOrKeyword COLON STAR ) | STAR )
+	( ( ncnameOrKeyword COLON STAR ) | STAR | ( BRACED_URI_LITERAL STAR ) )
 	=> wildcard
 	|
 	name=n:eqName
@@ -1673,12 +1673,24 @@ nameTest throws XPathException
 	;
 
 wildcard
-{ String name= null; }
+{
+	String name= null;
+	String uri= null;
+}
 :
 	// *:localname
 	( STAR COLON )
 	=> STAR! COLON! name=ncnameOrKeyword
 	{ #wildcard= #(#[PREFIX_WILDCARD, "*"], #[NCNAME, name]); }
+	// Q{uri}*  (BracedURILiteral wildcard)
+	|
+	( BRACED_URI_LITERAL STAR )
+	=> lit:BRACED_URI_LITERAL STAR!
+	{
+		uri = #lit.getText();
+		name = "{".concat(uri).concat("}");
+		#wildcard= #(#[EQNAME, name], #[WILDCARD, "*"]);
+	}
 	// prefix:*
 	|
 	name=ncnameOrKeyword COLON! STAR!

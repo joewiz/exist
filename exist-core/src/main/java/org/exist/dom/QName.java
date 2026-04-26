@@ -246,7 +246,7 @@ public class QName implements Comparable<QName> {
             return true;
         }
         return (namespaceURI.equals(WILDCARD) && localPart.equals(WILDCARD))
-                || (qnOther.namespaceURI.equals(WILDCARD) || qnOther.localPart.equals(WILDCARD));
+                || (qnOther.namespaceURI.equals(WILDCARD) && qnOther.localPart.equals(WILDCARD));
     }
 
     @Override

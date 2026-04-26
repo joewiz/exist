@@ -1097,13 +1097,23 @@ throws XPathException
         )
         |
         #(eq:EQNAME
-        {
-            try {
-                catchErrors.add(QName.parse(staticContext, eq.toString()));
-            } catch (final IllegalQNameException e) {
-                throw new XPathException(eq.getLine(), eq.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + eq.getText());
+            (WILDCARD
+            {
+                // Q{uri}* - BracedURILiteral namespace wildcard
+                final String nsUri = eq.toString();
+                final String rawUri = nsUri.startsWith("{") && nsUri.endsWith("}") ?
+                    nsUri.substring(1, nsUri.length() - 1) : nsUri;
+                catchErrors.add(new QName.WildcardLocalPartQName(rawUri));
             }
-        }
+            |
+            {
+                try {
+                    catchErrors.add(QName.parse(staticContext, eq.toString()));
+                } catch (final IllegalQNameException e) {
+                    throw new XPathException(eq.getLine(), eq.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + eq.getText());
+                }
+            }
+            )
         )
     )
     ;
@@ -2012,7 +2022,7 @@ throws PermissionDeniedException, EXistException, XPathException
             PathExpr tryTargetExpr = new PathExpr(context);
             tryTargetExpr.setASTNode(exprFlowControl_AST_in);
         }
-        step=expr [tryTargetExpr]
+        (step=expr [tryTargetExpr])?
         {
             TryCatchExpression cond = new TryCatchExpression(context, tryTargetExpr);
             cond.setASTNode(astTry);
@@ -2068,7 +2078,7 @@ throws PermissionDeniedException, EXistException, XPathException
                         )?
                     )?
                 )?
-                step= expr [catchExpr]
+                (step= expr [catchExpr])?
                 {
                   catchExpr.setASTNode(astCatch);
                   cond.addCatchClause(catchErrorList, catchVars, catchExpr);
