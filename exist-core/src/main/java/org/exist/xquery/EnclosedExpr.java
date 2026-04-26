@@ -135,6 +135,13 @@ public class EnclosedExpr extends PathExpr {
                         } catch (DOMException e) {
                             if (e.code == DOMException.NAMESPACE_ERR) {
                                 throw new XPathException(this, ErrorCodes.XQDY0102, e.getMessage());
+                            } else if (e.code == DOMException.INUSE_ATTRIBUTE_ERR) {
+                                final String msg = e.getMessage();
+                                if (msg != null && msg.contains("XQTY0024")) {
+                                    throw new XPathException(this, ErrorCodes.XQTY0024, msg);
+                                } else {
+                                    throw new XPathException(this, ErrorCodes.XQDY0025, msg);
+                                }
                             } else {
                                 throw new XPathException(this, e.getMessage(), e);
                             }
