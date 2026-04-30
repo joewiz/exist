@@ -63,7 +63,12 @@ public class CDATAConstructor extends NodeConstructor {
 
         try {
             final MemTreeBuilder builder = context.getDocumentBuilder();
-            final NodeImpl node = builder.getDocument().getNode(builder.cdataSection(cdata));
+            // Per XQuery 3.1 §3.9.1.1: a zero-length CDATA section produces no text node.
+            final int nodeNr = builder.cdataSection(cdata);
+            if (nodeNr < 0) {
+                return Sequence.EMPTY_SEQUENCE;
+            }
+            final NodeImpl node = builder.getDocument().getNode(nodeNr);
 
             if (context.getProfiler().isEnabled()) {
                 context.getProfiler().end(this, "", node);
@@ -75,6 +80,14 @@ public class CDATAConstructor extends NodeConstructor {
                 context.popDocumentContext();
             }
         }
+    }
+
+    @Override
+    public boolean evalNextExpressionOnEmptyContextSequence() {
+        // A zero-length CDATA contributes no node, but PathExpr would otherwise
+        // short-circuit subsequent element-content steps. Mirrors the same opt-out
+        // used by TextConstructor for stripped boundary whitespace.
+        return cdata == null || cdata.isEmpty();
     }
 
     @Override

@@ -2193,9 +2193,12 @@ primaryExpr throws XPathException
 	    (
 	        "element" | "attribute" | "processing-instruction" | "namespace"
         )
-        qName LCURLY
+        eqName LCURLY
     )
 	=> computedConstructor
+	|
+	// XQ4 PR1989: attribute # QNameLiteral { value? }
+	( { xq4Enabled }? "attribute" HASH ) => computedConstructor
 	|
 	( "ordered" LCURLY ) => orderedExpr
 	|
@@ -2757,6 +2760,11 @@ compAttrConstructor throws XPathException
 	( "attribute" LCURLY ) =>
 	"attribute"! LCURLY! e1:expr RCURLY! e2:compConstructorValue
 	{ #compAttrConstructor = #(#[COMP_ATTR_CONSTRUCTOR], #compAttrConstructor); }
+	|
+	// XQ4 PR1989: attribute # QNameLiteral { value? }
+	( { xq4Enabled }? "attribute" HASH ) =>
+	"attribute"! HASH! eq=eqName e4:compConstructorValue
+	{ #compAttrConstructor = #(#[COMP_ATTR_CONSTRUCTOR, eq], #[STRING_LITERAL, eq], #e4); }
 	|
 	"attribute"! eq=eqName e3:compConstructorValue
     { #compAttrConstructor = #(#[COMP_ATTR_CONSTRUCTOR, eq], #[STRING_LITERAL, eq], #e3); }

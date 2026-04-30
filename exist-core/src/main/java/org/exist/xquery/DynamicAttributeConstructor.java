@@ -143,10 +143,39 @@ public class DynamicAttributeConstructor extends NodeConstructor {
             			"is in the namespace " + Namespaces.XMLNS_NS +
             			" (corresponding to namespace prefix xmlns).");}
 
+            // Per XQ.E19 and QT4 §3.7.3.2: the xmlns prefix is reserved; a computed
+            // attribute constructor must reject any QName carrying that prefix
+            // (regardless of which URI it was paired with via fn:QName).
+            if (XMLConstants.XMLNS_ATTRIBUTE.equals(qn.getPrefix()))
+            	{throw new XPathException(this, ErrorCodes.XQDY0044,
+            			"The node-name property of the node constructed by a computed attribute constructor " +
+            			"has the reserved prefix 'xmlns'.");}
+
             // Auto-assign the 'xml' prefix for attributes in the XML namespace
             if (Namespaces.XML_NS.equals(qn.getNamespaceURI())
             		&& (qn.getPrefix() == null || qn.getPrefix().isEmpty())) {
             	qn = new QName(qn.getLocalPart(), qn.getNamespaceURI(), XMLConstants.XML_NS_PREFIX);
+            }
+
+            // For an attribute in any other non-empty namespace with no prefix, the
+            // implementation must invent one so the attribute can be serialized
+            // unambiguously. Mirrors the eXnsp generator used by ElementConstructor for
+            // direct attributes.
+            if (qn.getNamespaceURI() != null && !qn.getNamespaceURI().isEmpty()
+            		&& (qn.getPrefix() == null || qn.getPrefix().isEmpty())) {
+            	String prefix = context.getPrefixForURI(qn.getNamespaceURI());
+            	if (prefix == null || prefix.isEmpty()) {
+            		for (int n = 1; n < 100; n++) {
+            			final String candidate = "eXnsp" + n;
+            			if (context.getURIForPrefix(candidate) == null) {
+            				prefix = candidate;
+            				break;
+            			}
+            		}
+            	}
+            	if (prefix != null && !prefix.isEmpty()) {
+            		qn = new QName(qn.getLocalPart(), qn.getNamespaceURI(), prefix);
+            	}
             }
 
             String value;

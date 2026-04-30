@@ -108,36 +108,25 @@ public class FunQName extends BasicFunction {
                 throw new XPathException(this, ErrorCodes.FOCA0002, "Non-empty namespace prefix with empty namespace URI", argsSeq);
         }
 		
-		if (namespace != null) {
-			if (namespace.equalsIgnoreCase(Namespaces.XMLNS_NS))
-				{if (prefix == null)
-					throw new XPathException(this, ErrorCodes.XQDY0044, "'"+Namespaces.XMLNS_NS+"' can't be use with no prefix");
-				else if (!"xmlns".equalsIgnoreCase(prefix))
-					throw new XPathException(this, ErrorCodes.XQDY0044, "'"+Namespaces.XMLNS_NS+"' can't be use with prefix '"+prefix+"'");}
-			
-			if (namespace.equalsIgnoreCase(Namespaces.XML_NS))
-				{if (prefix == null)
-					throw new XPathException(this, ErrorCodes.XQDY0044, "'"+Namespaces.XML_NS+"' can't be use with no prefix");
-				else if (!"xml".equalsIgnoreCase(prefix))
-					throw new XPathException(this, ErrorCodes.XQDY0044, "'"+Namespaces.XML_NS+"' can't be use with prefix '"+prefix+"'");}
+		// fn:QName creates the QName from the supplied URI and lexical QName per QT4
+		// spec; reserved-namespace validation (XML_NS / XMLNS_NS) is the responsibility
+		// of the caller (typically a constructor) where the dynamic XQDY0044 / XQST0070
+		// rules apply. Allowing fn:QName to silently produce QNames in those namespaces
+		// matches Saxon and BaseX. The xml namespace is special-cased only to require
+		// the 'xml' prefix when one is supplied.
+		if (prefix != null && !prefix.isEmpty()) {
+			if ("xml".equalsIgnoreCase(prefix) && (namespace == null || !namespace.equalsIgnoreCase(Namespaces.XML_NS))) {
+				throw new XPathException(this, ErrorCodes.XQDY0044, "prefix 'xml' can be used only with '" + Namespaces.XML_NS + "'");
+			}
+			if (namespace != null && namespace.equalsIgnoreCase(Namespaces.XML_NS) && !"xml".equalsIgnoreCase(prefix)) {
+				throw new XPathException(this, ErrorCodes.XQDY0044, "'" + Namespaces.XML_NS + "' can't be use with prefix '" + prefix + "'");
+			}
 		}
-		
-		if (prefix != null) {
-			if ("xml".equalsIgnoreCase(prefix) && !namespace.equalsIgnoreCase(Namespaces.XML_NS))
-				{throw new XPathException(this, ErrorCodes.XQDY0044, "prefix 'xml' can be used only with '"+Namespaces.XML_NS+"'");}
-			
-		}
-		
+
 		final QName qname = new QName(localName, namespace, prefix);
-        if (prefix != null && namespace != null) {
-            if (context.getURIForPrefix(prefix) == null) {
-            	//TOCHECK : context.declareInScopeNamespace(prefix, uri) ?            	
-                context.declareNamespace(prefix, namespace);
-            }
-
-
-            //context.declareInScopeNamespace(prefix, namespace);
-        }
+        // Note: fn:QName does not modify the static namespace context — auto-declaring
+        // the prefix would clobber legitimate XQST0070 checks for reserved prefixes
+        // such as xmlns and would also leak into later expressions.
 
         if(!XMLNames.isName(qname.getLocalPart()))
             {throw new XPathException(this, ErrorCodes.FOCA0002, "'" + qname.getLocalPart() + "' is not a valid local name.");}

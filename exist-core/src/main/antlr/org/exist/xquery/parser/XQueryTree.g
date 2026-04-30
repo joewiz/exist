@@ -5642,15 +5642,24 @@ throws PermissionDeniedException, EXistException, XPathException
         }
         qnameExpr=qna:expr [qnamePathExpr]
         {
-            try {
-                QName qname = QName.parse(staticContext, qna.getText());
-                if (Namespaces.XMLNS_NS.equals(qname.getNamespaceURI())
-                    || ("".equals(qname.getNamespaceURI()) && qname.getLocalPart().equals(XMLConstants.XMLNS_ATTRIBUTE)))
-                    throw new XPathException(constructor_AST_in, ErrorCodes.XQDY0044, "The node-name property of the node constructed by a computed attribute constructor is in the namespace http://www.w3.org/2000/xmlns/ (corresponding to namespace prefix xmlns), or is in no namespace and has local name xmlns.");
-            } catch (final IllegalQNameException iqe) {
-                // Computed attribute constructors evaluate the name dynamically (XQuery 3.1 §3.9.3.1).
-                // An undeclared prefix is therefore a dynamic error XQDY0074, not the static XPST0081.
-                throw new XPathException(qna.getLine(), qna.getColumn(), ErrorCodes.XQDY0074, "'" + qna.getText() + "' is not a valid attribute name");
+            // The literal-eqName form (`attribute QName { value }`) carries the eqName text on
+            // the COMP_ATTR_CONSTRUCTOR token itself; the dynamic form leaves it empty.
+            final String litEqName = attr.getText();
+            if (litEqName != null && !litEqName.isEmpty()) {
+                try {
+                    QName qname = QName.parse(staticContext, litEqName);
+                    if (Namespaces.XMLNS_NS.equals(qname.getNamespaceURI())
+                        || ("".equals(qname.getNamespaceURI()) && qname.getLocalPart().equals(XMLConstants.XMLNS_ATTRIBUTE)))
+                        throw new XPathException(constructor_AST_in, ErrorCodes.XQDY0044, "The node-name property of the node constructed by a computed attribute constructor is in the namespace http://www.w3.org/2000/xmlns/ (corresponding to namespace prefix xmlns), or is in no namespace and has local name xmlns.");
+                } catch (final IllegalQNameException iqe) {
+                    // For the literal-eqName form, an undeclared prefix is a static error
+                    // XPST0081, not the dynamic XQDY0074. The xmlns prefix is reserved and
+                    // therefore counts as undeclared.
+                    if ((iqe.getValidity() & QName.Validity.INVALID_PREFIX.val) != 0) {
+                        throw new XPathException(qna.getLine(), qna.getColumn(), ErrorCodes.XPST0081, "Prefix in '" + litEqName + "' is not declared");
+                    }
+                    throw new XPathException(qna.getLine(), qna.getColumn(), ErrorCodes.XQDY0074, "'" + litEqName + "' is not a valid attribute name");
+                }
             }
         }
         #( LCURLY

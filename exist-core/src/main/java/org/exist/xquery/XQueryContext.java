@@ -114,6 +114,7 @@ import static javax.xml.XMLConstants.XML_NS_PREFIX;
 import static org.apache.commons.lang3.ArrayUtils.isEmpty;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 import static org.exist.Namespaces.XML_NS;
+import static org.exist.Namespaces.XMLNS_NS;
 import static org.exist.util.MapUtil.hashMap;
 
 /**
@@ -924,6 +925,11 @@ public class XQueryContext implements BinaryValueManager, Context {
         if (XML_NS.equals(uri)) {
             throw new XPathException(rootExpression, ErrorCodes.XQST0070,
                     "Namespace URI '" + uri + "' must be bound to the 'xml' prefix");
+        }
+
+        if (XMLNS_NS.equals(uri)) {
+            throw new XPathException(rootExpression, ErrorCodes.XQST0070,
+                    "Namespace URI '" + uri + "' (the xmlns namespace) must not be bound to a prefix");
         }
 
         final String nonNullPrefix = prefix == null ?  "" : prefix;

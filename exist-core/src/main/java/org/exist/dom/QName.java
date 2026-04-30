@@ -51,7 +51,10 @@ public class QName implements Comparable<QName> {
     public static final QName DOCTYPE_QNAME = EMPTY_QNAME;
     public static final QName CDATA_SECTION_QNAME = EMPTY_QNAME;
 
-    private static final Pattern PTN_CLARK_NOTATION = Pattern.compile("\\{([^&{}]*)}([^&{}:]+)");
+    // The URI portion of {URI}local / Q{URI}local notation may contain any character
+    // except braces (the BracedURILiteral lexer already decoded predefined entity refs
+    // and char refs into their literal form, so the regex sees e.g. " and & directly).
+    private static final Pattern PTN_CLARK_NOTATION = Pattern.compile("\\{([^{}]*)}([^&{}:]+)");
     private static final Pattern PTN_EQ_NAME_NOTATION = Pattern.compile("Q" + PTN_CLARK_NOTATION);
 
     private final String localPart;

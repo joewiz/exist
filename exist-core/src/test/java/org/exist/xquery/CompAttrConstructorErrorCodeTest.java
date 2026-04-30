@@ -79,6 +79,23 @@ public class CompAttrConstructorErrorCodeTest {
         assertEquals("xml:x|http://www.w3.org/XML/1998/namespace", result);
     }
 
+    @Test
+    public void emptyCdataDoesNotPreventAttributeAndChild() throws Exception {
+        // K2-ComputeConAttr-35: empty CDATA must produce no node (XQuery 3.1 §3.9.1.1)
+        // and must not short-circuit subsequent element-content steps.
+        final String result = executeStringValue(
+                "let $r := <elem><![CDATA[]]>{attribute name {\"content\"}}<alem/> </elem> " +
+                        "return concat('attrs=', count($r/@*), ',children=', count($r/*), ',name=', $r/@name)");
+        assertEquals("attrs=1,children=1,name=content", result);
+    }
+
+    @Test
+    public void emptyCdataCountsAsZeroTextNodes() throws Exception {
+        // K2-ComputeConAttr-36: count(<elem><![CDATA[]]></elem>/text()) must be 0.
+        final String result = executeStringValue("count(<elem><![CDATA[]]></elem>/text())");
+        assertEquals("0", result);
+    }
+
     private void assertErrorCode(final String expectedErrorCode, final String query) {
         try {
             final Sequence result = executeXQuery(query);

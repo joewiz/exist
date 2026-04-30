@@ -276,21 +276,23 @@ public class MemTreeBuilder {
     }
 
 
-    public int addAttribute(final QName qname, final String value) {
-        final int lastNode = doc.getLastNode();
-
-        //if(0 < lastNode && doc.nodeKind[lastNode] != Node.ELEMENT_NODE) {
-        //Definitely wrong !
-        //lastNode = characters(value);
-        //} else {
-        //lastNode = doc.addAttribute(lastNode, qname, value);
-        //}
-        final int nodeNr = doc.addAttribute(lastNode, qname, value, getAttribType(qname, Indexer.ATTR_CDATA_TYPE));
-
-        //TODO :
-        //1) call linkNode(nodeNr); ?
-        //2) is there a relationship between lastNode and nodeNr ?
-        return nodeNr;
+    public int addAttribute(final QName qname, final String value) throws DOMException {
+        // The attribute belongs to the currently-open element at level - 1, not to the
+        // last sibling node. prevNodeInLevel[level] holds the most recent sibling at this
+        // depth; if it is set, a non-attribute, non-namespace child has already been added
+        // to the open element, which is XQTY0024.
+        int parent = doc.getLastNode();
+        if (level > 1) {
+            if (prevNodeInLevel[level] > 0) {
+                throw new DOMException(DOMException.INUSE_ATTRIBUTE_ERR,
+                        "err:XQTY0024: An attribute node cannot follow a node that is not an element or namespace node.");
+            }
+            final int openElement = prevNodeInLevel[level - 1];
+            if (openElement > 0) {
+                parent = openElement;
+            }
+        }
+        return doc.addAttribute(parent, qname, value, getAttribType(qname, Indexer.ATTR_CDATA_TYPE));
     }
 
 
@@ -401,6 +403,10 @@ public class MemTreeBuilder {
 
 
     public int cdataSection(final CharSequence data) {
+        // Per XQuery 3.1 §3.9.1.1: an empty CDATA section produces no text node.
+        if (data == null || data.length() == 0) {
+            return -1;
+        }
         final int lastNode = doc.getLastNode();
 
         if((lastNode > 0) && (level == doc.getTreeLevel(lastNode))) {
