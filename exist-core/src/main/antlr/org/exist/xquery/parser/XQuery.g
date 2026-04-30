@@ -331,6 +331,8 @@ imaginaryTokenDefinitions
 	// === XQuery 4.0 Map Content Expressions ===
 	MAP_CONTENT
 	ANNOTATED_FUNCTION_TEST
+	// XQ4 PR2200 parenthesized union node test
+	UNION_NODE_TEST
 	;
 
 // === XPointer ===
@@ -1989,7 +1991,22 @@ reverseAxisSpecifier
 
 nodeTest throws XPathException
 :
-	( . LPAREN ) => kindTest | nameTest
+	// XQ4 PR2200: parenthesized union node test, e.g. child::(title|author)
+	( { xq4Enabled }? LPAREN ) => unionNodeTest
+	| ( . LPAREN ) => kindTest
+	| nameTest
+	;
+
+// XQ4 PR2200: parenthesized union node test
+unionNodeTest throws XPathException
+:
+	LPAREN!
+	( ( . LPAREN ) => kindTest | nameTest )
+	( UNION! ( ( . LPAREN ) => kindTest | nameTest ) )*
+	RPAREN!
+	{
+		#unionNodeTest = #(#[UNION_NODE_TEST, "union-nodetest"], #unionNodeTest);
+	}
 	;
 
 nameTest throws XPathException

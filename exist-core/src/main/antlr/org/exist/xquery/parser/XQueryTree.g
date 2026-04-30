@@ -1127,8 +1127,12 @@ throws PermissionDeniedException, EXistException, XPathException
             QName qn= null;
             try {
                 // XQ4 (PR2200): unprefixed function declarations go into "no namespace"
-                // instead of the default function namespace (fn:)
-                if (name.getText() != null && !name.getText().contains(":") && staticContext.getXQueryVersion() >= 40) {
+                // instead of the default function namespace (fn:) -- but only when
+                // the user has not explicitly declared a different default function
+                // namespace. If they have, declarations go into that namespace.
+                if (name.getText() != null && !name.getText().contains(":")
+                        && staticContext.getXQueryVersion() >= 40
+                        && Namespaces.XPATH_FUNCTIONS_NS.equals(staticContext.getDefaultFunctionNamespace())) {
                     qn = new QName(name.getText(), "");
                 } else {
                     qn = QName.parse(staticContext, name.getText(), staticContext.getDefaultFunctionNamespace());
@@ -4048,6 +4052,25 @@ throws PermissionDeniedException, EXistException, XPathException
         test = new TypeTest(Type.JSON_MEMBER); ast = jn8;
     }
     // === End XQuery 4.0 JNode Kind Tests ===
+    |
+    // XQ4 PR2200: parenthesized union node test, e.g. child::(title|author)
+    #( un1:UNION_NODE_TEST
+        {
+            List<NodeTest> unionTests = new ArrayList<NodeTest>();
+            ast = un1;
+        }
+        (
+            test=unionChildNodeTest[axis]
+            { unionTests.add(test); }
+        )+
+    )
+    {
+        if (unionTests.size() == 1) {
+            test = unionTests.get(0);
+        } else {
+            test = new UnionNodeTest(unionTests);
+        }
+    }
     )
     {
         step= new LocationStep(context, axis, test);
@@ -4081,7 +4104,7 @@ throws PermissionDeniedException, EXistException, XPathException
         {
             final String namespaceURI = staticContext.getURIForPrefix(nc3.getText());
             if (namespaceURI == null) {
-                throw new EXistException("No namespace defined for prefix " + nc3.getText());
+                throw new XPathException(nc3.getLine(), nc3.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + nc3.getText());
             }
             final QName qname = new QName.WildcardLocalPartQName(namespaceURI, ElementValue.ATTRIBUTE);
             test = new NameTest(Type.ATTRIBUTE, qname);
@@ -4189,6 +4212,24 @@ throws PermissionDeniedException, EXistException, XPathException
         {
             test = new TypeTest(Type.ATTRIBUTE);
             // ast = an;
+        }
+        |
+        // XQ4 PR2200: parenthesized union node test in attribute axis: @(year|month)
+        #( un2:UNION_NODE_TEST
+            {
+                List<NodeTest> attrUnionTests = new ArrayList<NodeTest>();
+            }
+            (
+                test=unionChildNodeTest[Constants.ATTRIBUTE_AXIS]
+                { attrUnionTests.add(test); }
+            )+
+        )
+        {
+            if (attrUnionTests.size() == 1) {
+                test = attrUnionTests.get(0);
+            } else {
+                test = new UnionNodeTest(attrUnionTests);
+            }
         }
     )
     {
@@ -4771,6 +4812,163 @@ throws PermissionDeniedException, EXistException
     "following-sibling-or-self" { axis= Constants.FOLLOWING_SIBLING_OR_SELF_AXIS; }
     |
     "preceding-sibling-or-self" { axis= Constants.PRECEDING_SIBLING_OR_SELF_AXIS; }
+    ;
+
+// XQ4 PR2200: handle one branch of a parenthesized union node test.
+// Mirrors the inline node-test alternation in pathExpr.
+unionChildNodeTest [int axis] returns [NodeTest test]
+throws PermissionDeniedException, EXistException, XPathException
+{ test = null; }
+:
+    eqU:EQNAME
+    {
+        try {
+            QName qname = QName.parse(staticContext, eqU.getText());
+            if (axis == Constants.ATTRIBUTE_AXIS) {
+                qname = new QName(qname, ElementValue.ATTRIBUTE);
+                test = new NameTest(Type.ATTRIBUTE, qname);
+            } else {
+                test = new NameTest(Type.ELEMENT, qname);
+            }
+        } catch (final IllegalQNameException iqe) {
+            throw new XPathException(eqU.getLine(), eqU.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + eqU.getText());
+        }
+    }
+    |
+    #( PREFIX_WILDCARD ncU1:NCNAME )
+    {
+        try {
+            QName qname = new QName.WildcardNamespaceURIQName(ncU1.getText());
+            test = new NameTest(Type.ELEMENT, qname);
+            if (axis == Constants.ATTRIBUTE_AXIS) {
+                test.setType(Type.ATTRIBUTE);
+            }
+        } catch (XPathException ex) {
+            ex.setLocation(ncU1.getLine(), ncU1.getColumn());
+            throw ex;
+        }
+    }
+    |
+    #( ncU2:NCNAME WILDCARD )
+    {
+        try {
+            String namespaceURI = staticContext.getURIForPrefix(ncU2.getText());
+            QName qname = new QName.WildcardLocalPartQName(namespaceURI, ncU2.getText());
+            test = new NameTest(Type.ELEMENT, qname);
+            if (axis == Constants.ATTRIBUTE_AXIS) {
+                test.setType(Type.ATTRIBUTE);
+            }
+        } catch (XPathException ex) {
+            ex.setLocation(ncU2.getLine(), ncU2.getColumn());
+            throw ex;
+        }
+    }
+    |
+    wU:WILDCARD
+    {
+        if (axis == Constants.ATTRIBUTE_AXIS) {
+            test = new TypeTest(Type.ATTRIBUTE);
+        } else {
+            test = new TypeTest(Type.ELEMENT);
+        }
+    }
+    |
+    nU:"node"
+    {
+        if (axis == Constants.ATTRIBUTE_AXIS) {
+            test = new TypeTest(Type.ATTRIBUTE);
+        } else {
+            test = new AnyNodeTest();
+        }
+    }
+    |
+    tU:"text"
+    {
+        if (axis == Constants.ATTRIBUTE_AXIS) {
+            throw new XPathException(tU, "Cannot test for text() on the attribute axis");
+        }
+        test = new TypeTest(Type.TEXT);
+    }
+    |
+    comU:"comment"
+    {
+        if (axis == Constants.ATTRIBUTE_AXIS) {
+            throw new XPathException(comU, "Cannot test for comment() on the attribute axis");
+        }
+        test = new TypeTest(Type.COMMENT);
+    }
+    |
+    nsU:"namespace-node"
+    {
+        if (axis == Constants.ATTRIBUTE_AXIS) {
+            throw new XPathException(nsU, "Cannot test for namespace-node() on the attribute axis");
+        }
+        test = new TypeTest(Type.NAMESPACE);
+    }
+    |
+    #( eU:"element"
+        {
+            if (axis == Constants.ATTRIBUTE_AXIS) {
+                throw new XPathException(eU, "Cannot test for element() on the attribute axis");
+            }
+            test = new TypeTest(Type.ELEMENT);
+        }
+        (
+            eqU2:EQNAME
+            {
+                try {
+                    QName qname = QName.parse(staticContext, eqU2.getText());
+                    test = new NameTest(Type.ELEMENT, qname);
+                } catch (final IllegalQNameException iqe) {
+                    throw new XPathException(eqU2.getLine(), eqU2.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + eqU2.getText());
+                }
+            }
+            |
+            WILDCARD ( EQNAME )?
+        )?
+    )
+    |
+    #( attU:ATTRIBUTE_TEST
+        {
+            test = new TypeTest(Type.ATTRIBUTE);
+        }
+        (
+            eqU3:EQNAME
+            {
+                try {
+                    QName qname = QName.parse(staticContext, eqU3.getText());
+                    qname = new QName(qname, ElementValue.ATTRIBUTE);
+                    test = new NameTest(Type.ATTRIBUTE, qname);
+                } catch (final IllegalQNameException iqe) {
+                    throw new XPathException(eqU3.getLine(), eqU3.getColumn(), ErrorCodes.XPST0081, "No namespace defined for prefix " + eqU3.getText());
+                }
+            }
+            |
+            WILDCARD ( EQNAME )?
+        )?
+    )
+    |
+    #( piU:"processing-instruction"
+        {
+            if (axis == Constants.ATTRIBUTE_AXIS) {
+                throw new XPathException(piU, "Cannot test for processing-instruction() on the attribute axis");
+            }
+            test = new TypeTest(Type.PROCESSING_INSTRUCTION);
+        }
+        (
+            ncpiU:NCNAME
+            {
+                QName qname = new QName(ncpiU.getText(), "", null);
+                test = new NameTest(Type.PROCESSING_INSTRUCTION, qname);
+            }
+            |
+            slpiU:STRING_LITERAL
+            {
+                QName qname = new QName(slpiU.getText(), "", null);
+                test = new NameTest(Type.PROCESSING_INSTRUCTION, qname);
+            }
+        )?
+    )
     ;
 
 valueComp [PathExpr path]
