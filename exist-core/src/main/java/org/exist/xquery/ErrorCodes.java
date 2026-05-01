@@ -136,6 +136,10 @@ public class ErrorCodes {
     public static final ErrorCode XQST0098 = new W3CErrorCode("XQST0098",
         "It is a static error if the properties representing characters used in a picture string " +
         "do not each have distinct values, or if a property value is not valid for its property.");
+    public static final ErrorCode XQST0099 = new W3CErrorCode("XQST0099",
+        "A module must not contain more than one context item declaration.");
+    public static final ErrorCode XQST0113 = new W3CErrorCode("XQST0113",
+        "It is a static error to bind the context item in a library module.");
     public static final ErrorCode XQST0118 = new W3CErrorCode("XQST0118", "It is a static error if an element constructor uses a name in the end tag that does not match the name in the start tag.");
     public static final ErrorCode XQST0125 = new W3CErrorCode("XQST0125", "It is a static error if an inline function expression is annotated as %public or %private.");
 

@@ -863,7 +863,13 @@ public class XQueryContext implements BinaryValueManager, Context {
         this.contextItem = contextItem;
     }
 
-    public void setContextItemDeclaration(final ContextItemDeclaration contextItemDeclaration) {
+    public void setContextItemDeclaration(final ContextItemDeclaration contextItemDeclaration) throws XPathException {
+        if (this.contextItemDeclaration != null && contextItemDeclaration != null) {
+            // XQ31/XQ40: more than one context item declaration in the same prolog.
+            // Spec id-context-item-decl raises XQST0099.
+            throw new XPathException((Expression) null, ErrorCodes.XQST0099,
+                    "More than one context item declaration in prolog.");
+        }
         this.contextItemDeclaration = contextItemDeclaration;
     }
 

@@ -26,8 +26,10 @@ import org.apache.logging.log4j.Logger;
 import org.exist.xquery.util.ExpressionDumper;
 import org.exist.xquery.value.Item;
 import org.exist.xquery.value.Sequence;
+import org.exist.xquery.value.SequenceIterator;
 import org.exist.xquery.value.SequenceType;
 import org.exist.xquery.value.Type;
+import org.exist.xquery.value.ValueSequence;
 
 import java.util.Optional;
 
@@ -39,8 +41,18 @@ public class ContextItemDeclaration extends AbstractExpression implements Rewrit
     private final boolean external;
     private Optional<Expression> value;
 
-    public ContextItemDeclaration(final XQueryContext context, final SequenceType itemType, final boolean external, final Expression value) {
+    public ContextItemDeclaration(final XQueryContext context, final SequenceType itemType, final boolean external, final Expression value) throws XPathException {
         super(context);
+        // The context item type is an ItemType; an occurrence indicator on the
+        // declaration is a static syntax error per XQ31/XQ40 spec
+        // (https://www.w3.org/TR/xquery-40/#prod-ContextItemDecl). The grammar
+        // accepts an arbitrary SequenceType, so enforce the constraint here so
+        // it fires regardless of whether anyone calls analyze() — this node is
+        // attached to the context, not embedded in the expression tree.
+        if (itemType != null && itemType.getCardinality() != Cardinality.EXACTLY_ONE) {
+            throw new XPathException((Expression) null, ErrorCodes.XPST0003,
+                    "Occurrence indicator not allowed on context item type: " + itemType);
+        }
         this.itemType = Optional.ofNullable(itemType);
         this.external = external;
         this.value = Optional.ofNullable(value);
@@ -65,18 +77,103 @@ public class ContextItemDeclaration extends AbstractExpression implements Rewrit
             }
         }
 
+        final Sequence raw;
         if (external) {
 
             //TODO(AR): how to set the context item externally? doesn't eXist-db do this by default anyway?
 
             // is there a default value
             if (value.isPresent()) {
-                return value.get().eval(null, null);
+                raw = value.get().eval(null, null);
             } else {
                 return null;
             }
         } else {
-            return value.get().eval(null, null);
+            raw = value.get().eval(null, null);
+        }
+
+        return enforceType(raw);
+    }
+
+    /**
+     * Validate the evaluated context item against the declared type.
+     *
+     * <p>The XQuery spec requires the context item to be a single item; an empty
+     * sequence or a sequence of more than one item raises XPTY0004. When a
+     * required type is declared (the {@code as <type>} clause), the value must
+     * match it. In XQuery 4.0 mode, function-conversion rules apply (atomization
+     * plus xs:untypedAtomic / numeric / xs:anyURI promotion); in XQuery 3.x mode
+     * the match must be exact.</p>
+     *
+     * @param raw the value produced by evaluating the declaration's expression
+     * @return the (possibly coerced) value that should become the context item
+     * @throws XPathException XPTY0004 on cardinality or type mismatch
+     */
+    private Sequence enforceType(final Sequence raw) throws XPathException {
+        if (raw == null) {
+            return null;
+        }
+        // The context item must be a single item per XQ 3.1/4.0 spec.
+        if (raw.isEmpty()) {
+            throw new XPathException(this, ErrorCodes.XPTY0004,
+                    "Context item is empty; declaration requires exactly one item.");
+        }
+        if (raw.hasMany()) {
+            throw new XPathException(this, ErrorCodes.XPTY0004,
+                    "Context item bound to a sequence of " + raw.getItemCount()
+                            + " items; declaration requires exactly one item.");
+        }
+
+        if (itemType.isEmpty()) {
+            return raw;
+        }
+        final SequenceType declared = itemType.get();
+        if (declared.getPrimaryType() == Type.ITEM) {
+            return raw;
+        }
+
+        // Try the strict subtype path first — it's a fast-path for XQ3.x and
+        // for XQ4 cases where conversion would be a no-op.
+        if (declared.checkType(raw)) {
+            return raw;
+        }
+
+        // XQ4 PR254: function-conversion rules apply to context item assignment.
+        // Atomize node values, then cast atomic values to the declared atomic
+        // type when needed (numeric promotion, xs:string -> xs:anyURI,
+        // xs:untypedAtomic -> any atomic).
+        if (context.getXQueryVersion() >= 40
+                && Type.subTypeOf(declared.getPrimaryType(), Type.ANY_ATOMIC_TYPE)) {
+            final Sequence converted = applyAtomicFunctionConversion(raw, declared.getPrimaryType());
+            if (converted != null) {
+                return converted;
+            }
+        }
+
+        throw new XPathException(this, ErrorCodes.XPTY0004,
+                "Context item value does not match declared type "
+                        + Type.getTypeName(declared.getPrimaryType())
+                        + "; got " + Type.getTypeName(raw.getItemType()) + ".");
+    }
+
+    /**
+     * Apply XQuery 4.0 function-conversion rules to a sequence against an
+     * atomic target type: atomize each item, then promote/cast per
+     * {@link DynamicTypeCheck#coerceAtomicItem}. Returns {@code null} if any
+     * item resists conversion, letting the caller fall through to XPTY0004.
+     */
+    private Sequence applyAtomicFunctionConversion(final Sequence raw, final int targetType) {
+        try {
+            final ValueSequence out = new ValueSequence(raw.getItemCount());
+            for (final SequenceIterator it = raw.iterate(); it.hasNext(); ) {
+                final Item item = it.nextItem();
+                final Item atomized = item.atomize();
+                final Item coerced = DynamicTypeCheck.coerceAtomicItem(context, this, atomized, targetType);
+                out.add(coerced);
+            }
+            return out;
+        } catch (final XPathException e) {
+            return null;
         }
     }
 

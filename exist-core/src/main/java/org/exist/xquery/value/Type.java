@@ -368,6 +368,16 @@ public class Type {
         // XQuery 4.0 named record types
         defineBuiltInType(DATETIME_RECORD, "fn:dateTime-record");
 
+        // XQuery 4.0 named record types whose structural definitions live in
+        // BuiltInRecordTypes. These names resolve to RECORD (the structural
+        // schema is installed on the SequenceType by the grammar), so they are
+        // registered as code aliases without their own type constants.
+        defineTypeAlias(RECORD, "fn:load-xquery-module-record");
+        defineTypeAlias(RECORD, "fn:random-number-generator-record");
+        defineTypeAlias(RECORD, "fn:schema-type-record");
+        defineTypeAlias(RECORD, "fn:parsed-csv-structure-record");
+        defineTypeAlias(RECORD, "fn:uri-structure-record");
+
         // XQuery 4.0 JNode type names
         defineBuiltInType(JSON_NODE, "json-node()");
         defineBuiltInType(JSON_OBJECT, "object-node()");
@@ -454,6 +464,20 @@ public class Type {
         for (final String n : name) {
             typeCodes.put(n, type);
         }
+    }
+
+    /**
+     * Register an additional lexical name that resolves to an existing type code
+     * without altering the type's primary name or alias list. Used for XQuery 4.0
+     * built-in record types whose structural definitions live in
+     * {@link BuiltInRecordTypes} but which still need to parse as an existing
+     * {@link #RECORD}-coded type.
+     *
+     * @param type  the type constant the alias resolves to
+     * @param alias the additional name (e.g. {@code "fn:uri-structure-record"})
+     */
+    private static void defineTypeAlias(final int type, final String alias) {
+        typeCodes.put(alias, type);
     }
 
     /**

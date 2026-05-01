@@ -832,6 +832,13 @@ throws PermissionDeniedException, EXistException, XPathException
         #(
             c:CONTEXT_ITEM_DECL
             {
+                // XQ31/XQ40 spec id-context-item-decl: a library module must
+                // not bind the context item. The grammar accepts the prolog
+                // production in either module kind, so enforce here.
+                if (myModule != null) {
+                    throw new XPathException(c.getLine(), c.getColumn(), ErrorCodes.XQST0113,
+                            "Context item declaration is not allowed in a library module.");
+                }
                 PathExpr enclosed= new PathExpr(context);
                 enclosed.setASTNode(prolog_AST_in);
                 SequenceType type= null;
@@ -1439,7 +1446,16 @@ throws XPathException
                     int code= Type.getType(qn);
                     if (!Type.subTypeOf(code, Type.ANY_ATOMIC_TYPE) && !Type.subTypeOf(code, Type.RECORD) && code != Type.ERROR)
                         throw new XPathException(t.getLine(), t.getColumn(), ErrorCodes.XPST0051, qn.toString() + " is not atomic");
-                    type.setPrimaryType(code);
+                    // XQ4: install structural schema for built-in named record types
+                    // (fn:load-xquery-module-record et al.) so instance-of and
+                    // function-conversion rules check field names/types/extensibility
+                    // rather than degenerating to map(*).
+                    final RecordType builtIn = BuiltInRecordTypes.get(qn.toString());
+                    if (builtIn != null) {
+                        type.setRecordType(builtIn);
+                    } else {
+                        type.setPrimaryType(code);
+                    }
                 } catch (final XPathException e) {
                     throw new XPathException(t.getLine(), t.getColumn(), ErrorCodes.XPST0051, "Unknown simple type " + t.getText());
                 } catch (final IllegalQNameException e) {

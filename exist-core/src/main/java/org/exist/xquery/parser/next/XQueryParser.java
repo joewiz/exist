@@ -256,6 +256,11 @@ public final class XQueryParser {
             parseOptionDecl();
         } else if (checkKeyword(Keywords.CONTEXT)) {
             // declare context item [as type] [:= expr | external [:= expr]] ;
+            // XQ31/XQ40: a library module must not bind the context item.
+            if (isLibraryModule) {
+                throw new XPathException(current.line, current.column, ErrorCodes.XQST0113,
+                        "Context item declaration is not allowed in a library module.");
+            }
             advance(); // consume 'context'
             expectKeyword(Keywords.ITEM);
             SequenceType type = null;

@@ -100,24 +100,36 @@ public class RecordType {
      * @return true if the map matches all field declarations
      */
     public boolean matches(final org.exist.xquery.functions.map.AbstractMapType map) {
-        // Check all required fields exist and have matching types
+        // Field-by-field structural matching per XQ4 record type rules:
+        //   * required field: key must be present; value (which may be empty
+        //     if the field's declared type permits it) must conform.
+        //   * optional field: if the key is absent, that's fine; if present,
+        //     the value must conform.
+        // The presence test is map.contains(key) — distinct from the value
+        // being the empty sequence, which is a permitted shape for fields
+        // whose type has cardinality '?', '*', or empty-sequence().
         for (final FieldDeclaration field : fields) {
-            final Sequence value = map.get(new StringValue(field.getName()));
-            if (value == null || value.isEmpty()) {
+            final StringValue keyValue = new StringValue(field.getName());
+            final boolean hasKey = map.contains(keyValue);
+            if (!hasKey) {
                 if (!field.isOptional()) {
-                    return false; // required field missing
+                    return false;
                 }
                 continue;
             }
-            // Check value type if declared
-            if (field.getType() != null) {
-                try {
-                    if (!field.getType().checkType(value)) {
-                        return false;
-                    }
-                } catch (final org.exist.xquery.XPathException e) {
+            if (field.getType() == null) {
+                continue;
+            }
+            final Sequence value = map.get(keyValue);
+            try {
+                if (!field.getType().matchesCardinality(value)) {
                     return false;
                 }
+                if (value != null && !value.isEmpty() && !field.getType().checkType(value)) {
+                    return false;
+                }
+            } catch (final org.exist.xquery.XPathException e) {
+                return false;
             }
         }
 
