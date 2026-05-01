@@ -517,7 +517,39 @@ public class FunctionFactory {
     private static FunctionCall getXQueryModuleFunction(final XQueryContext context,
             final XQueryAST ast, final List<Expression> params, final QName qname, final Module module, final boolean throwOnNotFound) throws XPathException {
         final FunctionCall fc;
-        final UserDefinedFunction func = ((ExternalModule) module).getFunction(qname, params.size(), context);
+        final boolean hasKeywordArgs = hasKeywordArguments(params);
+
+        UserDefinedFunction func = ((ExternalModule) module).getFunction(qname, params.size(), context);
+
+        // XQ4: with keyword arguments or trailing-defaulted parameters, the call
+        // may carry fewer expressions than the signature's declared arity. Search
+        // overloads with higher arity (ascending) for one whose extra parameters
+        // are all defaulted, so the missing positions can be filled in. This
+        // mirrors XQueryContext.resolveFunction for same-module calls but is
+        // needed here for cross-module imports.
+        List<Expression> resolvedParams = params;
+        if (func == null) {
+            final List<FunctionSignature> candidates = new ArrayList<>();
+            final java.util.Iterator<FunctionSignature> sigIt = module.getSignaturesForFunction(qname);
+            while (sigIt.hasNext()) {
+                final FunctionSignature sig = sigIt.next();
+                if (sig.getArgumentCount() > params.size()) {
+                    candidates.add(sig);
+                }
+            }
+            candidates.sort((a, b) -> a.getArgumentCount() - b.getArgumentCount());
+            for (final FunctionSignature sig : candidates) {
+                final List<Expression> resolved = resolveKeywordArguments(context, params, sig, ast);
+                if (resolved != null) {
+                    func = ((ExternalModule) module).getFunction(qname, sig.getArgumentCount(), context);
+                    if (func != null) {
+                        resolvedParams = resolved;
+                        break;
+                    }
+                }
+            }
+        }
+
         if (func == null) {
             // check if the module has been compiled already
             if (module.isReady()) {
@@ -548,8 +580,20 @@ public class FunctionFactory {
                 }
             }
         } else {
+            // Even if the exact-arity lookup matched, keyword args still need to
+            // be mapped to positional slots before the call is wired up.
+            if (hasKeywordArgs && resolvedParams == params) {
+                final List<Expression> resolved = resolveKeywordArguments(context, params, func.getSignature(), ast);
+                if (resolved == null) {
+                    throw new XPathException(ast.getLine(), ast.getColumn(),
+                            ErrorCodes.XPST0017,
+                            "Keyword arguments do not match the signature of "
+                                    + qname.toURIQualifiedName() + '#' + func.getSignature().getArgumentCount());
+                }
+                resolvedParams = resolved;
+            }
             fc = new FunctionCall(context, func);
-            fc.setArguments(params);
+            fc.setArguments(resolvedParams);
             fc.setLocation(ast.getLine(), ast.getColumn());
         }
         return fc;
@@ -622,50 +666,73 @@ public class FunctionFactory {
     }
 
     /**
-     * Resolve keyword arguments to positional arguments using the function signature.
+     * Resolve a (possibly mixed positional + keyword) argument list against a
+     * function signature. Returns the resolved positional list, or {@code null}
+     * if the signature does not match (so the caller can try another overload).
      *
-     * Keyword arguments (name := value) are matched to the corresponding parameter
-     * position in the function signature. Positional arguments must come before
-     * keyword arguments. Gaps between positional and keyword arguments are filled
-     * with empty sequence expressions for optional parameters. Returns null if
-     * resolution fails.
+     * Positional arguments come first; keyword arguments (name := value) follow.
+     * Slots not filled positionally or by name are filled with the parameter's
+     * default value. For eXist internal-module signatures, an optional parameter
+     * (cardinality allows zero) without an explicit default falls back to an
+     * empty sequence, since internal functions declare optionality via
+     * cardinality and check for empty input in their eval().
      */
     private static @Nullable List<Expression> resolveKeywordArguments(
             final XQueryContext context,
             final List<Expression> params, final FunctionSignature signature,
             final XQueryAST ast) throws XPathException {
         final SequenceType[] argTypes = signature.getArgumentTypes();
-        if (argTypes == null) {
+        if (argTypes == null || params.size() > argTypes.length) {
             return null;
         }
-
-        // Find where keyword arguments start
-        int firstKeyword = -1;
-        for (int i = 0; i < params.size(); i++) {
-            if (params.get(i) instanceof KeywordArgumentExpression) {
-                firstKeyword = i;
-                break;
-            }
+        final int firstKeyword = indexOfFirstKeywordArgument(params);
+        // Pure-positional call that already fills every slot — no resolution needed.
+        if (firstKeyword < 0 && params.size() == argTypes.length) {
+            return params;
         }
-        if (firstKeyword < 0) {
-            return params; // no keyword args
-        }
+        // Treat anything before firstKeyword as positional. With no keyword args
+        // present, all supplied params are positional and the gap-fill loop will
+        // apply defaults to the remaining slots.
+        final int positionalCount = firstKeyword < 0 ? params.size() : firstKeyword;
 
-        // Build the resolved argument list
         final List<Expression> resolved = new ArrayList<>(argTypes.length);
-
-        // Copy positional arguments
-        for (int i = 0; i < firstKeyword; i++) {
+        for (int i = 0; i < positionalCount; i++) {
             resolved.add(params.get(i));
         }
-
-        // Fill remaining positions with nulls (to be filled by keyword args)
-        for (int i = firstKeyword; i < argTypes.length; i++) {
+        while (resolved.size() < argTypes.length) {
             resolved.add(null);
         }
 
-        // Match keyword arguments to parameter positions
-        for (int i = firstKeyword; i < params.size(); i++) {
+        if (!matchKeywordArguments(context, params, positionalCount, argTypes, resolved, ast)) {
+            return null;
+        }
+        if (!fillDefaultsForUnmatchedSlots(context, argTypes, resolved)) {
+            return null;
+        }
+        return resolved;
+    }
+
+    private static int indexOfFirstKeywordArgument(final List<Expression> params) {
+        for (int i = 0; i < params.size(); i++) {
+            if (params.get(i) instanceof KeywordArgumentExpression) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Match each keyword argument in {@code params} (starting at {@code start})
+     * to a slot in {@code argTypes} by parameter name (in Clark notation, so
+     * prefixed/EQName/plain local forms all match the expanded QName). Returns
+     * false if any keyword cannot be matched or duplicates a slot already filled.
+     */
+    private static boolean matchKeywordArguments(
+            final XQueryContext context,
+            final List<Expression> params, final int start,
+            final SequenceType[] argTypes, final List<Expression> resolved,
+            final XQueryAST ast) throws XPathException {
+        for (int i = start; i < params.size(); i++) {
             final Expression param = params.get(i);
             if (!(param instanceof KeywordArgumentExpression)) {
                 throw new XPathException(ast.getLine(), ast.getColumn(),
@@ -674,60 +741,66 @@ public class FunctionFactory {
             }
             final KeywordArgumentExpression kwArg = (KeywordArgumentExpression) param;
             final String kwName = kwArg.getKeywordName();
-            final String kwClark = normalizeQNameToClark(context, kwName);
-
-            // Find matching parameter by name. Compare in Clark notation so
-            // {prefix:local, Q{ns}local, plain local} all match a parameter that
-            // resolves to the same expanded QName. Search ALL positions, not
-            // just those at/after the first keyword, so that supplying the same
-            // parameter both positionally and by keyword is caught (XPST0017).
-            int matchPos = -1;
-            for (int j = 0; j < argTypes.length; j++) {
-                if (argTypes[j] instanceof FunctionParameterSequenceType) {
-                    final String paramName = ((FunctionParameterSequenceType) argTypes[j])
-                            .getAttributeName();
-                    final String paramClark = normalizeQNameToClark(context, paramName);
-                    if (kwClark != null && kwClark.equals(paramClark)) {
-                        matchPos = j;
-                        break;
-                    }
-                }
-            }
-
+            final int matchPos = indexOfParameterNamed(context, argTypes, kwName);
             if (matchPos < 0) {
-                return null; // no matching parameter found — signature mismatch
+                return false;
             }
             if (resolved.get(matchPos) != null) {
-                // XQ4 (PR197): supplying the same parameter twice — whether by two
-                // keyword args or one positional + one keyword — is XPST0017.
+                // XQ4 (PR197): supplying the same parameter twice — whether by
+                // two keyword args or one positional + one keyword — is XPST0017.
                 throw new XPathException(ast.getLine(), ast.getColumn(),
                         ErrorCodes.XPST0017,
                         "Parameter '" + kwName + "' supplied more than once in call");
             }
             resolved.set(matchPos, kwArg.getArgument());
         }
+        return true;
+    }
 
-        // Fill gaps: parameters with default values get them substituted in.
-        // A parameter without a default is required; if the call did not supply
-        // it (positionally or by keyword), the signature does not match — return
-        // null so the caller can report XPST0017 or try another overload.
-        for (int i = 0; i < resolved.size(); i++) {
-            if (resolved.get(i) == null) {
-                if (argTypes[i] instanceof FunctionParameterSequenceType) {
-                    final FunctionParameterSequenceType pst =
-                            (FunctionParameterSequenceType) argTypes[i];
-                    if (pst.hasDefaultValue()) {
-                        resolved.set(i, pst.getDefaultValue());
-                    } else {
-                        return null;
-                    }
-                } else {
-                    return null;
+    private static int indexOfParameterNamed(final XQueryContext context,
+            final SequenceType[] argTypes, final String kwName) {
+        final String kwClark = normalizeQNameToClark(context, kwName);
+        if (kwClark == null) {
+            return -1;
+        }
+        for (int j = 0; j < argTypes.length; j++) {
+            if (argTypes[j] instanceof FunctionParameterSequenceType) {
+                final String paramName = ((FunctionParameterSequenceType) argTypes[j])
+                        .getAttributeName();
+                if (kwClark.equals(normalizeQNameToClark(context, paramName))) {
+                    return j;
                 }
             }
         }
+        return -1;
+    }
 
-        return resolved;
+    /**
+     * Fill remaining null slots in {@code resolved} with parameter defaults.
+     * Returns false if any required parameter (cardinality demands at least one,
+     * no explicit default) is missing.
+     */
+    private static boolean fillDefaultsForUnmatchedSlots(
+            final XQueryContext context,
+            final SequenceType[] argTypes, final List<Expression> resolved) {
+        for (int i = 0; i < resolved.size(); i++) {
+            if (resolved.get(i) != null) {
+                continue;
+            }
+            if (!(argTypes[i] instanceof FunctionParameterSequenceType)) {
+                return false;
+            }
+            final FunctionParameterSequenceType pst =
+                    (FunctionParameterSequenceType) argTypes[i];
+            if (pst.hasDefaultValue()) {
+                resolved.set(i, pst.getDefaultValue());
+            } else if (!pst.getCardinality().atLeastOne()) {
+                resolved.set(i, new EmptySequenceExpr(context));
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -127,6 +127,21 @@ public class KeywordArgumentTest {
         assertEquals("5", rs.getResource(0).getContent().toString());
     }
 
+    /**
+     * fn:subsequence-where dispatch: a keyword `to` with no `from` must resolve
+     * to the 3-arg signature even though no overload accepts a single optional
+     * `to` parameter at arity 2. The 3-arg path requires the missing `from`
+     * slot to be filled with empty sequence (its cardinality allows zero).
+     */
+    @Test
+    public void subsequenceWhereToOnlyDispatchesToArity3() throws XMLDBException {
+        final ResourceSet rs = existEmbeddedServer.executeQuery(
+                "xquery version \"4.0\";\n" +
+                "string-join(fn:subsequence-where(1 to 5, to := function($x, $p){$x = 3}), ',')");
+        assertEquals(1, rs.getSize());
+        assertEquals("1,2,3", rs.getResource(0).getContent().toString());
+    }
+
     @Test
     public void floorWithValueKeywordPlaceholder() throws XMLDBException {
         final ResourceSet rs = existEmbeddedServer.executeQuery(
