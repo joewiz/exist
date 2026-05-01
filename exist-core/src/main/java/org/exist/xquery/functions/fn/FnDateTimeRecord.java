@@ -22,7 +22,7 @@
 package org.exist.xquery.functions.fn;
 
 import org.exist.xquery.*;
-import org.exist.xquery.functions.map.RecordMapType;
+import org.exist.xquery.functions.map.MapType;
 import org.exist.xquery.value.*;
 
 import java.util.List;
@@ -51,8 +51,8 @@ public class FnDateTimeRecord extends BasicFunction {
     );
 
     private static final FunctionReturnSequenceType FS_RETURN_TYPE = returns(
-            Type.DATETIME_RECORD,
-            "A record of type fn:dateTime-record containing the specified date/time components.");
+            Type.MAP_ITEM,
+            "A map of date/time components keyed by year, month, day, hours, minutes, seconds, timezone.");
 
     static final FunctionSignature[] FS_DATETIME_RECORD = functionSignatures(
             FS_NAME,
@@ -111,7 +111,7 @@ public class FnDateTimeRecord extends BasicFunction {
 
     @Override
     public Sequence eval(final Sequence[] args, final Sequence contextSequence) throws XPathException {
-        final RecordMapType result = new RecordMapType(this, context, FIELD_ORDER, Type.DATETIME_RECORD);
+        final MapType result = new MapType(this, context, null);
 
         for (int i = 0; i < args.length && i < FIELD_ORDER.size(); i++) {
             final Sequence arg = args[i];
