@@ -2057,12 +2057,14 @@ postfixExpr throws XPathException
 	;
 
 // XQuery 4.0: Array/Map Filter Expression
+// Predicate can be a comma-separated expression (e.g. ?[3, 2] for multi-position selection),
+// matching the syntax of regular predicates.
 filterExprAM throws XPathException
 { }
 :
-	q:QUESTION! LPPAREN! expr:exprSingle RPPAREN!
+	q:QUESTION! LPPAREN! filterPred:expr RPPAREN!
 	{
-		#filterExprAM = #(#[FILTER_AM, "?["], #expr);
+		#filterExprAM = #(#[FILTER_AM, "?["], #filterPred);
 		#filterExprAM.copyLexInfo(#q);
 	}
 	;

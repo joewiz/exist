@@ -84,29 +84,37 @@ function fam:array-filter-strings() {
 };
 
 (: === Map filtering === :)
+(: Per the QT4 spec, the predicate context for map filtering is a singleton :)
+(: map of the form { 'key': K, 'value': V }, so ?key / ?value lookups apply. :)
 
 declare
     %test:assertTrue
 function fam:map-filter-returns-map() {
-    map { "a": 1, "b": 2, "c": 3 }?[. > 1] instance of map(*)
+    map { "a": 1, "b": 2, "c": 3 }?[?value > 1] instance of map(*)
 };
 
 declare
     %test:assertEquals(2)
 function fam:map-filter-size() {
-    map:size(map { "a": 1, "b": 2, "c": 3 }?[. > 1])
+    map:size(map { "a": 1, "b": 2, "c": 3 }?[?value > 1])
 };
 
 declare
     %test:assertEquals(0)
 function fam:map-filter-empty-result() {
-    map:size(map { "a": 1, "b": 2 }?[. > 10])
+    map:size(map { "a": 1, "b": 2 }?[?value > 10])
 };
 
 declare
     %test:assertEquals(2)
 function fam:map-filter-all-entries() {
-    map:size(map { "a": 1, "b": 2 }?[. > 0])
+    map:size(map { "a": 1, "b": 2 }?[?value > 0])
+};
+
+declare
+    %test:assertEquals(1)
+function fam:map-filter-by-key() {
+    map:size(map { "a": 1, "b": 2 }?[?key = "a"])
 };
 
 (: === Chaining === :)

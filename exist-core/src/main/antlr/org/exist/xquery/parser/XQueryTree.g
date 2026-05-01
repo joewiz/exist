@@ -4495,19 +4495,6 @@ throws PermissionDeniedException, EXistException, XPathException
         step = filterExprAM [step]
         |
         #(
-            fam:FILTER_AM
-            {
-                PathExpr filterPred = new PathExpr(context);
-                filterPred.setASTNode(postfixExpr_AST_in);
-            }
-            expr [filterPred]
-            {
-                step = new FilterExprAM(context, step, filterPred.simplify());
-                step.setASTNode(fam);
-            }
-        )
-        |
-        #(
             PREDICATE
             {
                 FilteredExpression filter = new FilteredExpression(context, step);
@@ -4569,6 +4556,9 @@ throws PermissionDeniedException, EXistException, XPathException
     ;
 
 // === XQuery 4.0: Array/Map Filter Expression (?[expr]) ===
+// simplify() unwraps a single-step PathExpr so the predicate evaluates the
+// member as a whole sequence (count(.), string-join(@id), etc.) rather than
+// iterating over each item in the member sequence.
 filterExprAM [Expression leftExpr]
 returns [Expression step]
 throws PermissionDeniedException, EXistException, XPathException
@@ -4580,7 +4570,7 @@ throws PermissionDeniedException, EXistException, XPathException
         }
         ( expr [predExpr] )+
         {
-            step = new FilterExprAM(context, leftExpr, predExpr);
+            step = new FilterExprAM(context, leftExpr, predExpr.simplify());
             step.setASTNode(filterAM);
         }
     )
