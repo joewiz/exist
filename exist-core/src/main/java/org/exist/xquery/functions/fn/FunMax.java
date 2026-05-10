@@ -24,7 +24,6 @@ package org.exist.xquery.functions.fn;
 import com.ibm.icu.text.Collator;
 import org.exist.dom.QName;
 import org.exist.xquery.Cardinality;
-import org.exist.xquery.Constants;
 import org.exist.xquery.Dependency;
 import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.Function;
@@ -33,11 +32,14 @@ import org.exist.xquery.Profiler;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
 import org.exist.xquery.value.AtomicValue;
+import org.exist.xquery.value.DoubleValue;
 import org.exist.xquery.value.DurationValue;
+import org.exist.xquery.value.FloatValue;
 import org.exist.xquery.value.FunctionParameterSequenceType;
 import org.exist.xquery.value.FunctionReturnSequenceType;
 import org.exist.xquery.value.Item;
 import org.exist.xquery.value.NumericValue;
+import org.exist.xquery.value.QNameValue;
 import org.exist.xquery.value.Sequence;
 import org.exist.xquery.value.SequenceIterator;
 import org.exist.xquery.value.SequenceType;
@@ -127,34 +129,49 @@ public class FunMax extends CollatingFunction {
     private Sequence findMax(Sequence arg, Collator collator) throws XPathException {
         final SequenceIterator iter = arg.unorderedIterator();
         AtomicValue max = null;
-        boolean hasNaN = false;
-        AtomicValue nanValue = null;
 
         while (iter.hasNext()) {
             final Item item = iter.nextItem();
             AtomicValue value = item.atomize();
+
+            // XQ 3.1: xs:QName has no order
+            if (value instanceof QNameValue) {
+                throw new XPathException(this, ErrorCodes.FORG0006,
+                    "Cannot compare " + Type.getTypeName(value.getType()), value);
+            }
 
             // Cast untypedAtomic to double
             if (value.getType() == Type.UNTYPED_ATOMIC) {
                 value = value.convertTo(Type.DOUBLE);
             }
 
-            // Wrap duration subtypes
+            // Validate and wrap duration subtypes
             if (Type.subTypeOf(value.getType(), Type.DURATION)) {
-                value = ((DurationValue) value).wrap();
+                value = validateAndWrapDuration((DurationValue) value, max);
             }
 
-            // Track NaN: if any value is NaN, result is NaN
+            // XQ 3.1 numeric type promotion: ensure both operands share the
+            // least common numeric type that supports comparison, so that
+            // the returned value carries the promoted type (e.g. max((1, xs:float(2)))
+            // is xs:float, not xs:integer).
+            if (value instanceof NumericValue && max instanceof NumericValue) {
+                max = max.promote(value);
+                value = value.promote(max);
+            }
+
+            // NaN propagation: any NaN in the input forces the result to be NaN,
+            // typed at the highest numeric type seen so far.
             if (value instanceof NumericValue && ((NumericValue) value).isNaN()) {
-                if (!hasNaN) {
-                    hasNaN = true;
-                    nanValue = value;
-                }
+                max = promoteNaN(value, max);
                 continue;
             }
 
             if (max == null) {
                 max = value;
+            } else if (max instanceof NumericValue && ((NumericValue) max).isNaN()) {
+                // max is already NaN and won't be displaced; keep it but
+                // upgrade its type if value introduced a wider numeric type.
+                max = promoteNaN(max, value);
             } else {
                 try {
                     final int cmp = FunCompare.compare(value, max, collator);
@@ -169,9 +186,47 @@ public class FunMax extends CollatingFunction {
             }
         }
 
-        if (hasNaN) {
-            return nanValue;
-        }
         return max;
+    }
+
+    /**
+     * Validate and wrap a duration value per XQ 3.1 fn:min/fn:max rules:
+     * only xs:yearMonthDuration or xs:dayTimeDuration are accepted, and all
+     * durations in the sequence must share the same subtype.
+     */
+    private AtomicValue validateAndWrapDuration(final DurationValue value, final AtomicValue accumulator)
+            throws XPathException {
+        final DurationValue wrapped = value.wrap();
+        final int wrappedType = wrapped.getType();
+        if (wrappedType != Type.YEAR_MONTH_DURATION && wrappedType != Type.DAY_TIME_DURATION) {
+            throw new XPathException(this, ErrorCodes.FORG0006,
+                "Cannot compare " + Type.getTypeName(wrappedType), wrapped);
+        }
+        if (accumulator != null
+                && Type.subTypeOf(accumulator.getType(), Type.DURATION)
+                && accumulator.getType() != wrappedType) {
+            throw new XPathException(this, ErrorCodes.FORG0006,
+                "Cannot compare " + Type.getTypeName(accumulator.getType())
+                + " and " + Type.getTypeName(wrappedType), wrapped);
+        }
+        return wrapped;
+    }
+
+    /**
+     * Return a NaN typed at the widest numeric type between the incoming NaN
+     * value and the current accumulator. Used so that
+     * max((xs:float("NaN"), xs:double(2))) returns xs:double NaN.
+     */
+    private static AtomicValue promoteNaN(final AtomicValue nan, final AtomicValue other) {
+        if (other == null) {
+            return nan;
+        }
+        if (nan.getType() == Type.DOUBLE || other.getType() == Type.DOUBLE) {
+            return DoubleValue.NaN;
+        }
+        if (nan.getType() == Type.FLOAT || other.getType() == Type.FLOAT) {
+            return FloatValue.NaN;
+        }
+        return nan;
     }
 }
