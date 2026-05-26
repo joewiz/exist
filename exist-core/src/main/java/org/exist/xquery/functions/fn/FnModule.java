@@ -146,6 +146,10 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FunIRIToURI.signature, FunIRIToURI.class),
         new FunctionDef(FunInScopePrefixes.signature, FunInScopePrefixes.class),
         new FunctionDef(FunInsertBefore.signature, FunInsertBefore.class),
+        // --- XQuery 4.0 preview: sequence primitives ---
+        new FunctionDef(FnInsertSeparator.FN_INSERT_SEPARATOR, FnInsertSeparator.class),
+        new FunctionDef(FnItemsAt.FN_ITEMS_AT, FnItemsAt.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunLang.signatures[0], FunLang.class),
         new FunctionDef(FunLang.signatures[1], FunLang.class),
         new FunctionDef(FunLast.signature, FunLast.class),
@@ -183,6 +187,9 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FunPosition.signature, FunPosition.class),
         new FunctionDef(FunQName.signature, FunQName.class),
         new FunctionDef(FunRemove.signature, FunRemove.class),
+        // --- XQuery 4.0 preview: sequence primitives ---
+        new FunctionDef(FnReplicate.FN_REPLICATE, FnReplicate.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunReplace.FS_REPLACE[0], FunReplace.class),
         new FunctionDef(FunReplace.FS_REPLACE[1], FunReplace.class),
         new FunctionDef(FunReverse.signature, FunReverse.class),
