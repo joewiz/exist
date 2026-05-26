@@ -43,6 +43,13 @@ public class FnModule extends AbstractInternalModule {
 
     public final static FunctionDef[] functions = {
         new FunctionDef(FunAbs.signature, FunAbs.class),
+        // --- XQuery 4.0 preview: equality / sets ---
+        new FunctionDef(FnAllEqualDifferent.FN_ALL_DIFFERENT[0], FnAllEqualDifferent.class),
+        new FunctionDef(FnAllEqualDifferent.FN_ALL_DIFFERENT[1], FnAllEqualDifferent.class),
+        new FunctionDef(FnAllEqualDifferent.FN_ALL_EQUAL[0], FnAllEqualDifferent.class),
+        new FunctionDef(FnAllEqualDifferent.FN_ALL_EQUAL[1], FnAllEqualDifferent.class),
+        new FunctionDef(FnAtomicEqual.FN_ATOMIC_EQUAL, FnAtomicEqual.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunAvg.signature, FunAvg.class),
         new FunctionDef(FunBaseURI.FS_BASE_URI_0, FunBaseURI.class),
         new FunctionDef(FunBaseURI.FS_BASE_URI_1, FunBaseURI.class),
@@ -71,6 +78,10 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnDefaultLanguage.FS_DEFAULT_LANGUAGE, FnDefaultLanguage.class),
         new FunctionDef(FunDistinctValues.signatures[0], FunDistinctValues.class),
         new FunctionDef(FunDistinctValues.signatures[1], FunDistinctValues.class),
+        // --- XQuery 4.0 preview: equality / sets ---
+        new FunctionDef(FnDuplicateValues.FN_DUPLICATE_VALUES[0], FnDuplicateValues.class),
+        new FunctionDef(FnDuplicateValues.FN_DUPLICATE_VALUES[1], FnDuplicateValues.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunDoc.signature, FunDoc.class),
         new FunctionDef(FunDocAvailable.signature, FunDocAvailable.class),
         new FunctionDef(FunDocumentURI.FS_DOCUMENT_URI_0, FunDocumentURI.class),
@@ -145,6 +156,9 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnInnerMost.FNS_INNERMOST, FnInnerMost.class),
         new FunctionDef(FunIRIToURI.signature, FunIRIToURI.class),
         new FunctionDef(FunInScopePrefixes.signature, FunInScopePrefixes.class),
+        // --- XQuery 4.0 preview: equality / sets ---
+        new FunctionDef(FnIsNaN.FN_IS_NAN, FnIsNaN.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunInsertBefore.signature, FunInsertBefore.class),
         new FunctionDef(FunLang.signatures[0], FunLang.class),
         new FunctionDef(FunLang.signatures[1], FunLang.class),
