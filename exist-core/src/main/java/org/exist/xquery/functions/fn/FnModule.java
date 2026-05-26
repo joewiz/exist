@@ -49,6 +49,11 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FunBaseURI.FS_STATIC_BASE_URI_0, FunBaseURI.class),
         new FunctionDef(FunBoolean.signature, FunBoolean.class),
         new FunctionDef(FunCeiling.signature, FunCeiling.class),
+        // --- XQuery 4.0 preview: Unicode/text trio ---
+        new FunctionDef(FnChar.FN_CHAR, FnChar.class),
+        new FunctionDef(FnCharacters.FN_CHARACTERS, FnCharacters.class),
+        new FunctionDef(FnGraphemes.FN_GRAPHEMES, FnGraphemes.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunCodepointEqual.signature, FunCodepointEqual.class),
         new FunctionDef(FunCodepointsToString.signature, FunCodepointsToString.class),
         new FunctionDef(FunCollationKey.FS_COLLATION_KEY_SIGNATURES[0], FunCollationKey.class),
