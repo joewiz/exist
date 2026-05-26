@@ -274,7 +274,11 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnRandomNumberGenerator.FS_RANDOM_NUMBER_GENERATOR[0], FnRandomNumberGenerator.class),
         new FunctionDef(FnRandomNumberGenerator.FS_RANDOM_NUMBER_GENERATOR[1], FnRandomNumberGenerator.class),
         new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[0], FunContainsToken.class),
-        new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[1], FunContainsToken.class)
+        new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[1], FunContainsToken.class),
+        // --- XQuery 4.0 preview: type introspection ---
+        new FunctionDef(FnExpandedQName.FN_EXPANDED_QNAME, FnExpandedQName.class),
+        new FunctionDef(FnTypeOf.FN_TYPE_OF, FnTypeOf.class)
+        // --- End XQuery 4.0 preview ---
     };
     public final static ErrorCodes.ErrorCode SENR0001 = new ErrorCodes.ErrorCode("SENR0001", "serialization error in fn:serialize");
     public final static ErrorCodes.ErrorCode SEPM0019 = new ErrorCodes.ErrorCode("SEPM0019", "It is an error if an instance of the data model " +
