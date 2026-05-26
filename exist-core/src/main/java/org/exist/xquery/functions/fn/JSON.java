@@ -39,8 +39,10 @@ import org.exist.xquery.value.*;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Reader;
 import java.nio.file.Path;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.Files.isReadable;
 import static java.nio.file.Files.newInputStream;
 
@@ -228,14 +230,13 @@ public class JSON extends BasicFunction {
         try {
             String url = href.getStringValue();
 
-            // Check dynamically available text resources first (XQTS runner registers these)
-            try (final java.io.Reader dynReader = context.getDynamicallyAvailableTextResource(
-                    url, java.nio.charset.StandardCharsets.UTF_8)) {
-                if (dynReader != null) {
+            // Check dynamically available text resources first (e.g. XQTS test resources)
+            try (final Reader dynamicTextResource = context.getDynamicallyAvailableTextResource(url, UTF_8)) {
+                if (dynamicTextResource != null) {
                     final StringBuilder sb = new StringBuilder();
                     final char[] buf = new char[4096];
                     int read;
-                    while ((read = dynReader.read(buf)) > 0) {
+                    while ((read = dynamicTextResource.read(buf)) != -1) {
                         sb.append(buf, 0, read);
                     }
                     try (final JsonParser parser = factory.createParser(sb.toString())) {
@@ -245,8 +246,6 @@ public class JSON extends BasicFunction {
                         throw new XPathException(this, ErrorCodes.FOJS0001, jsonErr.getMessage());
                     }
                 }
-            } catch (final IOException e) {
-                // Not a dynamic resource, fall through to URL resolution
             }
             boolean resolvedFromBaseUri = false;
             if (url.indexOf(':') == Constants.STRING_NOT_FOUND) {
