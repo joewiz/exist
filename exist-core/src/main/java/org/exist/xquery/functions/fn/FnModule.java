@@ -137,6 +137,9 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnHasChildren.FNS_HAS_CHILDREN_1, FnHasChildren.class),
         new FunctionDef(FunId.signature[0], FunId.class),
         new FunctionDef(FunId.signature[1], FunId.class),
+        // --- XQuery 4.0 preview: HOF helpers ---
+        new FunctionDef(FnIdentityVoid.FN_IDENTITY, FnIdentityVoid.class),
+        // --- End XQuery 4.0 preview ---
         new FunctionDef(FunIdRef.signature[0], FunIdRef.class),
         new FunctionDef(FunIdRef.signature[1], FunIdRef.class),
         new FunctionDef(FunImplicitTimezone.signature, FunImplicitTimezone.class),
@@ -274,7 +277,11 @@ public class FnModule extends AbstractInternalModule {
         new FunctionDef(FnRandomNumberGenerator.FS_RANDOM_NUMBER_GENERATOR[0], FnRandomNumberGenerator.class),
         new FunctionDef(FnRandomNumberGenerator.FS_RANDOM_NUMBER_GENERATOR[1], FnRandomNumberGenerator.class),
         new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[0], FunContainsToken.class),
-        new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[1], FunContainsToken.class)
+        new FunctionDef(FunContainsToken.FS_CONTAINS_TOKEN[1], FunContainsToken.class),
+        // --- XQuery 4.0 preview: HOF helpers ---
+        new FunctionDef(FnIdentityVoid.FN_VOID[0], FnIdentityVoid.class),
+        new FunctionDef(FnIdentityVoid.FN_VOID[1], FnIdentityVoid.class)
+        // --- End XQuery 4.0 preview ---
     };
     public final static ErrorCodes.ErrorCode SENR0001 = new ErrorCodes.ErrorCode("SENR0001", "serialization error in fn:serialize");
     public final static ErrorCodes.ErrorCode SEPM0019 = new ErrorCodes.ErrorCode("SEPM0019", "It is an error if an instance of the data model " +
