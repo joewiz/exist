@@ -219,6 +219,17 @@ function ss:filter-restricts-hits() {
     array:size(ft:search-scope($ss:COLLECTION, "content:(array)", map { "filter": map { "kind": "para" } })?hits)
 };
 
+(: end-to-end: facet drill-down filter AND highlight in one call. The search is wrapped in a
+   DrillDownQuery, yet the hit still highlights -- the path that was empty before the core
+   facet-drilldown-highlight fix (this branch includes that fix). :)
+declare
+    %test:assertTrue
+function ss:filter-with-highlight() {
+    let $hits := ft:search-scope($ss:COLLECTION, "content:(install)",
+        map { "filter": map { "kind": "para" }, "highlight": "content" })?hits
+    return exists($hits(1)?highlight?content//exist:match)
+};
+
 (: highlight: a requested field comes back as exist:field/exist:match markup per hit :)
 declare
     %test:assertTrue
