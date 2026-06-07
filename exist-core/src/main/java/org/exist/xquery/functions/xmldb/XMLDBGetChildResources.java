@@ -36,6 +36,7 @@ import org.exist.xquery.value.SequenceType;
 import org.exist.xquery.value.StringValue;
 import org.exist.xquery.value.Type;
 import org.exist.xquery.value.ValueSequence;
+import org.exist.xquery.util.URIUtils;
 import org.xmldb.api.base.Collection;
 import org.xmldb.api.base.XMLDBException;
 
@@ -45,27 +46,39 @@ public class XMLDBGetChildResources extends XMLDBAbstractCollectionManipulator {
 	
 	protected static final Logger logger = LogManager.getLogger(XMLDBGetChildResources.class);
 
-	public final static FunctionSignature signature =
+	private static final FunctionParameterSequenceType FS_PARAM_COLLECTION =
+			new FunctionParameterSequenceType("collection-uri", Type.ITEM, Cardinality.EXACTLY_ONE, "The collection URI");
+	private static final FunctionParameterSequenceType FS_PARAM_DECODE =
+			new FunctionParameterSequenceType("decode", Type.BOOLEAN, Cardinality.EXACTLY_ONE,
+					"If true, the names are returned percent-decoded (human-readable); if false (and for the " +
+					"single-argument form), the stored, percent-encoded names are returned.");
+
+	public final static FunctionSignature[] signatures = {
 		new FunctionSignature(
 			new QName("get-child-resources", XMLDBModule.NAMESPACE_URI, XMLDBModule.PREFIX),
-			"Returns the names of the child resources in collection $collection-uri. " +
+			"Returns the (percent-encoded) names of the child resources in collection $collection-uri. " +
             XMLDBModule.COLLECTION_URI,
-			new SequenceType[] {
-					new FunctionParameterSequenceType("collection-uri", Type.ITEM, Cardinality.EXACTLY_ONE, "The collection URI")
-			},
-			new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_MORE, "the sequence of resource names"));
-	
-	public XMLDBGetChildResources(XQueryContext context) {
+			new SequenceType[] { FS_PARAM_COLLECTION },
+			new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_MORE, "the sequence of resource names")),
+		new FunctionSignature(
+			new QName("get-child-resources", XMLDBModule.NAMESPACE_URI, XMLDBModule.PREFIX),
+			"Returns the names of the child resources in collection $collection-uri, percent-decoded when " +
+			"$decode is true. " + XMLDBModule.COLLECTION_URI,
+			new SequenceType[] { FS_PARAM_COLLECTION, FS_PARAM_DECODE },
+			new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_MORE, "the sequence of resource names"))
+	};
+
+	public XMLDBGetChildResources(XQueryContext context, FunctionSignature signature) {
 		super(context, signature);
 	}
-	
-	//TODO decode names?
+
 	public Sequence evalWithCollection(Collection collection, Sequence[] args, Sequence contextSequence)
 		throws XPathException {
+		final boolean decode = getArgumentCount() == 2 && args[1].effectiveBooleanValue();
 		final ValueSequence result = new ValueSequence();
 		try {
 			for (String s : collection.listResources()) {
-				result.add(new StringValue(this, s));
+				result.add(new StringValue(this, decode ? URIUtils.decodeForURI(s) : s));
 			}
 			return result;
 		} catch (final XMLDBException e) {
