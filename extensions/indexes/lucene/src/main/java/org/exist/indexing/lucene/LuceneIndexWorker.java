@@ -638,14 +638,15 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
                 query = filterByIndexType(query, field);
                 final Optional<Map<String, QueryOptions.FacetQuery>> facets = options.getFacets();
+                // Search with the drill-down query, but keep the pre-drill-down query for match/highlight
+                // extraction: a DrillDownQuery is opaque to LuceneUtil.extractTerms, so storing it on the
+                // LuceneMatch silently disables ft:highlight-field-matches under facet drill-down.
+                Query searchQuery = query;
                 if (facets.isPresent() && config != null) {
-                    query = drilldown(facets.get(), query, config);
-                }
-                if (config != null && config.hasBoostConfig()) {
-                    query = FunctionScoreQuery.boostByValue(query, DoubleValuesSource.fromFloatField(LuceneUtil.FIELD_BOOST));
+                    searchQuery = drilldown(facets.get(), query, config);
                 }
                 searchAndProcess(contextId, qname, docs, contextSet, resultSet,
-                        returnAncestor, searcher, query, config);
+                        returnAncestor, searcher, applyBoost(searchQuery, config), applyBoost(query, config), config);
             }
             return resultSet;
         });
@@ -686,14 +687,14 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 if (query != null) {
                     query = filterByIndexType(query, field);
                     Optional<Map<String, QueryOptions.FacetQuery>> facets = options.getFacets();
+                    // Search with the drill-down query, but keep the pre-drill-down query for
+                    // match/highlight extraction (a DrillDownQuery is opaque to extractTerms).
+                    Query searchQuery = query;
                     if (facets.isPresent() && config != null) {
-                        query = drilldown(facets.get(), query, config);
-                    }
-                    if (config != null && config.hasBoostConfig()) {
-                        query = FunctionScoreQuery.boostByValue(query, DoubleValuesSource.fromFloatField(LuceneUtil.FIELD_BOOST));
+                        searchQuery = drilldown(facets.get(), query, config);
                     }
                     searchAndProcess(contextId, qname, docs, contextSet, resultSet,
-                            returnAncestor, searcher, query, config);
+                            returnAncestor, searcher, applyBoost(searchQuery, config), applyBoost(query, config), config);
                 }
             }
             return resultSet;
@@ -745,15 +746,37 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                                   @Nullable final NodeSet contextSet, final NodeSet resultSet, final boolean returnAncestor,
                                   final SearcherTaxonomyManager.SearcherAndTaxonomy searcher, final Query query,
                                   final LuceneConfig config) throws IOException {
+        searchAndProcess(contextId, qname, docs, contextSet, resultSet, returnAncestor, searcher, query, query, config);
+    }
+
+    /**
+     * Run the search with {@code searchQuery} but attach {@code matchQuery} to each {@link LuceneMatch}
+     * for later term/highlight extraction. The two differ only under facet drill-down: the search runs
+     * with the {@link DrillDownQuery}, while highlighting needs the pre-drill-down query, because
+     * {@link LuceneUtil#extractTerms} cannot see into a {@code DrillDownQuery} (so storing it would
+     * silently disable {@code ft:highlight-field-matches} for faceted searches).
+     */
+    private void searchAndProcess(final int contextId, final QName qname, final DocumentSet docs,
+                                  @Nullable final NodeSet contextSet, final NodeSet resultSet, final boolean returnAncestor,
+                                  final SearcherTaxonomyManager.SearcherAndTaxonomy searcher, final Query searchQuery,
+                                  final Query matchQuery, final LuceneConfig config) throws IOException {
         final LuceneFacets facets = new LuceneFacets();
         final FacetsCollector facetsCollector = new FacetsCollector();
-        final LuceneHitCollector collector = new LuceneHitCollector(qname, query, docs, contextSet, resultSet, returnAncestor, contextId, facets, facetsCollector);
-        searcher.searcher().search(query, collector);
+        final LuceneHitCollector collector = new LuceneHitCollector(qname, matchQuery, docs, contextSet, resultSet, returnAncestor, contextId, facets, facetsCollector);
+        searcher.searcher().search(searchQuery, collector);
 
         // compute facets (skip if config or taxonomy missing)
         if (config != null && config.facetsConfig != null && searcher.taxonomyReader() != null) {
             facets.compute(searcher.taxonomyReader(), config.facetsConfig, facetsCollector);
         }
+    }
+
+    /** Apply field-boost scoring when the index config defines boosts; otherwise return the query unchanged. */
+    private Query applyBoost(final Query query, @Nullable final LuceneConfig config) {
+        if (config != null && config.hasBoostConfig()) {
+            return FunctionScoreQuery.boostByValue(query, DoubleValuesSource.fromFloatField(LuceneUtil.FIELD_BOOST));
+        }
+        return query;
     }
 
     /**
