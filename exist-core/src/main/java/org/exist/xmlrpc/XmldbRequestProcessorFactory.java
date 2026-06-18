@@ -93,7 +93,8 @@ public class XmldbRequestProcessorFactory implements RequestProcessorFactoryFact
             password = username;
         }
 
-        if (!useDefaultUser && username.equalsIgnoreCase(SecurityManager.GUEST_USER)) {
+        if (username.equalsIgnoreCase(SecurityManager.GUEST_USER)
+                && (!useDefaultUser || !brokerPool.getSecurityManager().isGuestAccessAllowed())) {
             final String message = "The user " + SecurityManager.GUEST_USER + " is prohibited from logging in through XML-RPC.";
             LOG.debug(message);
             throw new XmlRpcException(0, message);

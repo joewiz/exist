@@ -594,8 +594,10 @@ public class ExistWebdavServlet extends AbstractWebdavServlet {
             if (subject == null) {
                 subject = securityManager.getGuestSubject();
             }
+            // Guest is always refused write methods; when guest access is clamped instance-wide
+            // it is refused all methods (reads included).
             if (subject.equals(securityManager.getGuestSubject())
-                    && WRITE_METHODS.contains(request.getMethod())) {
+                    && (!securityManager.isGuestAccessAllowed() || WRITE_METHODS.contains(request.getMethod()))) {
                 throw new DavException(DavServletResponse.SC_UNAUTHORIZED, "Authentication required");
             }
             request.setDavSession(new ExistDavSession(subject));
