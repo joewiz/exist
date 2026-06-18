@@ -251,10 +251,31 @@ public abstract class AbstractExistHttpServlet extends HttpServlet {
 
         // Secondly try basic authentication if there is no Authorization header or the Authorization header does not indicate Basic auth
         final String auth = request.getHeader("Authorization");
+        final Subject subject;
         if ((auth == null || !auth.toLowerCase().startsWith("basic ")) && getDefaultUser() != null) {
-            return getDefaultUser();
+            subject = getDefaultUser();
+        } else {
+            subject = getAuthenticator().authenticate(request, response, true);
         }
-        return getAuthenticator().authenticate(request, response, true);
+        return rejectGuestIfAccessClamped(subject, request, response);
+    }
+
+    /**
+     * When guest access is clamped instance-wide, refuse to proceed as the guest subject - whether
+     * it arrived via the default user or via explicit guest credentials - and send a challenge so
+     * the caller can authenticate. All HTTP surfaces sharing this servlet base inherit the check.
+     *
+     * @return the supplied subject, or {@code null} if a guest was challenged and must not proceed
+     */
+    private Subject rejectGuestIfAccessClamped(final Subject subject, final HttpServletRequest request,
+            final HttpServletResponse response) throws IOException {
+        final SecurityManager securityManager = getPool().getSecurityManager();
+        if (subject != null && !securityManager.isGuestAccessAllowed()
+                && subject.equals(securityManager.getGuestSubject())) {
+            getAuthenticator().sendChallenge(request, response);
+            return null;
+        }
+        return subject;
     }
 
     protected boolean isInternalOnly() {

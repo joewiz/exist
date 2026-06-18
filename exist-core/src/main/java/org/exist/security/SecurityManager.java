@@ -103,6 +103,18 @@ public interface SecurityManager extends Configurable {
    Subject getGuestSubject();
    Group getDBAGroup();
 
+   /**
+    * Determines whether anonymous (guest) access is permitted for this instance.
+    *
+    * When this returns {@code false}, guest-reachable entry points should refuse to
+    * proceed as the {@link #GUEST_USER} subject and instead require authentication.
+    * Defaults to {@code true} (guest access permitted), which preserves the historical
+    * behavior; setting it to {@code false} is a deliberate instance-wide lockdown.
+    *
+    * @return {@code true} if guest access is allowed, {@code false} if it is clamped
+    */
+   boolean isGuestAccessAllowed();
+
    List<Account> getGroupMembers(String groupName);
 
    @Deprecated //use realm's method

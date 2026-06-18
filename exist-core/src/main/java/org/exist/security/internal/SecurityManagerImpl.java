@@ -113,6 +113,9 @@ public class SecurityManagerImpl implements SecurityManager, BrokerPoolService {
     @SuppressWarnings("unused")
     private String version = "2.1";
 
+    @ConfigurationFieldAsAttribute("allow-guest-access")
+    private boolean allowGuestAccess = true;
+
     @ConfigurationFieldAsElement("authentication-entry-point")
     private static final String authenticationEntryPoint = "/authentication/login";
 
@@ -890,6 +893,11 @@ public class SecurityManagerImpl implements SecurityManager, BrokerPoolService {
     @Override
     public String getAuthenticationEntryPoint() {
         return authenticationEntryPoint;
+    }
+
+    @Override
+    public boolean isGuestAccessAllowed() {
+        return allowGuestAccess;
     }
 
     @ThreadSafe

@@ -188,6 +188,12 @@ public class XQueryURLRewrite extends HttpServlet {
             }
         }
 
+        // When guest access is clamped instance-wide, refuse to run the controller as the guest
+        // subject. This servlet does not extend AbstractExistHttpServlet, so it carries its own check.
+        if (guestAccessClamped(user, request, response)) {
+            return;
+        }
+
         try {
             configure();
             //checkCache(user);
@@ -613,6 +619,23 @@ public class XQueryURLRewrite extends HttpServlet {
             }
         }
         authenticator = new BasicAuthenticator(pool);
+    }
+
+    /**
+     * Sends an authentication challenge when guest access is clamped instance-wide and the resolved
+     * user is the guest subject.
+     *
+     * @return {@code true} if a challenge was sent and the request must not proceed
+     */
+    private boolean guestAccessClamped(final Subject user, final HttpServletRequest request,
+            final HttpServletResponse response) throws IOException {
+        final var securityManager = pool.getSecurityManager();
+        if (user != null && !securityManager.isGuestAccessAllowed()
+                && user.equals(securityManager.getGuestSubject())) {
+            authenticator.sendChallenge(request, response);
+            return true;
+        }
+        return false;
     }
 
     private void logResult(final DBBroker broker, final Sequence result) throws SAXException {
