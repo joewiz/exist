@@ -1283,15 +1283,14 @@ public class XQueryURLRewrite extends HttpServlet {
         }
 
         @Override
-        public String getHeader(final String s) {
-            if ("If-Modified-Since".equals(s) && !allowCaching) {
-                return null;
-            }
-            return super.getHeader(s);
-        }
-
-        @Override
         public long getDateHeader(final String s) {
+            // When caching is disabled (e.g. during the controller -> view handover),
+            // hide the If-Modified-Since *date* so that intermediate stages of the
+            // pipeline (see RESTServer's conditional-GET handling) do not short-circuit
+            // with a premature "304 Not Modified" response. Only the parsed date header
+            // drives that logic, so the raw header value remains visible via getHeader()/
+            // getHeaders()/getHeaderNames() and stays readable from XQuery, e.g.
+            // request:get-header('If-Modified-Since').
             if ("If-Modified-Since".equals(s) && !allowCaching) {
                 return -1;
             }

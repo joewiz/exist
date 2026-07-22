@@ -111,6 +111,63 @@ public class XQueryURLRewriteTest
     }
 
     @Test
+    public void requestWrapper_exposesIfModifiedSinceHeaderValueWhenCachingDisabled() {
+        // During the controller -> view handover caching is disabled on the wrapped
+        // request. The raw If-Modified-Since header value must still be readable
+        // (e.g. from request:get-header('If-Modified-Since') in view.xql).
+        final String ifModifiedSince = "Wed, 21 Oct 2026 07:28:00 GMT";
+
+        final HttpServletRequest mockHttpServletRequest = EasyMock.createMock(HttpServletRequest.class);
+        expect(mockHttpServletRequest.getContentType()).andReturn("text/xml");
+        expect(mockHttpServletRequest.getParameterMap()).andReturn(new HashMap<>());
+        expect(mockHttpServletRequest.getHeader("If-Modified-Since")).andReturn(ifModifiedSince);
+
+        replay(mockHttpServletRequest);
+        final RequestWrapper wrapper = new RequestWrapper(mockHttpServletRequest);
+        wrapper.allowCaching(false);
+        final String actual = wrapper.getHeader("If-Modified-Since");
+        verify(mockHttpServletRequest);
+
+        assertEquals(ifModifiedSince, actual);
+    }
+
+    @Test
+    public void requestWrapper_suppressesIfModifiedSinceDateHeaderWhenCachingDisabled() {
+        // The parsed If-Modified-Since date drives conditional-GET (304) handling, so it
+        // must be hidden while caching is disabled to avoid a premature "304 Not Modified"
+        // during the controller -> view pipeline.
+        final HttpServletRequest mockHttpServletRequest = EasyMock.createMock(HttpServletRequest.class);
+        expect(mockHttpServletRequest.getContentType()).andReturn("text/xml");
+        expect(mockHttpServletRequest.getParameterMap()).andReturn(new HashMap<>());
+
+        replay(mockHttpServletRequest);
+        final RequestWrapper wrapper = new RequestWrapper(mockHttpServletRequest);
+        wrapper.allowCaching(false);
+        final long actual = wrapper.getDateHeader("If-Modified-Since");
+        verify(mockHttpServletRequest);
+
+        assertEquals(-1L, actual);
+    }
+
+    @Test
+    public void requestWrapper_passesThroughIfModifiedSinceDateHeaderWhenCachingEnabled() {
+        // With caching enabled (the default) the parsed date header is passed through.
+        final long ifModifiedSince = 1_761_031_680_000L;
+
+        final HttpServletRequest mockHttpServletRequest = EasyMock.createMock(HttpServletRequest.class);
+        expect(mockHttpServletRequest.getContentType()).andReturn("text/xml");
+        expect(mockHttpServletRequest.getParameterMap()).andReturn(new HashMap<>());
+        expect(mockHttpServletRequest.getDateHeader("If-Modified-Since")).andReturn(ifModifiedSince);
+
+        replay(mockHttpServletRequest);
+        final RequestWrapper wrapper = new RequestWrapper(mockHttpServletRequest);
+        final long actual = wrapper.getDateHeader("If-Modified-Since");
+        verify(mockHttpServletRequest);
+
+        assertEquals(ifModifiedSince, actual);
+    }
+
+    @Test
     public void requestWrapper_addsParamAftercopiesRequestParams() {
 
         final Map<String, String[]> testParameterMap = new HashMap<String, String[]>();
