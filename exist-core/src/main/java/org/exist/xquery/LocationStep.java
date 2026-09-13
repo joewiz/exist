@@ -580,8 +580,22 @@ public class LocationStep extends Step {
                         "Using structural index '" + index.toString() + "'");
             }
             final NodeSelector selector = new SelfSelector(contextSet, contextId);
-            return index.findElementsByTagName(ElementValue.ELEMENT, docs, test.getName(), selector, this);
+            return index.findElementsByTagName(indexTypeFor(test), docs, test.getName(), selector, this);
         }
+    }
+
+    /**
+     * Selects the half of the structural index that a node test should be looked up in.
+     *
+     * <p>The index is split into an element half and an attribute half. A named attribute kind
+     * test such as {@code self::attribute(id)} must be looked up in the latter; searching the
+     * element half for an element of that name always comes back empty.</p>
+     *
+     * @param test the node test being applied
+     * @return {@link ElementValue#ATTRIBUTE} for an attribute test, {@link ElementValue#ELEMENT} otherwise
+     */
+    private static byte indexTypeFor(final NodeTest test) {
+        return test.getType() == Type.ATTRIBUTE ? ElementValue.ATTRIBUTE : ElementValue.ELEMENT;
     }
 
     protected Sequence getAttributes(final XQueryContext context, final Sequence contextSequence)
