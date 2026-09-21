@@ -78,10 +78,10 @@ public class PreserveCdataSerializationTest {
         query("xmldb:remove('/db', 'preserve-cdata-test.xml')");
     }
 
-    /** Without the parameter, the spec's escaping applies — this must not change. */
+    /** MEASUREMENT BRANCH: the default is flipped on, so omitting the parameter preserves. */
     @Test
-    public void withoutTheParameterContentIsEscaped() throws XMLDBException {
-        assertEquals("<doc><p> a &gt; b </p></doc>",
+    public void withoutTheParameterContentIsPreserved() throws XMLDBException {
+        assertEquals("<doc><p><![CDATA[ a > b ]]></p></doc>",
                 query("serialize(doc('" + DOC + "'), map { 'method': 'xml' })"));
     }
 
@@ -99,9 +99,9 @@ public class PreserveCdataSerializationTest {
                 query("serialize(parse-xml(" + SOURCE + "), map { 'method': 'xml', " + PRESERVE + " })"));
     }
 
-    /** Explicitly false is the same as omitting it. */
+    /** MEASUREMENT BRANCH: explicitly false still escapes, and now differs from the default. */
     @Test
-    public void explicitFalseMatchesTheDefault() throws XMLDBException {
+    public void explicitFalseStillEscapes() throws XMLDBException {
         assertEquals("<doc><p> a &gt; b </p></doc>",
                 query("serialize(doc('" + DOC + "'), map { 'method': 'xml', "
                         + "QName('http://exist.sourceforge.net/NS/exist','preserve-cdata'): false() })"));
