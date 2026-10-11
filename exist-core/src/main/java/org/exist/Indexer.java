@@ -293,12 +293,12 @@ public class Indexer implements ContentHandler, LexicalHandler, ErrorHandler {
                         indexListener.characters(transaction, cdata, currentPath);
                     }
                 }
-                setPrevious(cdata);
                 if (!nodeContentStack.isEmpty()) {
                     for (final XMLString next : nodeContentStack) {
                         next.append(charBuf);
                     }
                 }
+                setPrevious(cdata);
                 charBuf.reset();
             }
         }
