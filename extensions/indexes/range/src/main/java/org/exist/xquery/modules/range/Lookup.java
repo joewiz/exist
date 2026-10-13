@@ -282,9 +282,12 @@ public class Lookup extends Function implements Optimizable, IndexUseReporter {
         }
     }
 
+    private static final boolean F1_TRACE = Boolean.getBoolean("exist.fnid.trace");
+
     @Override
     public NodeSet preSelect(Sequence contextSequence, boolean useContext) throws XPathException {
         if (!canOptimize) {
+            if (F1_TRACE) System.err.println("[F1] Lookup.preSelect: !canOptimize -> delegate to fallback");
             return ((Optimizable)fallback).preSelect(contextSequence, useContext);
         }
         if (contextSequence != null && !contextSequence.isPersistentSet())
@@ -324,7 +327,11 @@ public class Lookup extends Function implements Optimizable, IndexUseReporter {
         }
 
         try {
+            if (F1_TRACE) System.err.println("[F1] Lookup.preSelect: keys=" + java.util.Arrays.toString(keys)
+                    + " ctxItems=" + contextSequence.getItemCount() + " op=" + operator);
             preselectResult = index.query(getExpressionId(), docs, contextSequence.toNodeSet(), qnames, keys, operator, NodeSet.DESCENDANT, matchFlags);
+            if (F1_TRACE) System.err.println("[F1] Lookup.preSelect: query returned "
+                    + (preselectResult == null ? "null" : preselectResult.getItemCount() + " hits"));
         } catch (XPathException | IOException e) {
             throw new XPathException(this, "Error while querying full text index: " + e.getMessage(), e);
         }
@@ -386,7 +393,12 @@ public class Lookup extends Function implements Optimizable, IndexUseReporter {
 
     @Override
     public Sequence eval(Sequence contextSequence, Item contextItem) throws XPathException {
+        if (F1_TRACE) System.err.println("[F1] Lookup.eval: canOptimize=" + canOptimize
+                + " preselectResult=" + (preselectResult == null ? "null" : preselectResult.getItemCount() + " hits")
+                + " ctxItems=" + (contextSequence == null ? "null" : contextSequence.getItemCount())
+                + " ctxItem=" + (contextItem == null ? "null" : "set"));
         if (!canOptimize && fallback != null) {
+            if (F1_TRACE) System.err.println("[F1] Lookup.eval: -> fallback.eval");
             return fallback.eval(contextSequence, contextItem);
         }
         final Sequence effectiveContextSequence = contextItem != null ? contextItem.toSequence() : contextSequence;
@@ -443,7 +455,15 @@ public class Lookup extends Function implements Optimizable, IndexUseReporter {
         } else {
 //            long start = System.currentTimeMillis();
             contextStep.setPreloadedData(preselectResult.getDocumentSet(), preselectResult);
-            result = getArgument(0).eval(contextSequence, null).toNodeSet();
+            // F1 fix: use effectiveContextSequence (the per-item context when contextItem is set)
+            // rather than the full contextSequence. Without this, BOOLEAN-mode per-item predicate
+            // evaluation evaluates argument 0 against the entire preloaded set every call, giving
+            // a non-empty NodeSet for every context item with @xml:id and silently dropping the
+            // value comparison ($v binding).
+            result = getArgument(0).eval(effectiveContextSequence, contextItem).toNodeSet();
+            if (F1_TRACE) System.err.println("[F1] Lookup.eval (preselect path): getArgument(0).eval(ctx) returned "
+                    + result.getItemCount() + " items (preselectResult had "
+                    + preselectResult.getItemCount() + ")");
             //LOG.info("eval took " + (System.currentTimeMillis() - start));
         }
         return result;
