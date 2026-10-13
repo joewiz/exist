@@ -560,20 +560,28 @@ public class CsvFunctions extends BasicFunction {
 
             final int rowIdx = ((IntegerValue) rowIdxSeq.itemAt(0).convertTo(Type.INTEGER)).getInt();
 
-            if (rowIdx < 1 || rowIdx > rows.getItemCount()) {
-                return Sequence.EMPTY_SEQUENCE;
+            // Negative or zero row index is an error per XQ4 spec
+            if (rowIdx < 1) {
+                throw new XPathException(this, ErrorCodes.XPTY0004,
+                        "Row index must be a positive integer, got: " + rowIdx);
             }
 
             // Resolve column: integer index or string name
             final Item colItem = colSeq.itemAt(0);
             final int colIdx;
             if (Type.subTypeOf(colItem.getType(), Type.INTEGER)) {
-                colIdx = ((IntegerValue) colItem.convertTo(Type.INTEGER)).getInt();
+                final int col = ((IntegerValue) colItem.convertTo(Type.INTEGER)).getInt();
+                if (col < 1) {
+                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                            "Column index must be a positive integer, got: " + col);
+                }
+                colIdx = col;
             } else {
                 // String column name — look up in header
                 final String colName = colItem.getStringValue();
                 if (header == null) {
-                    return Sequence.EMPTY_SEQUENCE;
+                    throw new XPathException(this, ErrorCodes.FOCV0004,
+                            "Column name '" + colName + "' not found: no header defined");
                 }
                 int found = -1;
                 for (int i = 0; i < header.size(); i++) {
@@ -583,14 +591,20 @@ public class CsvFunctions extends BasicFunction {
                     }
                 }
                 if (found == -1) {
-                    return Sequence.EMPTY_SEQUENCE;
+                    throw new XPathException(this, ErrorCodes.FOCV0004,
+                            "Column name '" + colName + "' not found in header");
                 }
                 colIdx = found;
             }
 
+            // Out-of-range positive row returns empty string per XQ4 spec
+            if (rowIdx > rows.getItemCount()) {
+                return new StringValue(this, "");
+            }
+
             final ArrayType row = (ArrayType) rows.itemAt(rowIdx - 1);
-            if (colIdx < 1 || colIdx > row.getSize()) {
-                return Sequence.EMPTY_SEQUENCE;
+            if (colIdx > row.getSize()) {
+                return new StringValue(this, "");
             }
 
             return row.get(colIdx - 1);

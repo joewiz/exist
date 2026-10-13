@@ -108,6 +108,7 @@ public class JSON extends BasicFunction {
     public static final String OPTION_DUPLICATES_USE_LAST = "use-last";
     public static final String OPTION_LIBERAL = "liberal";
     public static final String OPTION_UNESCAPE = "unescape";
+    public static final String OPTION_NULL = "null";
     public static final QName KEY = new QName("key",null);
 
     public JSON(XQueryContext context, FunctionSignature signature) {
@@ -122,69 +123,79 @@ public class JSON extends BasicFunction {
         }
         // process options if present
         boolean liberal = false;
-        String handleDuplicates = OPTION_DUPLICATES_USE_LAST;
-        if (getArgumentCount() == 2) {
-            final MapType options = (MapType)args[1].itemAt(0);
+        String handleDuplicates = OPTION_DUPLICATES_USE_FIRST;
+        FunctionReference numberParserFn = null;
+        FunctionReference fallbackFn = null;
+        Sequence nullValue = null;
+        if (getArgumentCount() == 2 && !args[1].isEmpty()) {
+            final MapType options = (MapType) args[1].itemAt(0);
 
-            // Validate deprecated options → XPTY0004
-            final Sequence validateOpt = options.get(new StringValue("validate"));
-            if (validateOpt != null && validateOpt.hasOne()) {
-                throw new XPathException(this, ErrorCodes.XPTY0004,
-                        "The 'validate' option is not supported");
-            }
-            // XQuery 4.0: 'spec' option controls JSON spec version (RFC7159, ECMA-404, etc.)
-            // Accepted but not yet enforced — we always parse per RFC 7159
-            final Sequence specOpt = options.get(new StringValue("spec"));
-            // (no validation needed — all spec values are accepted)
-
-            // Validate liberal option — must be boolean
+            // --- liberal option (xs:boolean) ---
             final Sequence liberalOpt = options.get(new StringValue(OPTION_LIBERAL));
             if (liberalOpt != null && liberalOpt.hasOne()) {
                 final Item liberalItem = liberalOpt.itemAt(0);
                 if (liberalItem.getType() != Type.BOOLEAN) {
-                    // Try to convert; if the value is a non-boolean string, reject
-                    if (Type.subTypeOf(liberalItem.getType(), Type.STRING)) {
-                        final String val = liberalItem.getStringValue();
-                        if (!"true".equals(val) && !"false".equals(val) && !"1".equals(val) && !"0".equals(val)) {
-                            throw new XPathException(this, ErrorCodes.XPTY0004,
-                                    "Option 'liberal' must be a boolean, got: " + val);
-                        }
-                    }
-                    liberal = liberalItem.convertTo(Type.BOOLEAN).effectiveBooleanValue();
-                } else {
-                    liberal = liberalItem.convertTo(Type.BOOLEAN).effectiveBooleanValue();
+                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                            "Option 'liberal' must be a boolean, got " + Type.getTypeName(liberalItem.getType()));
                 }
+                liberal = ((BooleanValue) liberalItem).effectiveBooleanValue();
             }
 
-            // Validate duplicates option
+            // --- duplicates option (xs:string) ---
             final Sequence duplicateOpt = options.get(new StringValue(OPTION_DUPLICATES));
             if (duplicateOpt != null && duplicateOpt.hasOne()) {
                 handleDuplicates = duplicateOpt.itemAt(0).getStringValue();
                 if (!OPTION_DUPLICATES_USE_FIRST.equals(handleDuplicates)
                         && !OPTION_DUPLICATES_USE_LAST.equals(handleDuplicates)
                         && !OPTION_DUPLICATES_REJECT.equals(handleDuplicates)) {
-                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                    throw new XPathException(this, ErrorCodes.FOJS0005,
                             "Invalid value for 'duplicates' option: " + handleDuplicates);
                 }
             }
 
-            // Validate fallback option — must be a function with arity 1
+            // --- fallback option (function($s as xs:string) as xs:string) ---
             final Sequence fallbackOpt = options.get(new StringValue("fallback"));
             if (fallbackOpt != null && fallbackOpt.hasOne()) {
                 final Item fallbackItem = fallbackOpt.itemAt(0);
                 if (!(fallbackItem instanceof FunctionReference)) {
                     throw new XPathException(this, ErrorCodes.XPTY0004,
-                            "Option 'fallback' must be a function, got: " + Type.getTypeName(fallbackItem.getType()));
+                            "Option 'fallback' must be a function, got " + Type.getTypeName(fallbackItem.getType()));
+                }
+                fallbackFn = (FunctionReference) fallbackItem;
+                if (fallbackFn.getSignature().getArgumentCount() != 1) {
+                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                            "Option 'fallback' function must have arity 1, got " + fallbackFn.getSignature().getArgumentCount());
                 }
             }
 
-            // Validate number-parser option — must be a function
+            // --- number-parser option (function($s as xs:string) as xs:anyAtomicType?) ---
             final Sequence numberParserOpt = options.get(new StringValue("number-parser"));
             if (numberParserOpt != null && numberParserOpt.hasOne()) {
                 final Item npItem = numberParserOpt.itemAt(0);
                 if (!(npItem instanceof FunctionReference)) {
                     throw new XPathException(this, ErrorCodes.XPTY0004,
-                            "Option 'number-parser' must be a function, got: " + Type.getTypeName(npItem.getType()));
+                            "Option 'number-parser' must be a function, got " + Type.getTypeName(npItem.getType()));
+                }
+                numberParserFn = (FunctionReference) npItem;
+            }
+
+            // --- null option (any value to represent JSON null) ---
+            if (options.contains(new StringValue(OPTION_NULL))) {
+                nullValue = options.get(new StringValue(OPTION_NULL));
+            }
+
+            // --- reject unknown options (per-function) ---
+            final java.util.Set<String> knownOptions;
+            if (isCalledAs(FS_JSON_TO_XML_NAME)) {
+                knownOptions = java.util.Set.of(OPTION_LIBERAL, OPTION_DUPLICATES, "escape", "validate");
+            } else {
+                knownOptions = java.util.Set.of(OPTION_LIBERAL, OPTION_DUPLICATES, "fallback", "number-parser", OPTION_NULL);
+            }
+            for (final io.lacuna.bifurcan.IEntry<AtomicValue, Sequence> entry : options) {
+                final String key = entry.key().getStringValue();
+                if (!knownOptions.contains(key)) {
+                    throw new XPathException(this, ErrorCodes.XPTY0004,
+                            "Unknown option '" + key + "' for " + getSignature().getName().getLocalPart());
                 }
             }
         }
@@ -192,7 +203,7 @@ public class JSON extends BasicFunction {
         JsonFactory factory = createJsonFactory(liberal);
 
         if (isCalledAs(FS_PARSE_JSON_NAME)) {
-            return parse(args[0], handleDuplicates, factory);
+            return parse(args[0], handleDuplicates, factory, numberParserFn, nullValue);
         }  else if (isCalledAs(FS_JSON_TO_XML_NAME)) {
             return toxml(args[0], handleDuplicates, factory);
         } else {
@@ -223,13 +234,21 @@ public class JSON extends BasicFunction {
         return factory;
     }
 
-    private Sequence parse(Sequence json, String handleDuplicates, JsonFactory factory) throws XPathException {
+    private Sequence parse(Sequence json, String handleDuplicates, JsonFactory factory,
+                           FunctionReference numberParserFn, Sequence nullValue) throws XPathException {
         if (json.isEmpty()) {
             return Sequence.EMPTY_SEQUENCE;
         }
-        try (final JsonParser parser = factory.createParser(json.itemAt(0).getStringValue())) {
-            final Item result = readValue(context, parser, handleDuplicates);
-            return result == null ? Sequence.EMPTY_SEQUENCE : result.toSequence();
+        final String jsonStr = json.itemAt(0).getStringValue();
+        if (jsonStr.isEmpty()) {
+            throw new XPathException(this, ErrorCodes.FOJS0001, "JSON syntax error: empty string");
+        }
+        try (final JsonParser parser = factory.createParser(jsonStr)) {
+            final Item result = readValue(context, parser, handleDuplicates, numberParserFn, nullValue);
+            if (result == null) {
+                return nullValue != null ? nullValue : Sequence.EMPTY_SEQUENCE;
+            }
+            return result.toSequence();
         } catch (IOException e) {
             throw new XPathException(this, ErrorCodes.FOJS0001, e.getMessage());
         } catch (XPathException e) {
@@ -364,24 +383,32 @@ public class JSON extends BasicFunction {
      * @throws XPathException in case of dynamic error
      */
     public static Item readValue(XQueryContext context, JsonParser parser, String handleDuplicates) throws IOException, XPathException {
-        return readValue(context, parser, null, handleDuplicates);
+        return readValue(context, parser, null, handleDuplicates, null, null);
     }
 
-    private static Item readValue(XQueryContext context, JsonParser parser, Item parent, String handleDuplicates) throws IOException, XPathException {
+    public static Item readValue(XQueryContext context, JsonParser parser, String handleDuplicates,
+                                  FunctionReference numberParserFn, Sequence nullValue) throws IOException, XPathException {
+        return readValue(context, parser, null, handleDuplicates, numberParserFn, nullValue);
+    }
+
+    private static Item readValue(XQueryContext context, JsonParser parser, Item parent, String handleDuplicates,
+                                   FunctionReference numberParserFn, Sequence nullValue) throws IOException, XPathException {
         JsonToken token;
         Item next = null;
+        boolean isJsonNull;
         while ((token = parser.nextValue()) != null) {
+            isJsonNull = false;
             if (token == JsonToken.END_OBJECT || token == JsonToken.END_ARRAY) {
                 return parent;
             }
             switch (token) {
                 case START_OBJECT:
                     next = new MapType(null, context, null);
-                    readValue(context, parser, next, handleDuplicates);
+                    readValue(context, parser, next, handleDuplicates, numberParserFn, nullValue);
                     break;
                 case START_ARRAY:
                     next = new ArrayType(null, context, Sequence.EMPTY_SEQUENCE);
-                    readValue(context, parser, next, handleDuplicates);
+                    readValue(context, parser, next, handleDuplicates, numberParserFn, nullValue);
                     break;
                 case VALUE_FALSE:
                     next = BooleanValue.FALSE;
@@ -390,29 +417,51 @@ public class JSON extends BasicFunction {
                     next = BooleanValue.TRUE;
                     break;
                 case VALUE_NUMBER_FLOAT:
-                    // JSON fractional numbers → xs:double
-                    next = new StringValue(parser.getText()).convertTo(Type.DOUBLE);
-                    break;
                 case VALUE_NUMBER_INT:
-                    // XQuery 4.0: JSON integers → xs:integer (was xs:double in 3.1)
-                    try {
-                        next = new IntegerValue(parser.getLongValue());
-                    } catch (final Exception e) {
-                        // Fallback to double for very large integers
+                    if (numberParserFn != null) {
+                        final Sequence numResult = numberParserFn.evalFunction(null, null,
+                                new Sequence[]{new StringValue(parser.getText())});
+                        if (numResult.isEmpty()) {
+                            next = null;
+                        } else if (numResult.getItemCount() > 1) {
+                            throw new XPathException((Expression) null, ErrorCodes.XPTY0004,
+                                    "number-parser function must return zero or one item, got " + numResult.getItemCount());
+                        } else {
+                            next = numResult.itemAt(0);
+                        }
+                    } else if (token == JsonToken.VALUE_NUMBER_INT) {
+                        // XQuery 4.0: JSON integers → xs:integer (was xs:double in 3.1)
+                        try {
+                            next = new IntegerValue(parser.getLongValue());
+                        } catch (final Exception e) {
+                            next = new StringValue(parser.getText()).convertTo(Type.DOUBLE);
+                        }
+                    } else {
+                        // JSON fractional numbers → xs:double
                         next = new StringValue(parser.getText()).convertTo(Type.DOUBLE);
                     }
                     break;
                 case VALUE_NULL:
                     next = null;
+                    isJsonNull = true;
                     break;
                 default:
                     next = new StringValue(parser.getText());
                     break;
             }
             if (parent != null) {
+                final Sequence valueToStore;
+                if (isJsonNull && nullValue != null) {
+                    valueToStore = nullValue;
+                } else if (next == null) {
+                    valueToStore = Sequence.EMPTY_SEQUENCE;
+                } else {
+                    valueToStore = next.toSequence();
+                }
+
                 switch (parent.getType()) {
                     case Type.ARRAY_ITEM:
-                        ((ArrayType)parent).add(next == null ? Sequence.EMPTY_SEQUENCE : next.toSequence());
+                        ((ArrayType) parent).add(valueToStore);
                         break;
                     case Type.MAP_ITEM:
                         final String currentName = parser.getCurrentName();
@@ -422,15 +471,14 @@ public class JSON extends BasicFunction {
                         final StringValue name = new StringValue(currentName);
                         final MapType map = (MapType) parent;
                         if (map.contains(name)) {
-                            // handle duplicate keys
                             if (handleDuplicates.equals(OPTION_DUPLICATES_REJECT)) {
                                 throw new XPathException(map.getExpression(), ErrorCodes.FOJS0003, "Duplicate key: " + currentName);
                             }
                             if (handleDuplicates.equals(OPTION_DUPLICATES_USE_LAST)) {
-                                map.add(name, next == null ? Sequence.EMPTY_SEQUENCE : next.toSequence());
+                                map.add(name, valueToStore);
                             }
                         } else {
-                            map.add(name, next == null ? Sequence.EMPTY_SEQUENCE : next.toSequence());
+                            map.add(name, valueToStore);
                         }
                         break;
                 }
