@@ -146,6 +146,14 @@ public class CsvParser {
                             state = 3; // after closing quote
                             i += cpLen;
                         }
+                    } else if (cp == '\r') {
+                        // Normalize CR and CRLF to LF within quoted fields (per XQ4 spec)
+                        field.append('\n');
+                        if (i + 1 < len && input.charAt(i + 1) == '\n') {
+                            i += 2; // skip CRLF
+                        } else {
+                            i += 1; // skip CR
+                        }
                     } else {
                         field.appendCodePoint(cp);
                         i += cpLen;
