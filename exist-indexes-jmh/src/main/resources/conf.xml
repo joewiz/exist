@@ -526,6 +526,9 @@
             <module id="ngram-index" file="ngram.dbx" n="3" class="org.exist.indexing.ngram.NGramIndex"/>
             <module id="lucene-index" buffer="32" class="org.exist.indexing.lucene.LuceneIndex"/>
             <module id="range-index" class="org.exist.indexing.range.RangeIndex"/>
+            <module id="spatial-index" class="org.exist.indexing.spatial.GMLHSQLIndex"
+                    connectionTimeout="100000" max_docs_in_context_to_refine_query="10"
+                    flushAfter="-1"/>
 
         </modules>
 
@@ -893,6 +896,7 @@
             <module uri="http://exist-db.org/xquery/ngram"  class="org.exist.xquery.modules.ngram.NGramModule" />
             <module uri="http://exist-db.org/xquery/range"  class="org.exist.xquery.modules.range.RangeIndexModule" />
             <module uri="http://exist-db.org/xquery/lucene" class="org.exist.xquery.modules.lucene.LuceneModule" />
+            <module uri="http://exist-db.org/xquery/spatial" class="org.exist.xquery.modules.spatial.SpatialModule" />
 
             <!-- dependencies needed for tests -->
             <module uri="http://exist-db.org/xquery/securitymanager" class="org.exist.xquery.functions.securitymanager.SecurityManagerModule"/>
