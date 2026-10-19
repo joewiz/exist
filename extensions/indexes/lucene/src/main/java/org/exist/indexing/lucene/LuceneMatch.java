@@ -40,6 +40,20 @@ public class LuceneMatch extends Match {
 
     private final LuceneIndexWorker.LuceneFacets facets;
 
+    /** The chunk of a chunked vector field that matched, or null if the match is not of a chunk. */
+    @Nullable private Chunk chunk = null;
+
+    /**
+     * The chunk of a node's text that a query of a chunked vector field matched.
+     *
+     * @param field the vector field
+     * @param number the chunk's position among the node's chunks, from 0
+     * @param start the offset of its first character in the node's chunked text
+     * @param end the offset after its last character
+     */
+    public record Chunk(String field, int number, int start, int end) {
+    }
+
     LuceneMatch(final int contextId, final int luceneDocId, final NodeId nodeId, final Query query, final LuceneIndexWorker.LuceneFacets facets) {
         super(contextId, nodeId, null);
         this.luceneDocId = luceneDocId;
@@ -53,6 +67,7 @@ public class LuceneMatch extends Match {
         this.luceneDocId = copy.luceneDocId;
         this.query = copy.query;
         this.facets = copy.facets;
+        this.chunk = copy.chunk;
     }
 
     @Override
@@ -84,6 +99,18 @@ public class LuceneMatch extends Match {
 
     protected void setScore(final float score) {
         this.score = score;
+    }
+
+    /**
+     * @return the chunk that matched, or null if the match is not of a chunk of a chunked vector field
+     */
+    @Nullable
+    public Chunk getChunk() {
+        return chunk;
+    }
+
+    void setChunk(@Nullable final Chunk chunk) {
+        this.chunk = chunk;
     }
 
     public Facets getFacets() {

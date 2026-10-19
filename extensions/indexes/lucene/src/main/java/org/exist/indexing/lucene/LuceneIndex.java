@@ -51,6 +51,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
@@ -239,6 +240,20 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
      */
     public void addDocument(final IndexWriter writer, final Iterable<? extends IndexableField> document, final Map<String, Analyzer> analyzers) throws IOException {
         fieldAnalyzerWrapper.withAnalyzers(analyzers, () -> writer.addDocument(document));
+    }
+
+    /**
+     * Adds documents as one block, which Lucene keeps together through deletes and merges, with the given analyzers
+     * for their fields, as {@link #addDocument} does.
+     *
+     * @param writer the index writer
+     * @param documents the documents, a block's child documents first and its parent last
+     * @param analyzers the analyzer of each field that has one of its own
+     *
+     * @throws IOException if the documents cannot be added
+     */
+    public void addDocuments(final IndexWriter writer, final List<? extends Iterable<? extends IndexableField>> documents, final Map<String, Analyzer> analyzers) throws IOException {
+        fieldAnalyzerWrapper.withAnalyzers(analyzers, () -> writer.addDocuments(documents));
     }
 
     public IndexWriter getWriter() throws IOException {
