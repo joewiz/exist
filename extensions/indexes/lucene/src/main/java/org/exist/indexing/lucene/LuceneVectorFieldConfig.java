@@ -76,6 +76,8 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     private static final String EMBEDDING_LOCAL = "local";
     private static final String EMBEDDING_HTTP = "http";
     private static final String VECTOR_STORE_DB = "db";
+    private static final String ATTR_QUANTIZE = "quantize";
+    private static final String QUANTIZE_INT8 = "int8";
     private static final String ATTR_CHUNK = "chunk";
     private static final String ATTR_CHUNK_SIZE = "chunk-size";
     private static final String ATTR_CHUNK_OVERLAP = "chunk-overlap";
@@ -156,6 +158,14 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         } else {
             modelId = null;
             modelPathOrUrl = null;
+        }
+
+        final String quantize = configElement.getAttribute(ATTR_QUANTIZE);
+        if (QUANTIZE_INT8.equals(quantize)) {
+            LuceneIndex.INT8_VECTOR_FIELDS.add(fieldName);
+        } else if (!quantize.isEmpty() && !"none".equals(quantize)) {
+            throw new org.exist.util.DatabaseConfigurationException(
+                    "vector-field '" + fieldName + "': attribute 'quantize' must be 'int8' or 'none', got '" + quantize + "'");
         }
 
         final String chunk = configElement.getAttribute(ATTR_CHUNK);
