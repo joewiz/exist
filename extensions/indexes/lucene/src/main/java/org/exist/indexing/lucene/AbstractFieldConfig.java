@@ -63,16 +63,12 @@ public abstract class AbstractFieldConfig {
     protected static final Logger LOG = LogManager.getLogger(AbstractFieldConfig.class);
 
     protected final Optional<String> expression;
+    /** The namespace declarations and module imports of the configuration, to prefix other expressions with. */
+    protected final String prolog;
     protected boolean isValid = true;
     private CompiledXQuery compiled = null;
 
     public AbstractFieldConfig(final LuceneConfig config, final Element configElement, final Map<String, String> namespaces) {
-        final String xpath = configElement.getAttribute(XPATH_ATTR);
-        if (xpath.isEmpty()) {
-            expression = Optional.empty();
-            return;
-        }
-
         final StringBuilder sb = new StringBuilder();
         namespaces.forEach((prefix, uri) -> {
             if (!"xml".equals(prefix)) {
@@ -89,9 +85,10 @@ public abstract class AbstractFieldConfig {
             sb.append(moduleImport.at);
             sb.append("\";\n");
         })));
-        sb.append(xpath);
+        prolog = sb.toString();
 
-        expression = Optional.of(sb.toString());
+        final String xpath = configElement.getAttribute(XPATH_ATTR);
+        expression = xpath.isEmpty() ? Optional.empty() : Optional.of(prolog + xpath);
     }
 
     @Nullable

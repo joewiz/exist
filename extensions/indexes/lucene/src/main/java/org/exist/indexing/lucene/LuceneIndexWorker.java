@@ -143,6 +143,22 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     /** The most candidates a vector query considers: the largest {@code candidates} option allowed. */
     public static final int MAX_VECTOR_CANDIDATES = 10_000;
 
+    /**
+     * Marks the Lucene documents of a node with chunked vector fields: the node's own document is the parent of a block
+     * that has a chunk document before it for each chunk of its text, see {@link LuceneVectorFieldConfig#chunk}.
+     */
+    static final String FIELD_BLOCK_ROLE = "exist.block";
+    static final String BLOCK_PARENT = "parent";
+    static final String BLOCK_CHUNK = "chunk";
+    /** The position of a chunk among its node's chunks, from 0. */
+    static final String FIELD_CHUNK_NUMBER = "exist.chunk.number";
+    /** The offsets of a chunk in its node's chunked text. */
+    static final String FIELD_CHUNK_START = "exist.chunk.start";
+    static final String FIELD_CHUNK_END = "exist.chunk.end";
+
+    private static final org.apache.lucene.search.join.BitSetProducer CHUNK_PARENTS =
+            new org.apache.lucene.search.join.QueryBitSetProducer(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_PARENT)));
+
     private final StreamListener listener = new LuceneStreamListener();
 
     public LuceneIndexWorker(LuceneIndex parent, DBBroker broker) {
@@ -907,7 +923,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         final LuceneFacets facets = new LuceneFacets();
         final FacetsCollector facetsCollector = new FacetsCollector();
         final LuceneHitCollector collector = new LuceneHitCollector(qname, query, docs, contextSet, resultSet, returnAncestor, contextId, facets, facetsCollector);
-        searcher.searcher().search(query, collector);
+        searcher.searcher().search(selectsChunks(query) ? query : excludeChunks(query), collector);
 
         // compute facets (skip if config or taxonomy missing)
         if (facetsConfig != null && searcher.taxonomyReader() != null) {
@@ -1019,11 +1035,17 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 // no configuration defines the field: nothing to find, as ft:query-field finds nothing in an unknown field
                 return resultSet;
             }
-            final Query filterQuery = inContext(buildVectorFilterQuery(options, defining), field, docs, within);
             final int candidates = vectorCandidates(k, options);
-            final KnnFloatVectorQuery baseQuery = filterQuery != null
-                    ? new KnnFloatVectorQuery(field, vector, candidates, filterQuery)
-                    : new KnnFloatVectorQuery(field, vector, candidates);
+            final KnnFloatVectorQuery baseQuery;
+            if (isChunked(defining, field)) {
+                baseQuery = chunkedVectorQuery(field, vector, candidates, buildVectorFilterQuery(options, defining),
+                        null, docs, within);
+            } else {
+                final Query filterQuery = inContext(buildVectorFilterQuery(options, defining), field, docs, within);
+                baseQuery = filterQuery != null
+                        ? new KnnFloatVectorQuery(field, vector, candidates, filterQuery)
+                        : new KnnFloatVectorQuery(field, vector, candidates);
+            }
             searchVectorAndProcess(contextId, null, docs, contextSet, resultSet,
                     searcher, baseQuery, configs.facetsConfig(), k);
             return resultSet;
@@ -1067,11 +1089,17 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 final String indexField = LuceneUtil.encodeQName(qname, index.getBrokerPool().getSymbols());
                 for (final Map.Entry<String, List<LuceneConfigs.Group>> vectorField : getVectorFields(configs, qname).entrySet()) {
                     final String field = vectorField.getKey();
-                    // the index type is part of the filter, so that the candidates are all of this qname's index
-                    final Query filterQuery = inContext(withIndexType(buildVectorFilterQuery(options, vectorField.getValue()), indexField),
-                            field, docs, within);
                     final int candidates = vectorCandidates(k, options);
-                    final KnnFloatVectorQuery vectorQuery = new KnnFloatVectorQuery(field, vector, candidates, filterQuery);
+                    final KnnFloatVectorQuery vectorQuery;
+                    if (isChunked(vectorField.getValue(), field)) {
+                        vectorQuery = chunkedVectorQuery(field, vector, candidates,
+                                buildVectorFilterQuery(options, vectorField.getValue()), indexField, docs, within);
+                    } else {
+                        // the index type is part of the filter, so that the candidates are all of this qname's index
+                        final Query filterQuery = inContext(withIndexType(buildVectorFilterQuery(options, vectorField.getValue()), indexField),
+                                field, docs, within);
+                        vectorQuery = new KnnFloatVectorQuery(field, vector, candidates, filterQuery);
+                    }
                     searchVectorAndProcess(contextId, qname, docs, contextSet, resultSet,
                             searcher, vectorQuery, configs.facetsConfig(), k);
                 }
@@ -1678,6 +1706,100 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return null;
     }
 
+    /**
+     * Whether a query selects the chunk documents of a chunked vector field, which all other queries must not see.
+     */
+    /** The vector field of a chunked vector field's query. */
+    private static String chunkField(final Query query) {
+        if (query instanceof org.apache.lucene.search.join.DiversifyingChildrenFloatKnnVectorQuery vectorQuery) {
+            return vectorQuery.getField();
+        }
+        if (query instanceof BooleanQuery booleanQuery) {
+            for (final BooleanClause clause : booleanQuery.clauses()) {
+                if (selectsChunks(clause.query())) {
+                    return chunkField(clause.query());
+                }
+            }
+        }
+        return "";
+    }
+
+    private static boolean selectsChunks(final Query query) {
+        if (query instanceof org.apache.lucene.search.join.DiversifyingChildrenFloatKnnVectorQuery) {
+            return true;
+        }
+        if (query instanceof BooleanQuery booleanQuery) {
+            for (final BooleanClause clause : booleanQuery.clauses()) {
+                if (clause.occur() == BooleanClause.Occur.MUST && selectsChunks(clause.query())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Keeps a query from matching the chunk documents of chunked vector fields, which carry the node's identity but
+     * none of its other fields.
+     */
+    private static Query excludeChunks(final Query query) {
+        return new BooleanQuery.Builder()
+                .add(query, BooleanClause.Occur.MUST)
+                .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_CHUNK)), BooleanClause.Occur.MUST_NOT)
+                .build();
+    }
+
+    /**
+     * The query of a chunked vector field: the nearest chunks, at most one per node, each node scored by its best
+     * chunk. The options' filters are on the nodes' own documents; the documents filter also matches the chunks.
+     */
+    /**
+     * A vector query of a chunked field: the best chunk of each node, for the {@code k} best nodes. The filter applies
+     * to the nodes' own documents, which have the node's fields and facets, and through them to their chunks; the
+     * chunks are also restricted to a qname's index and to the nodes the search looks among.
+     */
+    private KnnFloatVectorQuery chunkedVectorQuery(final String field, final float[] vector, final int k,
+            @Nullable final Query nodeFilter, @Nullable final String indexType, final DocumentSet docs,
+            @Nullable final NodeSet within) {
+        final List<Query> chunkFilters = new ArrayList<>(2);
+        if (nodeFilter != null) {
+            chunkFilters.add(new org.apache.lucene.search.join.ToChildBlockJoinQuery(new BooleanQuery.Builder()
+                    .add(nodeFilter, BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_PARENT)), BooleanClause.Occur.FILTER)
+                    .build(), CHUNK_PARENTS));
+        }
+        if (indexType != null) {
+            chunkFilters.add(new TermQuery(new Term(LuceneUtil.FIELD_INDEX_TYPE, indexType)));
+        }
+        final Query chunkFilter = inContext(combineFilters(chunkFilters), field, docs, within);
+        return new org.apache.lucene.search.join.DiversifyingChildrenFloatKnnVectorQuery(
+                field, vector, chunkFilter, k, CHUNK_PARENTS);
+    }
+
+    /** Whether one of the configurations defines the field as a chunked vector field. */
+    private static boolean isChunked(final List<LuceneConfigs.Group> defining, final String field) {
+        for (final LuceneConfigs.Group group : defining) {
+            if (findChunkedVectorField(group.config(), field) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Nullable
+    private static LuceneVectorFieldConfig findChunkedVectorField(@Nullable final LuceneConfig config, final String field) {
+        if (config == null) {
+            return null;
+        }
+        for (final LuceneIndexConfig idxConf : config.getIndexConfigurations()) {
+            final LuceneVectorFieldConfig vectorField = findVectorField(idxConf, field);
+            if (vectorField != null && vectorField.isChunked()) {
+                return vectorField;
+            }
+        }
+        return null;
+    }
+
     private static Query docIdAndNodeIdQuery(final int existDocId, final NodeId nodeId) {
         final int nodeIdLen = nodeId.size();
         final byte[] data = new byte[nodeIdLen + 2];
@@ -1687,6 +1809,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return new BooleanQuery.Builder()
             .add(IntField.newExactQuery(LuceneIndexWorker.FIELD_DOC_ID, existDocId), BooleanClause.Occur.MUST)
             .add(new TermQuery(nodeTerm), BooleanClause.Occur.MUST)
+            .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_CHUNK)), BooleanClause.Occur.MUST_NOT)
             .build();
     }
 
@@ -1781,6 +1904,10 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             private Scorable scorer;
             private SortedNumericDocValues docIdValues;
             private BinaryDocValues nodeIdValues;
+            // set on the chunk documents of chunked vector fields only
+            @Nullable private final NumericDocValues chunkNumbers;
+            @Nullable private final NumericDocValues chunkStarts;
+            @Nullable private final NumericDocValues chunkEnds;
 
             public LuceneHitLeafCollector(LeafReaderContext context, LeafCollector chainedLeafCollector) throws IOException {
                 this.reader = context.reader();
@@ -1788,6 +1915,9 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 this.chainedLeafCollector = chainedLeafCollector;
                 this.docIdValues = reader.getSortedNumericDocValues(FIELD_DOC_ID);
                 this.nodeIdValues = reader.getBinaryDocValues(LuceneUtil.FIELD_NODE_ID_DV);
+                this.chunkNumbers = reader.getNumericDocValues(FIELD_CHUNK_NUMBER);
+                this.chunkStarts = reader.getNumericDocValues(FIELD_CHUNK_START);
+                this.chunkEnds = reader.getNumericDocValues(FIELD_CHUNK_END);
             }
 
             @Override
@@ -1878,11 +2008,18 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
             }
 
-            private LuceneMatch createMatch(final int docId, final float score, final NodeId nodeId, final int docBase, final int existDocId) {
+            private LuceneMatch createMatch(final int docId, final float score, final NodeId nodeId, final int docBase,
+                    final int existDocId) throws IOException {
                 // over collections configured differently, the match keeps the query of its document's configuration
                 final Query matchQuery = query instanceof PerConfigQuery perConfig ? perConfig.forDocument(existDocId) : query;
                 final LuceneMatch match = new LuceneMatch(contextId, docId + docBase, nodeId, matchQuery, facets);
                 match.setScore(score);
+                if (chunkNumbers != null && chunkNumbers.advanceExact(docId)
+                        && chunkStarts != null && chunkStarts.advanceExact(docId)
+                        && chunkEnds != null && chunkEnds.advanceExact(docId)) {
+                    match.setChunk(new LuceneMatch.Chunk(chunkField(query), (int) chunkNumbers.longValue(),
+                            (int) chunkStarts.longValue(), (int) chunkEnds.longValue()));
+                }
                 return match;
             }
         }
@@ -2298,6 +2435,88 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     private record PendingAttr(AttrImpl attr, NodePath path, LuceneIndexConfig conf) {
     }
     
+    /**
+     * Adds the fields that identify the node to one of its Lucene documents: its document's id and its node id, by
+     * which it is found, deleted and resolved to a node.
+     */
+    private void addNodeIdentity(final Document doc, final NodeId nodeId) {
+        // new field instances per doc to avoid shared mutable state
+        final byte[] data = new byte[nodeId.size() + 2];
+        ByteConversion.shortToByteH((short) nodeId.units(), data, 0);
+        nodeId.serialize(data, 2);
+        doc.add(new BinaryDocValuesField(LuceneUtil.FIELD_NODE_ID_DV, new BytesRef(data)));
+        // add separate index for node id (FIELD_NODE_ID for Term queries)
+        doc.add(new Field(LuceneUtil.FIELD_NODE_ID, new BinaryTokenStream(new BytesRef(data)), TYPE_NODE_ID));
+
+        doc.add(new IntField(FIELD_DOC_ID, currentDoc.getDocId(), Field.Store.NO));
+        doc.add(new StringField(FIELD_DOC_ID_KEYWORD, Integer.toString(currentDoc.getDocId()), Field.Store.NO));
+        doc.add(new SortedNumericDocValuesField(FIELD_DOC_ID, currentDoc.getDocId()));
+        doc.add(new StoredField(FIELD_DOC_ID, currentDoc.getDocId()));
+    }
+
+    private String indexTypeOf(final PendingDoc pending) {
+        return pending.idxConf.isNamed()
+                ? pending.idxConf.getName()
+                : LuceneUtil.encodeQName(pending.qname, index.getBrokerPool().getSymbols());
+    }
+
+    private record PendingChunks(PendingDoc pending, LuceneVectorFieldConfig.ChunkedText chunked) {
+    }
+
+    /**
+     * Builds the chunk documents of the pending nodes' chunked vector fields. The chunks of all the nodes are embedded
+     * together, in batches, which is much faster than one at a time.
+     *
+     * @return the chunk documents of each pending node that has any
+     */
+    private Map<PendingDoc, List<Document>> buildChunkDocuments() {
+        final Map<LuceneVectorFieldConfig, List<PendingChunks>> byField = new IdentityHashMap<>();
+        for (final PendingDoc pending : nodesToWrite) {
+            for (final AbstractFieldConfig config : pending.idxConf.getFacetsAndFields()) {
+                if (config instanceof LuceneVectorFieldConfig vectorField && vectorField.isChunked()) {
+                    final short nodeType = pending.qname.getNameType() == ElementValue.ATTRIBUTE
+                            ? Node.ATTRIBUTE_NODE : Node.ELEMENT_NODE;
+                    final LuceneVectorFieldConfig.ChunkedText chunked =
+                            vectorField.chunk(broker, new NodeProxy(null, currentDoc, pending.nodeId, nodeType));
+                    if (!chunked.chunks().isEmpty()) {
+                        byField.computeIfAbsent(vectorField, k -> new ArrayList<>()).add(new PendingChunks(pending, chunked));
+                    }
+                }
+            }
+        }
+        if (byField.isEmpty()) {
+            return Map.of();
+        }
+
+        final Map<PendingDoc, List<Document>> chunkDocuments = new IdentityHashMap<>();
+        byField.forEach((vectorField, pendingChunks) -> {
+            final List<String> texts = new ArrayList<>();
+            pendingChunks.forEach(p -> texts.addAll(p.chunked().embedTexts()));
+            final List<float[]> vectors = vectorField.embedAll(texts);
+            int v = 0;
+            for (final PendingChunks p : pendingChunks) {
+                final String indexType = indexTypeOf(p.pending());
+                final List<VectorChunker.Chunk> chunks = p.chunked().chunks();
+                for (int c = 0; c < chunks.size(); c++, v++) {
+                    final float[] vector = vectors.get(v);
+                    if (vector == null || vector.length != vectorField.getDimension()) {
+                        continue;
+                    }
+                    final Document chunkDoc = new Document();
+                    chunkDoc.add(new KnnFloatVectorField(vectorField.getName(), vector, vectorField.getSimilarity()));
+                    chunkDoc.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_CHUNK, Field.Store.NO));
+                    chunkDoc.add(new StringField(LuceneUtil.FIELD_INDEX_TYPE, indexType, Field.Store.NO));
+                    addNodeIdentity(chunkDoc, p.pending().nodeId);
+                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_NUMBER, c));
+                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_START, chunks.get(c).start()));
+                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_END, chunks.get(c).end()));
+                    chunkDocuments.computeIfAbsent(p.pending(), k -> new ArrayList<>()).add(chunkDoc);
+                }
+            }
+        });
+        return chunkDocuments;
+    }
+
     private void write() {
         if (nodesToWrite == null || nodesToWrite.isEmpty() || !canFlush) {
             return;
@@ -2319,6 +2538,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             // docId also needs to be indexed. IntField in Lucene 10+ also provides doc values.
             // Create new field instances per doc to avoid shared mutable state (fixes vector search returning wrong nodeIds).
 
+            final Map<PendingDoc, List<Document>> chunkDocuments = buildChunkDocuments();
             for (final PendingDoc pending : nodesToWrite) {
                 final Document doc = new Document();
 
@@ -2352,17 +2572,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     }
                 }
 
-                // store the node id (new field per doc to avoid shared mutable state)
-                int nodeIdLen = pending.nodeId.size();
-                byte[] data = new byte[nodeIdLen + 2];
-                ByteConversion.shortToByteH((short) pending.nodeId.units(), data, 0);
-                pending.nodeId.serialize(data, 2);
-                doc.add(new BinaryDocValuesField(LuceneUtil.FIELD_NODE_ID_DV, new BytesRef(data)));
-
-                // add separate index for node id (FIELD_NODE_ID for Term queries)
-                BinaryTokenStream bts = new BinaryTokenStream(new BytesRef(data));
-                Field fNodeIdIdx = new Field(LuceneUtil.FIELD_NODE_ID, bts, TYPE_NODE_ID);
-                doc.add(fNodeIdIdx);
+                addNodeIdentity(doc, pending.nodeId);
 
                 String contentField = null;
                 final boolean indexFulltext = scope != ReindexScope.VECTOR && pending.idxConf.doIndex();
@@ -2384,11 +2594,6 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
                 doc.add(new StringField(LuceneUtil.FIELD_INDEX_TYPE, contentField, Field.Store.NO));
 
-                doc.add(new IntField(FIELD_DOC_ID, currentDoc.getDocId(), Field.Store.NO));
-                doc.add(new StringField(FIELD_DOC_ID_KEYWORD, Integer.toString(currentDoc.getDocId()), Field.Store.NO));
-                doc.add(new SortedNumericDocValuesField(FIELD_DOC_ID, currentDoc.getDocId()));
-                doc.add(new StoredField(FIELD_DOC_ID, currentDoc.getDocId()));
-
                 final float boostVal = pending.boost > 0 ? pending.boost : 1.0f;
                 doc.add(new FloatDocValuesField(LuceneUtil.FIELD_BOOST, boostVal));
 
@@ -2397,7 +2602,18 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     index.addFieldAnalyzer(contentField, customAnalyzer);
                     documentAnalyzers.put(contentField, customAnalyzer);
                 }
-                index.addDocument(writer, pending.idxConf.getParent().facetsConfig.build(index.getTaxonomyWriter(), doc), documentAnalyzers);
+                final Document built = pending.idxConf.getParent().facetsConfig.build(index.getTaxonomyWriter(), doc);
+                final List<Document> chunks = chunkDocuments.get(pending);
+                if (chunks == null) {
+                    index.addDocument(writer, built, documentAnalyzers);
+                } else {
+                    // one block, the chunks first and the node's document last, which deletes and merges keep together
+                    built.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_PARENT, Field.Store.NO));
+                    final List<Document> block = new ArrayList<>(chunks.size() + 1);
+                    block.addAll(chunks);
+                    block.add(built);
+                    index.addDocuments(writer, block, documentAnalyzers);
+                }
 	        }
         } catch (final IOException e) {
             LOG.warn("An exception was caught while indexing document: {}", e.getMessage(), e);

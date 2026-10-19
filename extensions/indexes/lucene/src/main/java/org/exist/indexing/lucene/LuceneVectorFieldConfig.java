@@ -33,6 +33,7 @@ import org.exist.numbering.NodeId;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.DBBroker;
 import org.exist.storage.vector.VectorStore;
+import org.exist.xquery.CompiledXQuery;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.value.Sequence;
 import org.exist.xquery.value.SequenceIterator;
@@ -75,6 +76,19 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     private static final String EMBEDDING_LOCAL = "local";
     private static final String EMBEDDING_HTTP = "http";
     private static final String VECTOR_STORE_DB = "db";
+    private static final String ATTR_CHUNK = "chunk";
+    private static final String ATTR_CHUNK_SIZE = "chunk-size";
+    private static final String ATTR_CHUNK_OVERLAP = "chunk-overlap";
+    private static final String ATTR_CHUNK_UNITS = "chunk-units";
+    private static final String ATTR_CHUNK_CONTEXT = "chunk-context";
+    private static final String CHUNK_TOKENS = "tokens";
+    private static final String DEFAULT_CHUNK_UNITS = "node()";
+    /** The tokens a model is assumed to read when its provider doesn't say. */
+    private static final int DEFAULT_MAX_TOKENS = 128;
+    /** The special tokens a model adds to a text, e.g. [CLS] and [SEP]. */
+    private static final int SPECIAL_TOKENS = 2;
+    /** The fewest tokens left for a chunk's own text after its context header. */
+    private static final int MIN_CHUNK_TOKENS = 16;
 
     private static final Pattern WS = Pattern.compile("\\s+");
 
@@ -94,6 +108,16 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     @Nullable protected final String modelPathOrUrl;
     /** Parent Lucene config (for vector-store setting). */
     private final LuceneConfig luceneConfig;
+
+    /** Whether each node's text is cut into chunks, each embedded and indexed on its own, see {@link #chunk}. */
+    private final boolean chunked;
+    /** The most tokens of a chunk including its context header, or 0 for as many as the model reads. */
+    private final int chunkSize;
+    private final int chunkOverlap;
+    @Nullable private final String chunkUnitsCode;
+    @Nullable private final String chunkContextCode;
+    @Nullable private CompiledXQuery chunkUnitsQuery = null;
+    @Nullable private CompiledXQuery chunkContextQuery = null;
 
     /** Per-invocation context for storing computed vectors in vector.dbx. */
     private static final ThreadLocal<StoreContext> STORE_CONTEXT = new ThreadLocal<>();
@@ -133,6 +157,140 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
             modelId = null;
             modelPathOrUrl = null;
         }
+
+        final String chunk = configElement.getAttribute(ATTR_CHUNK);
+        chunked = CHUNK_TOKENS.equals(chunk);
+        if (!chunk.isEmpty() && !chunked) {
+            throw new org.exist.util.DatabaseConfigurationException(
+                    "vector-field '" + fieldName + "': attribute 'chunk' must be 'tokens', got '" + chunk + "'");
+        }
+        if (chunked && !embeddingLocal) {
+            throw new org.exist.util.DatabaseConfigurationException(
+                    "vector-field '" + fieldName + "': chunk=\"tokens\" requires embedding=\"local\" or \"http\"");
+        }
+        chunkSize = parseNonNegative(configElement, ATTR_CHUNK_SIZE);
+        chunkOverlap = parseNonNegative(configElement, ATTR_CHUNK_OVERLAP);
+        if (chunked) {
+            final String units = configElement.getAttribute(ATTR_CHUNK_UNITS);
+            chunkUnitsCode = prolog + (units.isEmpty() ? DEFAULT_CHUNK_UNITS : units);
+            final String context = configElement.getAttribute(ATTR_CHUNK_CONTEXT);
+            chunkContextCode = context.isEmpty() ? null : prolog + context;
+        } else {
+            chunkUnitsCode = null;
+            chunkContextCode = null;
+        }
+    }
+
+    private int parseNonNegative(final Element el, final String attr) throws org.exist.util.DatabaseConfigurationException {
+        final String value = el.getAttribute(attr);
+        if (value.isEmpty()) {
+            return 0;
+        }
+        try {
+            final int n = Integer.parseInt(value.trim());
+            if (n < 0) {
+                throw new NumberFormatException();
+            }
+            return n;
+        } catch (final NumberFormatException e) {
+            throw new org.exist.util.DatabaseConfigurationException(
+                    "vector-field '" + fieldName + "': attribute '" + attr + "' must be a non-negative integer, got '" + value + "'");
+        }
+    }
+
+    /**
+     * @return whether each node's text is cut into chunks, each embedded and indexed on its own
+     */
+    public boolean isChunked() {
+        return chunked;
+    }
+
+    /**
+     * The chunks of a node's text, as {@link VectorChunker} cuts them, with the text to embed for each: the chunk's
+     * text after the node's context header, if the field has one.
+     *
+     * @param chunks the chunks
+     * @param embedTexts the text to embed for each chunk
+     */
+    public record ChunkedText(List<VectorChunker.Chunk> chunks, List<String> embedTexts) {
+    }
+
+    /**
+     * Cuts the text of a node into chunks the field's model reads in full: the string values of the items of the
+     * {@code chunk-units} expression (by default the node's children), packed and split by {@link VectorChunker}.
+     *
+     * @param broker the broker
+     * @param node the indexed node
+     * @return the chunks, none if the node has no text or the model is not available
+     */
+    public ChunkedText chunk(final DBBroker broker, final NodeProxy node) {
+        final VectorEmbeddingProvider provider = getEmbeddingProvider();
+        if (!chunked || provider == null) {
+            return new ChunkedText(List.of(), List.of());
+        }
+        try {
+            chunkUnitsQuery = chunkUnitsQuery != null ? chunkUnitsQuery : compile(broker, chunkUnitsCode);
+            if (chunkContextCode != null && chunkContextQuery == null) {
+                chunkContextQuery = compile(broker, chunkContextCode);
+            }
+            if (chunkUnitsQuery == null) {
+                return new ChunkedText(List.of(), List.of());
+            }
+            final List<String> units = evaluateStrings(broker, chunkUnitsQuery, node);
+            final String header = chunkContextQuery != null
+                    ? WS.matcher(String.join(" ", evaluateStrings(broker, chunkContextQuery, node))).replaceAll(" ").strip()
+                    : "";
+
+            final int modelTokens = provider.getMaxTokens() > 0 ? provider.getMaxTokens() : DEFAULT_MAX_TOKENS;
+            final int maxTokens = (chunkSize > 0 ? Math.min(chunkSize, modelTokens) : modelTokens) - SPECIAL_TOKENS;
+            final int[] headerTokens = header.isEmpty() ? new int[0] : provider.tokenEnds(header);
+            final int budget = Math.max(MIN_CHUNK_TOKENS, maxTokens - (headerTokens != null ? headerTokens.length + 1 : 0));
+
+            final List<VectorChunker.Chunk> chunks = new VectorChunker(provider::tokenEnds, budget, chunkOverlap).chunk(units);
+            final List<String> embedTexts = new ArrayList<>(chunks.size());
+            for (final VectorChunker.Chunk chunk : chunks) {
+                embedTexts.add(header.isEmpty() ? chunk.text() : header + "\n" + chunk.text());
+            }
+            return new ChunkedText(chunks, embedTexts);
+        } catch (final PermissionDeniedException | XPathException e) {
+            LOG.warn("Error evaluating the chunk expressions of vector field '{}': {}", fieldName, e.getMessage());
+            return new ChunkedText(List.of(), List.of());
+        }
+    }
+
+    /** The string values of the items an expression returns for a node. */
+    private static List<String> evaluateStrings(final DBBroker broker, final CompiledXQuery query, final NodeProxy node)
+            throws PermissionDeniedException, XPathException {
+        try {
+            final Sequence result = broker.getBrokerPool().getXQueryService().execute(broker, query, node);
+            final List<String> strings = new ArrayList<>(result.getItemCount());
+            for (final SequenceIterator i = result.iterate(); i.hasNext(); ) {
+                strings.add(i.nextItem().getStringValue());
+            }
+            return strings;
+        } finally {
+            try {
+                query.reset();
+            } finally {
+                query.getContext().reset();
+            }
+        }
+    }
+
+    /**
+     * Embeds texts with the field's model, as batches.
+     *
+     * @param texts the texts
+     * @return one vector per text, null where embedding failed
+     */
+    public List<float[]> embedAll(final List<String> texts) {
+        final VectorEmbeddingProvider provider = getEmbeddingProvider();
+        if (provider == null) {
+            final List<float[]> none = new ArrayList<>(texts.size());
+            texts.forEach(text -> none.add(null));
+            return none;
+        }
+        return provider.embedAll(texts);
     }
 
     private int parseDimension(final Element el) throws org.exist.util.DatabaseConfigurationException {
@@ -370,6 +528,10 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     @Override
     protected void build(final DBBroker broker, final NodeProxy contextNode,
             final Document luceneDoc, final CharSequence text) {
+        if (chunked) {
+            // indexed as chunk documents of their own, see LuceneIndexWorker#write()
+            return;
+        }
         final DocumentImpl document = contextNode.getOwnerDocument();
         final NodeId nodeId = contextNode.getNodeId();
         final ReindexScope scope = broker.getIndexController().getReindexScope();

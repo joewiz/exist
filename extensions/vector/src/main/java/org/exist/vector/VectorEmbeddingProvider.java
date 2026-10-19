@@ -21,6 +21,10 @@
  */
 package org.exist.vector;
 
+import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Provider of vector embeddings from text. Implementations may use ONNX, HTTP APIs, etc.
  */
@@ -52,6 +56,43 @@ public interface VectorEmbeddingProvider {
    */
   default float[] embed(String text, boolean forQuery) {
     return embed(text);
+  }
+
+  /**
+   * Returns the most tokens the model reads from one text, including any special tokens it adds;
+   * the rest of a longer text is ignored. Used to cut texts into chunks the model reads in full.
+   *
+   * @return the maximum number of tokens, or 0 if unknown
+   */
+  default int getMaxTokens() {
+    return 0;
+  }
+
+  /**
+   * Tokenizes the text as the model does, but without truncating it and without special tokens.
+   *
+   * @param text input text
+   * @return the end offset in {@code text} (in UTF-16 code units) of each token, in order, or null if
+   *     this provider can't tokenize
+   */
+  @Nullable
+  default int[] tokenEnds(final String text) {
+    return null;
+  }
+
+  /**
+   * Embeds several texts, as one batch where the provider supports it, which is much faster than
+   * embedding them one at a time.
+   *
+   * @param texts input texts
+   * @return one vector per text, in order, an element being null where embedding that text failed
+   */
+  default List<float[]> embedAll(final List<String> texts) {
+    final List<float[]> vectors = new ArrayList<>(texts.size());
+    for (final String text : texts) {
+      vectors.add(embed(text));
+    }
+    return vectors;
   }
 
   /**
