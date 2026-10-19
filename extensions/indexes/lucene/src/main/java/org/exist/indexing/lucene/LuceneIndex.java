@@ -84,6 +84,17 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
     /** Incremented whenever a writer is released, i.e. whenever the index may have changed. */
     private final AtomicLong modificationCount = new AtomicLong();
 
+    /**
+     * The vector fields whose vectors are stored quantized to 8-bit integers, about a quarter of their size, see the
+     * quantize attribute of a vector-field.
+     */
+    static final java.util.Set<String> INT8_VECTOR_FIELDS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final org.apache.lucene.codecs.KnnVectorsFormat INT8_VECTORS_FORMAT =
+            new org.apache.lucene.codecs.lucene104.Lucene104HnswScalarQuantizedVectorsFormat(
+                    org.apache.lucene.util.quantization.QuantizedByteVectorValues.ScalarEncoding.UNSIGNED_BYTE,
+                    org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
+                    org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH);
+
     public String getDirName() {
         return DIR_NAME;
     }
@@ -147,6 +158,12 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
             fieldAnalyzerWrapper = new FieldAnalyzerWrapper(defaultAnalyzer);
             final IndexWriterConfig idxWriterConfig = new IndexWriterConfig(fieldAnalyzerWrapper);
             idxWriterConfig.setRAMBufferSizeMB(bufferSize);
+            idxWriterConfig.setCodec(new org.apache.lucene.codecs.lucene104.Lucene104Codec() {
+                @Override
+                public org.apache.lucene.codecs.KnnVectorsFormat getKnnVectorsFormatForField(final String field) {
+                    return INT8_VECTOR_FIELDS.contains(field) ? INT8_VECTORS_FORMAT : super.getKnnVectorsFormatForField(field);
+                }
+            });
             cachedWriter = new IndexWriter(directory, idxWriterConfig);
             cachedTaxonomyWriter = new DirectoryTaxonomyWriter(taxoDirectory);
 
