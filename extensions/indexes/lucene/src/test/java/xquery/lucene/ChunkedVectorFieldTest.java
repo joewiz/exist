@@ -1,0 +1,154 @@
+/*
+ * eXist-db Open Source Native XML Database
+ * Copyright (C) 2001 The eXist-db Authors
+ *
+ * info@exist-db.org
+ * http://www.exist-db.org
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+package xquery.lucene;
+
+import org.exist.EXistException;
+import org.exist.security.PermissionDeniedException;
+import org.exist.storage.BrokerPool;
+import org.exist.storage.DBBroker;
+import org.exist.test.ExistEmbeddedServer;
+import org.exist.util.ConfigurationHelper;
+import org.exist.xquery.XPathException;
+import org.exist.xquery.XQuery;
+import org.exist.xquery.value.Sequence;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+/**
+ * A chunked vector field (chunk="tokens") embeds each node's text in chunks the model reads in full, so that a passage
+ * past the model's 128 tokens is found, and ft:vector-chunks returns it. Skips when the ONNX model is not available.
+ *
+ * <p>Run with the model in {@code target/onnx-models/all-MiniLM-L6-v2} of the module.</p>
+ */
+class ChunkedVectorFieldTest {
+
+    @RegisterExtension
+    static ExistEmbeddedServer existEmbeddedServer = new ExistEmbeddedServer(true, true);
+
+    private static final String COLLECTION_NAME = "lucene-test-chunked-vector";
+    private static final String COLLECTION = "/db/" + COLLECTION_NAME;
+    private static final String MODEL = "target/onnx-models/all-MiniLM-L6-v2";
+
+    private static final String XCONF = """
+        <collection xmlns="http://exist-db.org/collection-config/1.0"><index><lucene><text qname="div">\
+        <field name="title" expression="head"/><vector-field name="passages" dimension="384" similarity="cosine" embedding="local" model="all-MiniLM-L6-v2" \
+        model-path="%s" chunk="tokens" chunk-overlap="8" chunk-context="head"/></text></lucene></index></collection>"""
+            .formatted(MODEL);
+
+    /** Trade talk long past the model's 128 tokens, then a paragraph about a damaged submarine cable. */
+    private static final String FILLER = ("The delegations discussed tariff schedules for agricultural exports, quotas on "
+            + "manufactured goods, and the most-favored-nation clause of the commercial treaty. ").repeat(8);
+    private static final String DATA = """
+        <docs>
+            <div xml:id="cable"><head>Memorandum of conversation</head>
+                <p>%s</p>
+                <p>The submarine telegraph cable between Havana and Key West was cut by a ship's anchor, and repairs will take weeks.</p>
+            </div>
+            <div xml:id="wheat"><head>Telegram to the embassy</head>
+                <p>Wheat and corn harvests were larger than expected, and grain prices fell sharply in the autumn.</p>
+            </div>
+        </docs>""".formatted(FILLER);
+
+    private static final String PROLOG = """
+        xquery version "3.1";
+        import module namespace ft="http://exist-db.org/xquery/lucene";
+        import module namespace vector="http://exist-db.org/xquery/vector";
+        declare variable $v := vector:embed("undersea telegraph line damaged", "all-MiniLM-L6-v2", "%s");
+        """.formatted(MODEL);
+
+    @BeforeAll
+    static void store() throws EXistException, PermissionDeniedException, XPathException {
+        assumeTrue(hasEmbeddingModel(), "ONNX model not found in " + MODEL + ": skipping chunked vector field tests");
+        execute("""
+            (xmldb:create-collection("/db/system", "config"),
+             xmldb:create-collection("/db/system/config", "db"),
+             xmldb:create-collection("/db/system/config/db", "%s"),
+             xmldb:store("/db/system/config/db/%s", "collection.xconf", parse-xml('%s')),
+             xmldb:create-collection("/db", "%s"),
+             xmldb:store("%s", "test.xml", parse-xml('%s')))
+            """.formatted(COLLECTION_NAME, COLLECTION_NAME, XCONF.replace("'", "''"), COLLECTION_NAME, COLLECTION,
+                DATA.replace("'", "''")));
+    }
+
+    @Test
+    void passagePastTheModelsLimitIsFound() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hits := collection("%s")//div[ft:query-vector(., $v, 2)]
+            for $hit in $hits order by ft:score($hit) descending return string($hit/@xml:id)
+            """.formatted(COLLECTION));
+        assertEquals(2, result.getItemCount(), "k counts nodes, not chunks");
+        assertEquals("cable", result.itemAt(0).getStringValue());
+    }
+
+    @Test
+    void matchedChunkIsTheCableParagraph() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-vector(., $v, 2)][@xml:id = "cable"]
+            let $chunk := ft:vector-chunks($hit)
+            return (count($chunk), $chunk?field, $chunk?chunk > 1,
+                $chunk?text, substring(string($hit), $chunk?start + 1, $chunk?end - $chunk?start) = $chunk?text,
+                $chunk?score = ft:score($hit))
+            """.formatted(COLLECTION));
+        assertEquals("1", result.itemAt(0).getStringValue());
+        assertEquals("passages", result.itemAt(1).getStringValue());
+        assertEquals("true", result.itemAt(2).getStringValue(), "the cable paragraph is not in the first chunk");
+        assertTrue(result.itemAt(3).getStringValue().contains("submarine telegraph cable"), result.itemAt(3).getStringValue());
+        assertEquals("true", result.itemAt(4).getStringValue(), "the offsets select the chunk's text");
+        assertEquals("true", result.itemAt(5).getStringValue());
+    }
+
+    /** A chunk carries its node's identity, but a lookup of the node's own fields must not find it. */
+    @Test
+    void fieldsAreReadFromTheNodesOwnDocument() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            for $hit in collection("%s")//div[ft:query-vector(., $v, 2)]
+            order by ft:score($hit) descending
+            return ft:field($hit, "title")
+            """.formatted(COLLECTION));
+        assertEquals(2, result.getItemCount());
+        assertEquals("Memorandum of conversation", result.itemAt(0).getStringValue());
+        assertEquals("Telegram to the embassy", result.itemAt(1).getStringValue());
+    }
+
+    private static Sequence execute(final String query) throws EXistException, PermissionDeniedException, XPathException {
+        final BrokerPool brokerPool = existEmbeddedServer.getBrokerPool();
+        final XQuery xquery = brokerPool.getXQueryService();
+        try (final DBBroker broker = brokerPool.get(Optional.of(brokerPool.getSecurityManager().getSystemSubject()))) {
+            return xquery.execute(broker, query, null);
+        }
+    }
+
+    private static boolean hasEmbeddingModel() {
+        final Path base = ConfigurationHelper.getExistHome().orElse(Path.of(System.getProperty("user.dir", ".")));
+        final Path modelDir = base.resolve(MODEL);
+        return Files.isRegularFile(modelDir.resolve("model.onnx")) && Files.isRegularFile(modelDir.resolve("tokenizer.json"));
+    }
+}

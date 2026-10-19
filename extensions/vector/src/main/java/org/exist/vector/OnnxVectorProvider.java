@@ -36,7 +36,9 @@ import ai.onnxruntime.OnnxValue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -57,10 +59,13 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
   private static final String LAST_HIDDEN_STATE = "last_hidden_state";
   private static final String SENTENCE_EMBEDDING = "sentence_embedding";
   private static final String TOKEN_EMBEDDINGS = "token_embeddings";
+  private static final int BATCH_SIZE = 32;
 
   private final OrtEnvironment env;
   private final OrtSession session;
   private final HuggingFaceTokenizer tokenizer;
+  // the same tokenizer, without truncation, padding or special tokens, to measure and cut texts into chunks
+  @Nullable private final HuggingFaceTokenizer spanTokenizer;
   private final int dimension;
   private final String outputName;
   private final String tokenTypeIdsInputName;
@@ -75,11 +80,12 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
   private volatile boolean closed = false;
 
   private OnnxVectorProvider(final OrtEnvironment env, final OrtSession session,
-      final HuggingFaceTokenizer tokenizer, final int dimension, final String outputName,
+      final HuggingFaceTokenizer tokenizer, @Nullable final HuggingFaceTokenizer spanTokenizer, final int dimension, final String outputName,
       final String tokenTypeIdsInputName) {
     this.env = env;
     this.session = session;
     this.tokenizer = tokenizer;
+    this.spanTokenizer = spanTokenizer;
     this.dimension = dimension;
     this.outputName = outputName;
     this.tokenTypeIdsInputName = tokenTypeIdsInputName;
@@ -105,6 +111,9 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
       }
       closed = true;
       closeQuietly(session, tokenizer);
+      if (spanTokenizer != null) {
+        spanTokenizer.close();
+      }
     } finally {
       lifecycleLock.writeLock().unlock();
     }
@@ -168,6 +177,113 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
     } finally {
       lifecycleLock.readLock().unlock();
     }
+  }
+
+  @Override
+  public int getMaxTokens() {
+    return tokenizer.getMaxLength() > 0 ? tokenizer.getMaxLength() : 0;
+  }
+
+  @Override
+  @Nullable
+  public int[] tokenEnds(final String text) {
+    if (spanTokenizer == null || text == null) {
+      return null;
+    }
+    lifecycleLock.readLock().lock();
+    try {
+      if (closed) {
+        return null;
+      }
+      final Encoding encoding = spanTokenizer.encode(text, false, false);
+      final ai.djl.huggingface.tokenizers.jni.CharSpan[] spans = encoding.getCharTokenSpans();
+      final int[] ends = new int[spans.length];
+      final boolean supplementary = text.codePointCount(0, text.length()) != text.length();
+      int n = 0;
+      for (final ai.djl.huggingface.tokenizers.jni.CharSpan span : spans) {
+        if (span == null) {
+          continue;
+        }
+        // the spans count code points, the callers UTF-16 code units
+        ends[n++] = supplementary ? text.offsetByCodePoints(0, span.getEnd()) : span.getEnd();
+      }
+      return n == ends.length ? ends : java.util.Arrays.copyOf(ends, n);
+    } catch (final Exception e) {
+      LOG.debug("Tokenizing failed: {}", e.getMessage());
+      return null;
+    } finally {
+      lifecycleLock.readLock().unlock();
+    }
+  }
+
+  @Override
+  public List<float[]> embedAll(final List<String> texts) {
+    final List<float[]> vectors = new ArrayList<>(texts.size());
+    for (int from = 0; from < texts.size(); from += BATCH_SIZE) {
+      vectors.addAll(embedBatch(texts.subList(from, Math.min(texts.size(), from + BATCH_SIZE))));
+    }
+    return vectors;
+  }
+
+  /**
+   * Embeds the texts in one run of the model, each padded to the longest of them.
+   */
+  private List<float[]> embedBatch(final List<String> texts) {
+    final List<float[]> vectors = new ArrayList<>(texts.size());
+    lifecycleLock.readLock().lock();
+    try {
+      if (closed) {
+        texts.forEach(text -> vectors.add(null));
+        return vectors;
+      }
+      final Encoding[] encodings = tokenizer.batchEncode(texts);
+      int length = 0;
+      for (final Encoding encoding : encodings) {
+        length = Math.max(length, encoding.getIds().length);
+      }
+      final int n = encodings.length;
+      final long[][] ids = new long[n][length];
+      final long[][] mask = new long[n][length];
+      for (int i = 0; i < n; i++) {
+        final long[] encodingIds = encodings[i].getIds();
+        final long[] encodingMask = encodings[i].getAttentionMask() != null ? encodings[i].getAttentionMask() : createAttentionMask(encodingIds.length);
+        System.arraycopy(encodingIds, 0, ids[i], 0, encodingIds.length);
+        System.arraycopy(encodingMask, 0, mask[i], 0, encodingMask.length);
+      }
+      final Map<String, OnnxTensor> inputs = new HashMap<>();
+      try {
+        inputs.put(INPUT_IDS, OnnxTensor.createTensor(env, ids));
+        inputs.put(ATTENTION_MASK, OnnxTensor.createTensor(env, mask));
+        if (tokenTypeIdsInputName != null) {
+          inputs.put(tokenTypeIdsInputName, OnnxTensor.createTensor(env, new long[n][length]));
+        }
+        try (Result result = session.run(inputs)) {
+          if (SENTENCE_EMBEDDING.equals(outputName)) {
+            final float[][] data = (float[][]) ((OnnxTensor) result.get(0)).getValue();
+            for (int i = 0; i < n; i++) {
+              vectors.add(data[i].length == dimension ? data[i] : null);
+            }
+          } else {
+            final float[][][] hidden = (float[][][]) findHiddenStateTensor(result).getValue();
+            for (int i = 0; i < n; i++) {
+              vectors.add(hidden[i].length > 0 && hidden[i][0].length == dimension
+                  ? computeMeanPool(hidden[i], length, mask[i]) : null);
+            }
+          }
+        }
+      } finally {
+        inputs.values().forEach(OnnxTensor::close);
+      }
+    } catch (final Exception e) {
+      LOG.debug("Batch embedding failed, embedding one text at a time: {}", e.getMessage());
+      vectors.clear();
+    } finally {
+      lifecycleLock.readLock().unlock();
+    }
+    if (vectors.isEmpty()) {
+      texts.forEach(text -> vectors.add(embed(text)));
+    }
+    return vectors;
   }
 
   private Map<String, OnnxTensor> prepareInputs(final Encoding encoding) throws ai.onnxruntime.OrtException {
@@ -272,18 +388,34 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
     // construction succeeds, close() (called via VectorEmbeddingService#evict) takes over.
     // env is a process-wide singleton (OrtEnvironment#getEnvironment()) and is never closed.
     HuggingFaceTokenizer tokenizer = null;
+    HuggingFaceTokenizer spanTokenizer = null;
     OrtSession session = null;
     try {
       tokenizer = HuggingFaceTokenizer.newInstance(tokenizerFile);
+      spanTokenizer = createSpanTokenizer(tokenizerFile);
       final OrtEnvironment env = OrtEnvironment.getEnvironment();
       session = createSession(env, modelFile);
       final String tokenTypeIdsInputName = resolveTokenTypeIdsInput(session);
       final String outputName = resolveOutputName(session);
 
-      return new OnnxVectorProvider(env, session, tokenizer, dimension, outputName, tokenTypeIdsInputName);
+      return new OnnxVectorProvider(env, session, tokenizer, spanTokenizer, dimension, outputName, tokenTypeIdsInputName);
     } catch (final Exception e) {
       LOG.warn("Failed to create OnnxVectorProvider: {}", e.getMessage());
       closeQuietly(session, tokenizer);
+      if (spanTokenizer != null) {
+        spanTokenizer.close();
+      }
+      return null;
+    }
+  }
+
+  @Nullable
+  private static HuggingFaceTokenizer createSpanTokenizer(final Path tokenizerFile) {
+    try {
+      return HuggingFaceTokenizer.newInstance(tokenizerFile,
+          Map.of("truncation", "false", "padding", "false", "addSpecialTokens", "false"));
+    } catch (final Exception e) {
+      LOG.warn("Failed to create a tokenizer for chunking, texts will not be cut into chunks: {}", e.getMessage());
       return null;
     }
   }
