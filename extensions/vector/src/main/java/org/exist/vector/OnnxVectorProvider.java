@@ -236,44 +236,7 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
         texts.forEach(text -> vectors.add(null));
         return vectors;
       }
-      final Encoding[] encodings = tokenizer.batchEncode(texts);
-      int length = 0;
-      for (final Encoding encoding : encodings) {
-        length = Math.max(length, encoding.getIds().length);
-      }
-      final int n = encodings.length;
-      final long[][] ids = new long[n][length];
-      final long[][] mask = new long[n][length];
-      for (int i = 0; i < n; i++) {
-        final long[] encodingIds = encodings[i].getIds();
-        final long[] encodingMask = encodings[i].getAttentionMask() != null ? encodings[i].getAttentionMask() : createAttentionMask(encodingIds.length);
-        System.arraycopy(encodingIds, 0, ids[i], 0, encodingIds.length);
-        System.arraycopy(encodingMask, 0, mask[i], 0, encodingMask.length);
-      }
-      final Map<String, OnnxTensor> inputs = new HashMap<>();
-      try {
-        inputs.put(INPUT_IDS, OnnxTensor.createTensor(env, ids));
-        inputs.put(ATTENTION_MASK, OnnxTensor.createTensor(env, mask));
-        if (tokenTypeIdsInputName != null) {
-          inputs.put(tokenTypeIdsInputName, OnnxTensor.createTensor(env, new long[n][length]));
-        }
-        try (Result result = session.run(inputs)) {
-          if (SENTENCE_EMBEDDING.equals(outputName)) {
-            final float[][] data = (float[][]) ((OnnxTensor) result.get(0)).getValue();
-            for (int i = 0; i < n; i++) {
-              vectors.add(data[i].length == dimension ? data[i] : null);
-            }
-          } else {
-            final float[][][] hidden = (float[][][]) findHiddenStateTensor(result).getValue();
-            for (int i = 0; i < n; i++) {
-              vectors.add(hidden[i].length > 0 && hidden[i][0].length == dimension
-                  ? computeMeanPool(hidden[i], length, mask[i]) : null);
-            }
-          }
-        }
-      } finally {
-        inputs.values().forEach(OnnxTensor::close);
-      }
+      vectors.addAll(runBatch(tokenizer.batchEncode(texts)));
     } catch (final Exception e) {
       LOG.debug("Batch embedding failed, embedding one text at a time: {}", e.getMessage());
       vectors.clear();
@@ -282,6 +245,56 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
     }
     if (vectors.isEmpty()) {
       texts.forEach(text -> vectors.add(embed(text)));
+    }
+    return vectors;
+  }
+
+  /**
+   * Runs the model once over the encodings, each padded to the longest of them, and pools each one's vector.
+   */
+  private List<float[]> runBatch(final Encoding[] encodings) throws Exception {
+    int length = 0;
+    for (final Encoding encoding : encodings) {
+      length = Math.max(length, encoding.getIds().length);
+    }
+    final int n = encodings.length;
+    final long[][] ids = new long[n][length];
+    final long[][] mask = new long[n][length];
+    for (int i = 0; i < n; i++) {
+      final long[] encodingIds = encodings[i].getIds();
+      final long[] encodingMask = encodings[i].getAttentionMask() != null ? encodings[i].getAttentionMask() : createAttentionMask(encodingIds.length);
+      System.arraycopy(encodingIds, 0, ids[i], 0, encodingIds.length);
+      System.arraycopy(encodingMask, 0, mask[i], 0, encodingMask.length);
+    }
+    final Map<String, OnnxTensor> inputs = new HashMap<>();
+    try {
+      inputs.put(INPUT_IDS, OnnxTensor.createTensor(env, ids));
+      inputs.put(ATTENTION_MASK, OnnxTensor.createTensor(env, mask));
+      if (tokenTypeIdsInputName != null) {
+        inputs.put(tokenTypeIdsInputName, OnnxTensor.createTensor(env, new long[n][length]));
+      }
+      try (Result result = session.run(inputs)) {
+        return SENTENCE_EMBEDDING.equals(outputName) ? sentenceEmbeddings(result, n) : pooledEmbeddings(result, n, length, mask);
+      }
+    } finally {
+      inputs.values().forEach(OnnxTensor::close);
+    }
+  }
+
+  private List<float[]> sentenceEmbeddings(final Result result, final int n) throws Exception {
+    final float[][] data = (float[][]) ((OnnxTensor) result.get(0)).getValue();
+    final List<float[]> vectors = new ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      vectors.add(data[i].length == dimension ? data[i] : null);
+    }
+    return vectors;
+  }
+
+  private List<float[]> pooledEmbeddings(final Result result, final int n, final int length, final long[][] mask) throws Exception {
+    final float[][][] hidden = (float[][][]) findHiddenStateTensor(result).getValue();
+    final List<float[]> vectors = new ArrayList<>(n);
+    for (int i = 0; i < n; i++) {
+      vectors.add(hidden[i].length > 0 && hidden[i][0].length == dimension ? computeMeanPool(hidden[i], length, mask[i]) : null);
     }
     return vectors;
   }
