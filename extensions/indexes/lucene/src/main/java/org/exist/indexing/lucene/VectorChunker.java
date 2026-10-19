@@ -47,6 +47,10 @@ public final class VectorChunker {
     private static final Pattern WORD = Pattern.compile("\\S+");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
+    private final Tokenizer tokenizer;
+    private final int maxTokens;
+    private final int overlap;
+
     /**
      * Tokenizes a text as the embedding model does.
      */
@@ -70,10 +74,6 @@ public final class VectorChunker {
     public record Chunk(int start, int end, String text) {
     }
 
-    private final Tokenizer tokenizer;
-    private final int maxTokens;
-    private final int overlap;
-
     /**
      * @param tokenizer the model's tokenizer; where it can't tokenize, words are counted as tokens
      * @param maxTokens the most tokens of a chunk's text
@@ -96,55 +96,67 @@ public final class VectorChunker {
      */
     public List<Chunk> chunk(final List<String> units) {
         final StringBuilder all = new StringBuilder();
-        final List<int[]> spans = new ArrayList<>();
-        int start = -1;
-        int end = -1;
-        int tokens = 0;
+        final Packer packer = new Packer();
         for (final String unit : units) {
             final int base = all.length();
             all.append(unit);
-            if (unit.isBlank()) {
-                continue;
+            if (!unit.isBlank()) {
+                pack(unit, base, packer);
             }
-            final int[] ends = tokenEnds(unit);
-            if (ends.length == 0) {
-                continue;
-            }
-            final int unitStart = base + leadingWhitespace(unit);
-            final int unitEnd = base + unit.length() - trailingWhitespace(unit);
-            if (ends.length > maxTokens) {
-                if (start >= 0) {
-                    spans.add(new int[] {start, end});
-                    start = -1;
-                }
-                for (final int[] piece : split(unit, ends)) {
-                    spans.add(new int[] {base + piece[0], base + piece[1]});
-                }
-                continue;
-            }
-            if (start >= 0 && tokens + ends.length > maxTokens) {
-                spans.add(new int[] {start, end});
-                start = -1;
-            }
-            if (start < 0) {
-                start = unitStart;
-                tokens = 0;
-            }
-            end = unitEnd;
-            tokens += ends.length;
         }
-        if (start >= 0) {
-            spans.add(new int[] {start, end});
-        }
+        packer.flush();
 
-        final List<Chunk> chunks = new ArrayList<>(spans.size());
-        for (final int[] span : spans) {
+        final List<Chunk> chunks = new ArrayList<>(packer.spans.size());
+        for (final int[] span : packer.spans) {
             final String text = WHITESPACE.matcher(all.substring(span[0], span[1])).replaceAll(" ").strip();
             if (!text.isEmpty()) {
                 chunks.add(new Chunk(span[0], span[1], text));
             }
         }
         return chunks;
+    }
+
+    /** Adds a unit, which starts at {@code base} in the joined text, to the chunk being packed, or splits it. */
+    private void pack(final String unit, final int base, final Packer packer) {
+        final int[] ends = tokenEnds(unit);
+        if (ends.length == 0) {
+            return;
+        }
+        if (ends.length > maxTokens) {
+            packer.flush();
+            for (final int[] piece : split(unit, ends)) {
+                packer.spans.add(new int[] {base + piece[0], base + piece[1]});
+            }
+        } else {
+            packer.add(base + leadingWhitespace(unit), base + unit.length() - trailingWhitespace(unit), ends.length);
+        }
+    }
+
+    /** Packs consecutive units into a chunk as long as their tokens fit. */
+    private final class Packer {
+        private final List<int[]> spans = new ArrayList<>();
+        private int start = -1;
+        private int end = -1;
+        private int tokens = 0;
+
+        private void add(final int unitStart, final int unitEnd, final int unitTokens) {
+            if (start >= 0 && tokens + unitTokens > maxTokens) {
+                flush();
+            }
+            if (start < 0) {
+                start = unitStart;
+                tokens = 0;
+            }
+            end = unitEnd;
+            tokens += unitTokens;
+        }
+
+        private void flush() {
+            if (start >= 0) {
+                spans.add(new int[] {start, end});
+                start = -1;
+            }
+        }
     }
 
     private int[] tokenEnds(final String text) {
