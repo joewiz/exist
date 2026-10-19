@@ -111,13 +111,8 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     /** Parent Lucene config (for vector-store setting). */
     private final LuceneConfig luceneConfig;
 
-    /** Whether each node's text is cut into chunks, each embedded and indexed on its own, see {@link #chunk}. */
-    private final boolean chunked;
-    /** The most tokens of a chunk including its context header, or 0 for as many as the model reads. */
-    private final int chunkSize;
-    private final int chunkOverlap;
-    @Nullable private final String chunkUnitsCode;
-    @Nullable private final String chunkContextCode;
+    /** How each node's text is cut into chunks, each embedded and indexed on its own, or null if it isn't, see {@link #chunk}. */
+    @Nullable private final Chunking chunking;
     @Nullable private CompiledXQuery chunkUnitsQuery = null;
     @Nullable private CompiledXQuery chunkContextQuery = null;
 
@@ -160,6 +155,22 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
             modelPathOrUrl = null;
         }
 
+        registerQuantization(configElement);
+        chunking = parseChunking(configElement);
+    }
+
+    /**
+     * The chunking of a field.
+     *
+     * @param size the most tokens of a chunk including its context header, or 0 for as many as the model reads
+     * @param overlap the tokens that the pieces of a split unit share
+     * @param unitsCode the expression of the units, with the configuration's prolog
+     * @param contextCode the expression of the context header, with the configuration's prolog, or null for none
+     */
+    private record Chunking(int size, int overlap, String unitsCode, @Nullable String contextCode) {
+    }
+
+    private void registerQuantization(final Element configElement) throws org.exist.util.DatabaseConfigurationException {
         final String quantize = configElement.getAttribute(ATTR_QUANTIZE);
         if (QUANTIZE_INT8.equals(quantize)) {
             LuceneIndex.INT8_VECTOR_FIELDS.add(fieldName);
@@ -167,28 +178,26 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
             throw new org.exist.util.DatabaseConfigurationException(
                     "vector-field '" + fieldName + "': attribute 'quantize' must be 'int8' or 'none', got '" + quantize + "'");
         }
+    }
 
+    @Nullable
+    private Chunking parseChunking(final Element configElement) throws org.exist.util.DatabaseConfigurationException {
         final String chunk = configElement.getAttribute(ATTR_CHUNK);
-        chunked = CHUNK_TOKENS.equals(chunk);
-        if (!chunk.isEmpty() && !chunked) {
+        if (chunk.isEmpty()) {
+            return null;
+        }
+        if (!CHUNK_TOKENS.equals(chunk)) {
             throw new org.exist.util.DatabaseConfigurationException(
                     "vector-field '" + fieldName + "': attribute 'chunk' must be 'tokens', got '" + chunk + "'");
         }
-        if (chunked && !embeddingLocal) {
+        if (!embeddingLocal) {
             throw new org.exist.util.DatabaseConfigurationException(
                     "vector-field '" + fieldName + "': chunk=\"tokens\" requires embedding=\"local\" or \"http\"");
         }
-        chunkSize = parseNonNegative(configElement, ATTR_CHUNK_SIZE);
-        chunkOverlap = parseNonNegative(configElement, ATTR_CHUNK_OVERLAP);
-        if (chunked) {
-            final String units = configElement.getAttribute(ATTR_CHUNK_UNITS);
-            chunkUnitsCode = prolog + (units.isEmpty() ? DEFAULT_CHUNK_UNITS : units);
-            final String context = configElement.getAttribute(ATTR_CHUNK_CONTEXT);
-            chunkContextCode = context.isEmpty() ? null : prolog + context;
-        } else {
-            chunkUnitsCode = null;
-            chunkContextCode = null;
-        }
+        final String units = configElement.getAttribute(ATTR_CHUNK_UNITS);
+        final String context = configElement.getAttribute(ATTR_CHUNK_CONTEXT);
+        return new Chunking(parseNonNegative(configElement, ATTR_CHUNK_SIZE), parseNonNegative(configElement, ATTR_CHUNK_OVERLAP),
+                prolog + (units.isEmpty() ? DEFAULT_CHUNK_UNITS : units), context.isEmpty() ? null : prolog + context);
     }
 
     private int parseNonNegative(final Element el, final String attr) throws org.exist.util.DatabaseConfigurationException {
@@ -212,7 +221,7 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
      * @return whether each node's text is cut into chunks, each embedded and indexed on its own
      */
     public boolean isChunked() {
-        return chunked;
+        return chunking != null;
     }
 
     /**
@@ -235,28 +244,16 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
      */
     public ChunkedText chunk(final DBBroker broker, final NodeProxy node) {
         final VectorEmbeddingProvider provider = getEmbeddingProvider();
-        if (!chunked || provider == null) {
+        if (chunking == null || provider == null || !compileChunkQueries(broker)) {
             return new ChunkedText(List.of(), List.of());
         }
         try {
-            chunkUnitsQuery = chunkUnitsQuery != null ? chunkUnitsQuery : compile(broker, chunkUnitsCode);
-            if (chunkContextCode != null && chunkContextQuery == null) {
-                chunkContextQuery = compile(broker, chunkContextCode);
-            }
-            if (chunkUnitsQuery == null) {
-                return new ChunkedText(List.of(), List.of());
-            }
             final List<String> units = evaluateStrings(broker, chunkUnitsQuery, node);
             final String header = chunkContextQuery != null
                     ? WS.matcher(String.join(" ", evaluateStrings(broker, chunkContextQuery, node))).replaceAll(" ").strip()
                     : "";
-
-            final int modelTokens = provider.getMaxTokens() > 0 ? provider.getMaxTokens() : DEFAULT_MAX_TOKENS;
-            final int maxTokens = (chunkSize > 0 ? Math.min(chunkSize, modelTokens) : modelTokens) - SPECIAL_TOKENS;
-            final int[] headerTokens = header.isEmpty() ? new int[0] : provider.tokenEnds(header);
-            final int budget = Math.max(MIN_CHUNK_TOKENS, maxTokens - (headerTokens != null ? headerTokens.length + 1 : 0));
-
-            final List<VectorChunker.Chunk> chunks = new VectorChunker(provider::tokenEnds, budget, chunkOverlap).chunk(units);
+            final List<VectorChunker.Chunk> chunks =
+                    new VectorChunker(provider::tokenEnds, chunkTokens(provider, header), chunking.overlap()).chunk(units);
             final List<String> embedTexts = new ArrayList<>(chunks.size());
             for (final VectorChunker.Chunk chunk : chunks) {
                 embedTexts.add(header.isEmpty() ? chunk.text() : header + "\n" + chunk.text());
@@ -266,6 +263,25 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
             LOG.warn("Error evaluating the chunk expressions of vector field '{}': {}", fieldName, e.getMessage());
             return new ChunkedText(List.of(), List.of());
         }
+    }
+
+    /** Compiles the chunk expressions once. */
+    private boolean compileChunkQueries(final DBBroker broker) {
+        if (chunkUnitsQuery == null) {
+            chunkUnitsQuery = compile(broker, chunking.unitsCode());
+        }
+        if (chunking.contextCode() != null && chunkContextQuery == null) {
+            chunkContextQuery = compile(broker, chunking.contextCode());
+        }
+        return chunkUnitsQuery != null;
+    }
+
+    /** The most tokens of a chunk's own text: what the model reads, less its special tokens and the context header. */
+    private int chunkTokens(final VectorEmbeddingProvider provider, final String header) {
+        final int modelTokens = provider.getMaxTokens() > 0 ? provider.getMaxTokens() : DEFAULT_MAX_TOKENS;
+        final int maxTokens = (chunking.size() > 0 ? Math.min(chunking.size(), modelTokens) : modelTokens) - SPECIAL_TOKENS;
+        final int[] headerTokens = header.isEmpty() ? null : provider.tokenEnds(header);
+        return Math.max(MIN_CHUNK_TOKENS, maxTokens - (headerTokens != null ? headerTokens.length + 1 : 0));
     }
 
     /** The string values of the items an expression returns for a node. */
@@ -538,7 +554,7 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     @Override
     protected void build(final DBBroker broker, final NodeProxy contextNode,
             final Document luceneDoc, final CharSequence text) {
-        if (chunked) {
+        if (chunking != null) {
             // indexed as chunk documents of their own, see LuceneIndexWorker#write()
             return;
         }
