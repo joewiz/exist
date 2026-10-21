@@ -95,6 +95,15 @@ public abstract class AbstractFieldConfig {
         return null;
     }
 
+    /**
+     * Whether the field's value is computed by an expression, rather than being the text of the node.
+     *
+     * @return true if the field has an expression
+     */
+    public boolean hasExpression() {
+        return expression.isPresent();
+    }
+
     protected abstract void processResult(final Sequence result, final Document luceneDoc) throws XPathException;
 
     protected abstract void processText(CharSequence text, Document luceneDoc);
