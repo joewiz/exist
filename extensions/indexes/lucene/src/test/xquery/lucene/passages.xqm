@@ -77,7 +77,7 @@ declare
         "Treaty ratification followed.",
         "Some treaties are older than this treaty, and the treaty of 1919 is one.")
 function pas:best-three-in-order() {
-    ft:passages(pas:hit("text:treaty"), "text")?text
+    ft:passages(pas:hit("text:treaty"), "text", map { "as": "map" })?text
 };
 
 declare
@@ -89,7 +89,7 @@ function pas:max() {
 declare
     %test:assertTrue
 function pas:offsets-select-the-passage-and-matches() {
-    let $passages := ft:passages(pas:hit("text:treaty"), "text")
+    let $passages := ft:passages(pas:hit("text:treaty"), "text", map { "as": "map" })
     return every $p in $passages satisfies (
         substring($pas:TEXT, $p?start, $p?end - $p?start) = $p?text
         and (every $m in $p?matches?* satisfies lower-case(substring($pas:TEXT, $m?start, $m?end - $m?start)) = "treaty")
@@ -99,7 +99,7 @@ function pas:offsets-select-the-passage-and-matches() {
 declare
     %test:assertEquals("treaties", "treaty", "treaty")
 function pas:wildcard() {
-    let $p := ft:passages(pas:hit("text:treat*"), "text", map { "max": 1 })
+    let $p := ft:passages(pas:hit("text:treat*"), "text", map { "as": "map", "max": 1 })
     for $m in $p?matches?*
     return substring($pas:TEXT, $m?start, $m?end - $m?start)
 };
@@ -107,7 +107,7 @@ function pas:wildcard() {
 declare
     %test:assertEquals("signed in Paris")
 function pas:phrase() {
-    let $p := ft:passages(pas:hit('text:"signed in paris"'), "text")
+    let $p := ft:passages(pas:hit('text:"signed in paris"'), "text", map { "as": "map" })
     for $m in $p?matches?*
     return substring($pas:TEXT, $m?start, $m?end - $m?start)
 };
@@ -134,7 +134,7 @@ function pas:element() {
 declare
     %test:assertTrue
 function pas:length() {
-    let $p := ft:passages(pas:hit("text:annex"), "text", map { "break": "length", "length": 120 })
+    let $p := ft:passages(pas:hit("text:annex"), "text", map { "as": "map", "break": "length", "length": 120 })
     return count($p) = 1 and string-length($p?text) gt string-length("Mr. Dulles said the treaty and the treaty annex were final.")
 };
 
@@ -154,7 +154,7 @@ function pas:break-must-be-known() {
 declare
     %test:assertEquals("The treaty was signed in Paris. Treaty ratification followed.", "Paris. Treaty")
 function pas:phrase-across-sentences() {
-    let $p := ft:passages(pas:hit('text:"paris treaty"'), "text")
+    let $p := ft:passages(pas:hit('text:"paris treaty"'), "text", map { "as": "map" })
     return ($p?text, for $m in $p?matches?* return substring($pas:TEXT, $m?start, $m?end - $m?start))
 };
 
@@ -162,14 +162,14 @@ function pas:phrase-across-sentences() {
 declare
     %test:assertEquals("Treaty ratification followed.")
 function pas:other-field-required() {
-    ft:passages(pas:hit("text:ratification AND title:report"), "text")?text
+    ft:passages(pas:hit("text:ratification AND title:report"), "text", map { "as": "map" })?text
 };
 
 (: a passage longer than max-length is cut around its match, at word boundaries, and its offsets and matches still select it :)
 declare
     %test:assertEquals("the treaty annex were final.", "true")
 function pas:max-length() {
-    let $p := ft:passages(pas:hit("text:annex"), "text", map { "max-length": 30 })
+    let $p := ft:passages(pas:hit("text:annex"), "text", map { "as": "map", "max-length": 30 })
     return ($p?text, string(
         string-length($p?text) le 30
         and substring($pas:TEXT, $p?start, $p?end - $p?start) = $p?text
@@ -180,7 +180,7 @@ function pas:max-length() {
 declare
     %test:assertEquals("treaty")
 function pas:max-length-drops-matches-outside() {
-    let $p := ft:passages(pas:hit("text:treaty"), "text", map { "max": 1, "max-length": 20 })
+    let $p := ft:passages(pas:hit("text:treaty"), "text", map { "as": "map", "max": 1, "max-length": 20 })
     for $m in $p?matches?*
     return substring($pas:TEXT, $m?start, $m?end - $m?start)
 };
@@ -188,11 +188,83 @@ function pas:max-length-drops-matches-outside() {
 declare
     %test:assertEquals("Treaty ratification followed.")
 function pas:max-length-longer-than-the-passage() {
-    ft:passages(pas:hit("text:ratification"), "text", map { "max-length": 200 })?text
+    ft:passages(pas:hit("text:ratification"), "text", map { "as": "map", "max-length": 200 })?text
 };
 
 declare
     %test:assertError("XPTY0004")
 function pas:max-length-must-not-be-negative() {
     ft:passages(pas:hit("text:treaty"), "text", map { "max-length": -1 })
+};
+
+declare
+    %test:assertTrue
+function pas:elements-by-default() {
+    ft:passages(pas:hit("text:ratification"), "text") instance of element(exist:passage)
+};
+
+(: the same best passages, best first :)
+declare
+    %test:assertTrue
+function pas:order-by-score() {
+    let $by-score := ft:passages(pas:hit("text:treaty"), "text", map { "as": "map", "order": "score" })
+    let $in-document := ft:passages(pas:hit("text:treaty"), "text", map { "as": "map" })
+    return (every $i in 2 to count($by-score) satisfies $by-score[$i - 1]?score ge $by-score[$i]?score)
+        and deep-equal(sort($by-score?start), $in-document?start)
+};
+
+declare
+    %test:assertError("XPTY0004")
+function pas:order-must-be-known() {
+    ft:passages(pas:hit("text:treaty"), "text", map { "order": "text" })
+};
+
+(: align 0 puts the match at the start of a cut passage, align 1 at its end; a match near either end of a sentence
+ : moves the window back in, so the passage is as long as max-length allows :)
+declare
+    %test:assertEquals("older than this", "are older")
+function pas:align() {
+    ft:passages(pas:hit("text:older"), "text", map { "as": "map", "max-length": 15, "align": 0 })?text,
+    ft:passages(pas:hit("text:older"), "text", map { "as": "map", "max-length": 15, "align": 1 })?text
+};
+
+declare
+    %test:assertError("XPTY0004")
+function pas:align-must-be-from-0-to-1() {
+    ft:passages(pas:hit("text:annex"), "text", map { "align": 2 })
+};
+
+(: a match past the analyzed characters is not found :)
+declare
+    %test:assertEquals(1, 0)
+function pas:max-analyzed() {
+    count(ft:passages(pas:hit("text:1919"), "text")),
+    count(ft:passages(pas:hit("text:1919"), "text", map { "max-analyzed": 100 }))
+};
+
+declare
+    %test:assertEquals("Treaty ratification followed.", "ratification")
+function pas:mark() {
+    let $p := ft:passages(pas:hit("text:ratification"), "text", map { "mark": "mark" })
+    return (string($p), $p/mark/string())
+};
+
+declare
+    %test:assertEquals("Treaty RATIFICATION followed.", "hit")
+function pas:highlight() {
+    let $p := ft:passages(pas:hit("text:ratification"), "text",
+        map { "highlight": function($match) { <b class="hit">{upper-case($match)}</b> } })
+    return (string($p), string($p/b/@class))
+};
+
+declare
+    %test:assertError("XPTY0004")
+function pas:mark-is-for-elements() {
+    ft:passages(pas:hit("text:ratification"), "text", map { "as": "map", "mark": "mark" })
+};
+
+declare
+    %test:assertError("XPTY0004")
+function pas:as-must-be-known() {
+    ft:passages(pas:hit("text:ratification"), "text", map { "as": "html" })
 };
