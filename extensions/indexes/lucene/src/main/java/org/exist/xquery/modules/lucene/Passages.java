@@ -35,9 +35,17 @@ import org.exist.Namespaces;
 import org.exist.dom.QName;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
+import org.exist.indexing.lucene.AbstractFieldConfig;
+import org.exist.indexing.lucene.LuceneConfig;
+import org.exist.indexing.lucene.LuceneFieldConfig;
 import org.exist.indexing.lucene.LuceneIndex;
+import org.exist.indexing.lucene.LuceneIndexConfig;
 import org.exist.indexing.lucene.LuceneIndexWorker;
 import org.exist.indexing.lucene.LuceneMatch;
+import org.exist.indexing.lucene.LuceneMatchListener;
+import org.exist.indexing.lucene.LuceneUtil;
+import org.exist.indexing.lucene.NodeText;
+import org.exist.storage.NodePath;
 import org.exist.util.SentenceBreaker;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
@@ -62,11 +70,13 @@ import org.exist.xquery.value.Type;
 import org.exist.xquery.value.ValueSequence;
 import org.xml.sax.helpers.AttributesImpl;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -82,24 +92,27 @@ public class Passages extends BasicFunction {
     private static final QName NAME = new QName("passages", LuceneModule.NAMESPACE_URI, LuceneModule.PREFIX);
 
     private static final String DESCRIPTION = """
-            Returns the passages of the stored field $field of $hit, a node found by ft:query, that best match the \
-            query it was found by, in their order in the field's text, each with the query's matches in it: by default \
-            the 3 best sentences. Returns the empty sequence if the query has no matches in the field, or if the field \
-            is not stored.""";
+            Returns the passages of the field $field of $hit, a node found by ft:query, that best match the query it \
+            was found by, in their order in the field's text, each with the query's matches in it: by default the 3 \
+            best sentences. The field's text is its stored value; a field that is not stored but has no expression has \
+            the text of $hit, as it was indexed. If $field is empty, the passages are those of the text of $hit, as it \
+            was indexed, for a query on the index rather than on a field. Returns the empty sequence if the query has \
+            no matches in the text, or if there is no text: a field that is neither stored nor without an \
+            expression.""";
 
     private static final FunctionParameterSequenceType HIT = new FunctionParameterSequenceType("hit", Type.NODE,
             Cardinality.EXACTLY_ONE, "a node found by ft:query");
     private static final FunctionParameterSequenceType FIELD = new FunctionParameterSequenceType("field", Type.STRING,
-            Cardinality.EXACTLY_ONE, "the name of a stored field");
+            Cardinality.ZERO_OR_ONE, "the name of a field, or the empty sequence for the indexed text of $hit");
 
     public static final FunctionSignature[] signatures = {
             new FunctionSignature(NAME, DESCRIPTION, new SequenceType[] {HIT, FIELD},
                     new FunctionReturnSequenceType(Type.MAP_ITEM, Cardinality.ZERO_OR_MORE, "the passages")),
             new FunctionSignature(NAME, DESCRIPTION + """
                      Each passage is a map with the keys "text", "start" and "end" (the positions of its first \
-                    character and after its last in the field's value, from 1, so that substring($value, $start, \
+                    character and after its last in the field's value, or in the indexed text of $hit, from 1, so that substring($value, $start, \
                     $end - $start) is the passage), "score", "matches" (an array of maps with "start" and "end" in \
-                    the same way) and "value" (the position of the field's value, if it has several). $options is a \
+                    the same way) and "value" (the position of the field's value the passage is in, if the field has several values). $options is a \
                     map with the keys: "max", the number of passages (default 3); "break", "sentence" (the default), \
                     "length" (sentences joined or split to come closest to "length" characters, default 200) or \
                     "whole" (the whole value); "max-length", the most characters of a passage, which a longer passage \
@@ -126,6 +139,10 @@ public class Passages extends BasicFunction {
     private static final StringValue ABBREVIATIONS = new StringValue("abbreviations");
     private static final StringValue AS = new StringValue("as");
 
+    /** The text to find passages in: the field's values, the field to highlight them as, and its analyzer. */
+    private record Source(String field, Analyzer analyzer, List<String> values) {
+    }
+
     /** A passage of one of the field's values. */
     private record Found(int value, String content, int start, int end, float score, int[] matchStarts, int[] matchEnds) {
     }
@@ -145,16 +162,18 @@ public class Passages extends BasicFunction {
         if (match == null) {
             return Sequence.EMPTY_SEQUENCE;
         }
-        final String field = args[1].getStringValue();
+        final String field = args[1].isEmpty() ? null : args[1].getStringValue();
         final AbstractMapType options = args.length > 2 ? (AbstractMapType) args[2].itemAt(0) : null;
         final int max = intOption(options, MAX, DEFAULT_MAX);
         final boolean asElements = "element".equals(stringOption(options, AS, "map"));
 
+        final Source source;
         final List<Found> found;
         try {
-            found = findPassages(hit, match, field, options, max);
+            source = source(hit, field);
+            found = source == null ? List.of() : findPassages(source, match, options, max);
         } catch (final IOException e) {
-            throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error highlighting field " + field + ": " + e.getMessage(), e);
+            throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error highlighting " + (field == null ? "the indexed text" : "field " + field) + ": " + e.getMessage(), e);
         }
 
         // the best passages of all the values, in their order in the text
@@ -163,22 +182,16 @@ public class Passages extends BasicFunction {
                 .limit(max)
                 .sorted(Comparator.comparingInt(Found::value).thenComparingInt(Found::start))
                 .toList();
-        final boolean severalValues = found.stream().map(Found::value).distinct().count() > 1;
+        final boolean severalValues = source != null && source.values().size() > 1;
         return asElements ? toElements(best) : toMaps(best, severalValues);
     }
 
     /**
      * The best passages of each of the field's values.
      */
-    private List<Found> findPassages(final NodeProxy hit, final LuceneMatch match, final String field,
-            final AbstractMapType options, final int max) throws IOException, XPathException {
-        final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
-        final IndexableField[] values = index.getFieldByExistDocId(hit.getOwnerDocument().getDocId(), hit.getNodeId(), field);
+    private List<Found> findPassages(final Source source, final LuceneMatch match, final AbstractMapType options,
+            final int max) throws IOException, XPathException {
         final List<Found> found = new ArrayList<>();
-        if (values.length == 0) {
-            return found;
-        }
-        final Analyzer analyzer = index.getLuceneConfig(context.getBroker(), hit.getDocumentSet()).getAnalyzer(field);
         final SentenceBreaker sentences = sentenceBreaker(options);
         final int maxLength = intOption(options, MAX_LENGTH_OPTION, 0);
         if (maxLength < 0) {
@@ -186,10 +199,10 @@ public class Passages extends BasicFunction {
         }
         final Supplier<BreakIterator> breaks = breakIterator(options, sentences);
         final org.apache.lucene.search.Query query = highlightable(match.getQuery());
-        for (int v = 0; v < values.length; v++) {
-            final String content = values[v].stringValue();
+        for (int v = 0; v < source.values().size(); v++) {
+            final String content = source.values().get(v);
             if (content != null && !content.isEmpty()) {
-                UnifiedHighlighter.builderWithoutSearcher(analyzer)
+                UnifiedHighlighter.builderWithoutSearcher(source.analyzer())
                         .withBreakIterator(breaks)
                         .withMaxLength(MAX_LENGTH)
                         .withMaxNoHighlightPassages(0)
@@ -197,10 +210,57 @@ public class Passages extends BasicFunction {
                         .withHighlightPhrasesStrictly(true)
                         .withFormatter(new Collector(v, sentences, maxLength, found))
                         .build()
-                        .highlightWithoutSearcher(field, query, content, max);
+                        .highlightWithoutSearcher(source.field(), query, content, max);
             }
         }
         return found;
+    }
+
+    /**
+     * The text of the field: its stored values; or, if it is not stored and has no expression, or if no field is
+     * given, the text of the hit as it was indexed. Null if there is no text.
+     */
+    @Nullable
+    private Source source(final NodeProxy hit, @Nullable final String field) throws IOException {
+        final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
+        final LuceneConfig config = index.getLuceneConfig(context.getBroker(), hit.getDocumentSet());
+        if (config == null) {
+            return null;
+        }
+        if (field != null) {
+            final IndexableField[] stored = index.getFieldByExistDocId(hit.getOwnerDocument().getDocId(), hit.getNodeId(), field);
+            if (stored.length > 0) {
+                return new Source(field, config.getAnalyzer(field),
+                        Arrays.stream(stored).map(IndexableField::stringValue).toList());
+            }
+        }
+        final NodePath path = LuceneMatchListener.getPath(hit);
+        for (final Iterator<LuceneIndexConfig> i = config.getConfig(path); i.hasNext(); ) {
+            final LuceneIndexConfig indexConfig = i.next();
+            if (field == null ? indexConfig.doIndex() : hasFieldWithoutExpression(indexConfig, field)) {
+                final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, (nodeId, offset) -> { });
+                return field == null
+                        ? new Source(contentField(indexConfig), config.getAnalyzer(path), List.of(text))
+                        : new Source(field, config.getAnalyzer(field), List.of(text));
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasFieldWithoutExpression(final LuceneIndexConfig indexConfig, final String field) {
+        for (final AbstractFieldConfig fieldConfig : indexConfig.getFacetsAndFields()) {
+            if (fieldConfig instanceof LuceneFieldConfig luceneField && field.equals(luceneField.getName())) {
+                return !luceneField.hasExpression();
+            }
+        }
+        return false;
+    }
+
+    /** The field the index's text is indexed in, as LuceneIndexWorker names it. */
+    private String contentField(final LuceneIndexConfig indexConfig) {
+        return indexConfig.isNamed()
+                ? indexConfig.getName()
+                : LuceneUtil.encodeQName(indexConfig.getQName(), context.getBroker().getBrokerPool().getSymbols());
     }
 
     /**

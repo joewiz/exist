@@ -39,8 +39,6 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.PhraseQuery;
 import org.exist.indexing.AbstractMatchListener;
 import org.exist.numbering.NodeId;
-import org.exist.stax.ExtendedXMLStreamReader;
-import org.exist.stax.IEmbeddedXMLStreamReader;
 import org.exist.storage.DBBroker;
 import org.exist.storage.IndexSpec;
 import org.exist.storage.NodePath;
@@ -49,8 +47,6 @@ import org.exist.util.serializer.AttrList;
 import org.xml.sax.SAXException;
 
 import javax.annotation.Nullable;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
@@ -230,57 +226,13 @@ public class LuceneMatchListener extends AbstractMatchListener {
         if(idxConf == null) {
             return;  // there is no index config so there can not be any matches
         }
-        final TextExtractor extractor = new DefaultTextExtractor();
-        extractor.configure(config, idxConf);
-
         final OffsetList offsets = new OffsetList();
-        int level = 0;
-        int textOffset = 0;
+        final String str;
         try {
-            final IEmbeddedXMLStreamReader reader = broker.getXMLStreamReader(p, false);
-            scanLoop:
-            while (reader.hasNext()) {
-                final int ev = reader.next();
-                switch (ev) {
-
-                    case XMLStreamConstants.END_ELEMENT:
-                        if (--level < 0) {
-                            break scanLoop;
-                        }
-                        // call extractor.endElement unless this is the root of the current fragment
-                        if (level > 0) {
-                            textOffset += extractor.endElement(reader.getQName());
-                        }
-                        /* #4835: Stop when we've closed the root element we're scanning.
-                         * The reader continues to siblings; without this we'd include the whole parent. */
-                        if (level == 0) {
-                            break scanLoop;
-                        }
-                        break;
-
-                    case XMLStreamConstants.START_ELEMENT:
-                        // call extractor.startElement unless this is the root of the current fragment
-                        if (level > 0) {
-                            textOffset += extractor.startElement(reader.getQName());
-                        }
-                        ++level;
-                        break;
-
-                    case XMLStreamConstants.CHARACTERS:
-                        final NodeId nodeId = (NodeId) reader.getProperty(ExtendedXMLStreamReader.PROPERTY_NODE_ID);
-                        textOffset += extractor.beforeCharacters();
-                        final int consumed = extractor.characters(reader.getXMLText());
-                        if (consumed > 0) {
-                            offsets.add(textOffset, nodeId);
-                            textOffset += consumed;
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-        } catch (final IOException | XMLStreamException e) {
+            str = NodeText.of(broker, config, idxConf, p, (nodeId, offset) -> offsets.add(offset, nodeId));
+        } catch (final IOException e) {
             LOG.warn("Problem found while serializing XML: {}", e.getMessage(), e);
+            return;
         }
 
         // Retrieve the Analyzer for the NodeProxy that was used for
@@ -296,7 +248,6 @@ public class LuceneMatchListener extends AbstractMatchListener {
             LOG.debug("Analyzer: {} for path: {}", analyzer, path);
         }
 
-        final String str = extractor.getText().toString();
         try (final Reader reader = new StringReader(str);
              final TokenStream tokenStream = analyzer.tokenStream(null, reader);
              final MarkableTokenFilter stream = new MarkableTokenFilter(tokenStream)) {
