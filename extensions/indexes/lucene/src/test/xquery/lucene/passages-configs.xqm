@@ -62,6 +62,8 @@ function pc:setup() {
                         <field name="dot" expression="."/>
                         <field name="paras" expression="p"/>
                         <field name="unstored" expression="p" store="no"/>
+                        <field name="joined" expression="string-join(p, ' ')"/>
+                        <field name="joined-unstored" expression="string-join(p, ' ')" store="no"/>
                         <field name="ws" expression="p" analyzer="ws"/>
                     </text>
                     <text field="named" qname="p"/>
@@ -116,11 +118,22 @@ function pc:unstored-field-without-expression() {
     ft:passages(pc:hit("compact.xml", "no-expr-unstored:paris"), "no-expr-unstored", map { "as": "map" })?text ! normalize-space()
 };
 
-(: a field with an expression that is not stored has no text :)
+(: a field with an expression that is not stored: its values are computed from the node, as when indexed :)
 declare
-    %test:assertEmpty
+    %test:assertTrue
 function pc:unstored-field-with-expression() {
-    ft:passages(pc:hit("compact.xml", "unstored:paris"), "unstored")
+    let $unstored := ft:passages(pc:hit("compact.xml", "unstored:paris"), "unstored", map { "as": "map" })
+    let $stored := ft:passages(pc:hit("compact.xml", "paras:paris"), "paras", map { "as": "map" })
+    return exists($unstored) and deep-equal($unstored?text, $stored?text) and deep-equal($unstored?value, $stored?value)
+};
+
+(: the same for an expression with an atomic value :)
+declare
+    %test:assertTrue
+function pc:unstored-field-with-atomic-expression() {
+    let $unstored := ft:passages(pc:hit("compact.xml", "joined-unstored:paris"), "joined-unstored", map { "as": "map" })
+    let $stored := ft:passages(pc:hit("compact.xml", "joined:paris"), "joined", map { "as": "map" })
+    return exists($unstored) and deep-equal($unstored?text, $stored?text)
 };
 
 (: expression="." is the string value: nothing separates the elements, so "Report" and "The" are one word, as is

@@ -23,7 +23,6 @@ package org.exist.xquery.modules.lucene;
 
 import com.evolvedbinary.j8fu.tuple.Tuple2;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.uhighlight.LengthGoalBreakIterator;
@@ -36,9 +35,8 @@ import org.exist.dom.QName;
 import org.exist.dom.memtree.DocumentBuilderReceiver;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
-import org.exist.indexing.lucene.AbstractFieldConfig;
+import org.exist.indexing.lucene.FieldText;
 import org.exist.indexing.lucene.LuceneConfig;
-import org.exist.indexing.lucene.LuceneFieldConfig;
 import org.exist.indexing.lucene.LuceneConfigs;
 import org.exist.indexing.lucene.LuceneIndex;
 import org.exist.indexing.lucene.LuceneIndexConfig;
@@ -46,7 +44,7 @@ import org.exist.indexing.lucene.LuceneIndexWorker;
 import org.exist.indexing.lucene.LuceneMatch;
 import org.exist.indexing.lucene.LuceneMatchListener;
 import org.exist.indexing.lucene.LuceneUtil;
-import org.exist.indexing.lucene.NodeText;
+import org.exist.security.PermissionDeniedException;
 import org.exist.storage.NodePath;
 import org.exist.util.SentenceBreaker;
 import org.exist.xquery.AnalyzeContextInfo;
@@ -269,52 +267,40 @@ public class Passages extends BasicFunction {
     }
 
     /**
-     * The text of the field: its stored values; or, if it is not stored and has no expression, or if no field is
-     * given, the text of the hit as it was indexed. Null if there is no text.
+     * The text of the field: its stored values, or, if it is not stored, its values computed from the hit as
+     * indexing computes them; or, if no field is given, the text of the hit as it was indexed. Null if there is no
+     * text.
      */
     @Nullable
     private Source source(final NodeProxy hit, @Nullable final String field) throws XPathException {
         try {
             return readSource(hit, field);
-        } catch (final IOException e) {
+        } catch (final IOException | PermissionDeniedException e) {
             throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error reading " + (field == null ? "the indexed text" : "field " + field) + ": " + e.getMessage(), e);
         }
     }
 
     @Nullable
-    private Source readSource(final NodeProxy hit, @Nullable final String field) throws IOException {
+    private Source readSource(final NodeProxy hit, @Nullable final String field)
+            throws IOException, XPathException, PermissionDeniedException {
         final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
         final LuceneConfig config = LuceneConfigs.configured(context.getBroker(), hit.getOwnerDocument().getCollection());
         if (config == null) {
             return null;
         }
         if (field != null) {
-            final IndexableField[] stored = index.getFieldByExistDocId(hit.getOwnerDocument().getDocId(), hit.getNodeId(), field);
-            if (stored.length > 0) {
-                return new Source(field, config.getAnalyzer(field),
-                        Arrays.stream(stored).map(IndexableField::stringValue).toList());
-            }
+            final List<String> values = FieldText.values(index, context.getBroker(), config, hit, field);
+            return values.isEmpty() ? null : new Source(field, config.getAnalyzer(field), values);
         }
         final NodePath path = LuceneMatchListener.getPath(hit);
         for (final Iterator<LuceneIndexConfig> i = config.getConfig(path); i.hasNext(); ) {
             final LuceneIndexConfig indexConfig = i.next();
-            if (field == null ? indexConfig.doIndex() : hasFieldWithoutExpression(indexConfig, field)) {
-                final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, (nodeId, offset) -> { });
-                return field == null
-                        ? new Source(contentField(indexConfig), config.getAnalyzer(path), List.of(text))
-                        : new Source(field, config.getAnalyzer(field), List.of(text));
+            if (indexConfig.doIndex()) {
+                final String text = FieldText.indexedText(context.getBroker(), config, indexConfig, hit);
+                return new Source(contentField(indexConfig), config.getAnalyzer(path), List.of(text));
             }
         }
         return null;
-    }
-
-    private static boolean hasFieldWithoutExpression(final LuceneIndexConfig indexConfig, final String field) {
-        for (final AbstractFieldConfig fieldConfig : indexConfig.getFacetsAndFields()) {
-            if (fieldConfig instanceof LuceneFieldConfig luceneField && field.equals(luceneField.getName())) {
-                return !luceneField.hasExpression();
-            }
-        }
-        return false;
     }
 
     /** The field the index's text is indexed in, as LuceneIndexWorker names it. */
