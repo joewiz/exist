@@ -30,6 +30,7 @@ import org.exist.storage.DBBroker;
 import org.exist.util.Configuration;
 import org.exist.util.DatabaseConfigurationException;
 import org.exist.xquery.CompiledXQuery;
+import org.exist.xquery.Expression;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQuery;
 import org.exist.xquery.value.*;
@@ -38,6 +39,7 @@ import org.w3c.dom.Element;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.xml.datatype.XMLGregorianCalendar;
+import java.io.IOException;
 import java.math.BigInteger;
 import java.util.Map;
 import java.util.Optional;
@@ -158,6 +160,12 @@ public class LuceneFieldConfig extends AbstractFieldConfig {
 
     @Override
     protected void processResult(Sequence result, Document luceneDoc) throws XPathException {
+        processResult(null, result, luceneDoc);
+    }
+
+    @Override
+    protected void processResult(@Nullable final DBBroker broker, final Sequence result, final Document luceneDoc)
+            throws XPathException {
         // the block starts of a stored text field's values are stored beside them, one per value, if any is a node
         final boolean blocks = !binary && store && hasNode(result);
         for (SequenceIterator i = result.unorderedIterator(); i.hasNext(); ) {
@@ -167,11 +175,22 @@ public class LuceneFieldConfig extends AbstractFieldConfig {
             if (field != null) {
                 luceneDoc.add(field);
                 if (blocks && field instanceof TextField) {
-                    final int[] starts = item instanceof NodeValue node ? Blocks.starts(node.getNode()) : new int[0];
-                    luceneDoc.add(new StoredField(Blocks.fieldName(fieldName), Blocks.encode(starts)));
+                    luceneDoc.add(new StoredField(Blocks.fieldName(fieldName), Blocks.encode(blockStarts(broker, item))));
                 }
             }
         }
+    }
+
+    /** The block starts of a value: read as a stream for a stored node, which is faster than walking its DOM. */
+    private static int[] blockStarts(@Nullable final DBBroker broker, final Item item) throws XPathException {
+        if (broker != null && item instanceof NodeProxy proxy) {
+            try {
+                return Blocks.starts(broker, proxy);
+            } catch (final IOException e) {
+                throw new XPathException((Expression) null, "Cannot read the blocks of " + proxy + ": " + e.getMessage(), e);
+            }
+        }
+        return item instanceof NodeValue node ? Blocks.starts(node.getNode()) : new int[0];
     }
 
     private static boolean hasNode(final Sequence result) throws XPathException {

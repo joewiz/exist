@@ -24,9 +24,16 @@ package org.exist.indexing.lucene;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteBuffersDataOutput;
 import org.apache.lucene.util.BytesRef;
+import org.exist.dom.persistent.NodeProxy;
+import org.exist.stax.IEmbeddedXMLStreamReader;
+import org.exist.storage.DBBroker;
 import org.w3c.dom.Node;
 
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
 import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.function.ObjIntConsumer;
 import java.util.stream.IntStream;
 
@@ -35,7 +42,8 @@ import java.util.stream.IntStream;
  *
  * <p>A block is a child of an element without text of its own, only elements and whitespace, such as a TEI div
  * with its head and paragraphs. In an element with text, mixed content, the elements are inline: a name or an
- * emphasis within a sentence. No configuration is needed, and the text indexed is unchanged.</p>
+ * emphasis within a sentence, or an empty element such as a page break or a note's anchor. No configuration is
+ * needed, and the text indexed is unchanged.</p>
  *
  * <p>The starts are offsets in the node's string value, the text of its descendants, as a field with an expression
  * indexes it, and are stored beside the field's value, in the field named by {@link #fieldName(String)}.</p>
@@ -55,6 +63,110 @@ public final class Blocks {
      */
     public static String fieldName(final String field) {
         return field + SUFFIX;
+    }
+
+    /**
+     * Finds the block starts from a node's events in document order, at offsets in whatever text the caller builds
+     * from it: an element's children are blocks once the element has turned out to have elements and no text.
+     */
+    public static final class Tracker {
+        private final Deque<Frame> open = new ArrayDeque<>();
+        private final IntStream.Builder starts = IntStream.builder();
+        private int end = Integer.MAX_VALUE;
+
+        private static final class Frame {
+            private final IntStream.Builder children = IntStream.builder();
+            private boolean elements;
+            private boolean text;
+        }
+
+        /**
+         * An element starts.
+         *
+         * @param offset the offset in the text at which it starts
+         */
+        public void startElement(final int offset) {
+            final Frame parent = open.peek();
+            if (parent != null) {
+                parent.elements = true;
+                parent.children.add(offset);
+            }
+            open.push(new Frame());
+        }
+
+        /**
+         * A text node.
+         *
+         * @param blank whether it is only whitespace
+         */
+        public void text(final boolean blank) {
+            final Frame current = open.peek();
+            if (current != null && !blank) {
+                current.text = true;
+            }
+        }
+
+        /**
+         * An element ends.
+         *
+         * @param offset the offset in the text at which it ends
+         */
+        public void endElement(final int offset) {
+            final Frame frame = open.pop();
+            if (frame.elements && !frame.text) {
+                frame.children.build().forEach(starts::add);
+                // the text after an element with blocks, in its parent, starts a block too
+                starts.add(offset);
+            }
+            if (open.isEmpty()) {
+                end = offset;
+            }
+        }
+
+        /**
+         * The block starts found, except at the start and the end of the node.
+         *
+         * @return the offsets, ascending
+         */
+        public int[] starts() {
+            return starts.build().filter(start -> start > 0 && start < end).sorted().distinct().toArray();
+        }
+    }
+
+    /**
+     * The offsets in a stored node's string value at which a block starts, except at 0, read as a stream of events.
+     *
+     * @param broker the broker to read the node with
+     * @param node the node
+     * @return the offsets, ascending
+     * @throws IOException if the node cannot be read
+     */
+    public static int[] starts(final DBBroker broker, final NodeProxy node) throws IOException {
+        final Tracker tracker = new Tracker();
+        int level = 0;
+        int offset = 0;
+        try {
+            final IEmbeddedXMLStreamReader reader = broker.getXMLStreamReader(node, false);
+            while (reader.hasNext()) {
+                final int event = reader.next();
+                if (event == XMLStreamConstants.START_ELEMENT) {
+                    tracker.startElement(offset);
+                    level++;
+                } else if (event == XMLStreamConstants.END_ELEMENT) {
+                    tracker.endElement(offset);
+                    if (--level <= 0) {
+                        break;
+                    }
+                } else if (event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA) {
+                    final String text = reader.getText();
+                    tracker.text(text.isBlank());
+                    offset += text.length();
+                }
+            }
+        } catch (final XMLStreamException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+        return tracker.starts();
     }
 
     /**
@@ -84,7 +196,7 @@ public final class Blocks {
     }
 
     private static int walk(final Node node, final int offset, final boolean[] pending, final ObjIntConsumer<Node> visitor) {
-        final boolean elementOnly = node.getNodeType() == Node.ELEMENT_NODE && !hasText(node);
+        final boolean elementOnly = node.getNodeType() == Node.ELEMENT_NODE && isElementOnly(node);
         int at = offset;
         for (Node child = node.getFirstChild(); child != null; child = child.getNextSibling()) {
             if (elementOnly) {
@@ -111,14 +223,20 @@ public final class Blocks {
         return at;
     }
 
-    private static boolean hasText(final Node element) {
+    /**
+     * Whether an element has elements and no text of its own: an empty element, such as a page break or an anchor in
+     * a paragraph, is inline.
+     */
+    private static boolean isElementOnly(final Node element) {
+        boolean elements = false;
         for (Node child = element.getFirstChild(); child != null; child = child.getNextSibling()) {
             final short type = child.getNodeType();
             if ((type == Node.TEXT_NODE || type == Node.CDATA_SECTION_NODE) && !child.getNodeValue().isBlank()) {
-                return true;
+                return false;
             }
+            elements |= type == Node.ELEMENT_NODE;
         }
-        return false;
+        return elements;
     }
 
     /**

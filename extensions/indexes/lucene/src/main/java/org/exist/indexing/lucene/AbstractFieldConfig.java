@@ -106,6 +106,18 @@ public abstract class AbstractFieldConfig {
 
     protected abstract void processResult(final Sequence result, final Document luceneDoc) throws XPathException;
 
+    /**
+     * Adds the expression's result to the document, with the broker it was evaluated with.
+     *
+     * @param broker the broker
+     * @param result the expression's result
+     * @param luceneDoc the document
+     * @throws XPathException if the result cannot be added
+     */
+    protected void processResult(final DBBroker broker, final Sequence result, final Document luceneDoc) throws XPathException {
+        processResult(result, luceneDoc);
+    }
+
     protected abstract void processText(CharSequence text, Document luceneDoc);
 
     protected abstract void build(DBBroker broker, NodeProxy contextNode, Document luceneDoc, CharSequence text);
@@ -128,7 +140,7 @@ public abstract class AbstractFieldConfig {
             Sequence result = xquery.execute(broker, compiled, contextNode);
 
             if (!result.isEmpty()) {
-                processResult(result, luceneDoc);
+                processResult(broker, result, luceneDoc);
             }
         } catch (PermissionDeniedException | XPathException e) {
             throw e;

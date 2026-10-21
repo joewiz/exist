@@ -29,6 +29,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The block starts of a node: the children of elements without text of their own, at offsets in its string value.
@@ -53,6 +54,12 @@ class BlocksTest {
     }
 
     @Test
+    void emptyElementsInMixedContentAreInline() throws Exception {
+        final Document doc = parse("<p>a section (enclosed)<anchor n=\"2\"/> which I feel <pb n=\"219\"/> may matter.</p>");
+        assertArrayEquals(new int[] {}, Blocks.starts(doc.getDocumentElement()));
+    }
+
+    @Test
     void whitespaceDoesNotMakeText() throws Exception {
         // string value: "\n  " "Memo" "\n  " "Text." "\n"
         final Document doc = parse("<div>\n  <head>Memo</head>\n  <p>Text.</p>\n</div>");
@@ -64,6 +71,37 @@ class BlocksTest {
         // string value: "Title" "One." "Two." "After."
         final Document doc = parse("<div><head>Title</head><list><item>One.</item><item>Two.</item></list><p>After.</p></div>");
         assertArrayEquals(new int[] {5, 9, 13}, Blocks.starts(doc.getDocumentElement()));
+    }
+
+    /** The tracker, given a node's events as the stream reader gives them, finds the same starts as the walk. */
+    @Test
+    void trackerAgreesWithTheWalk() throws Exception {
+        for (final String xml : new String[] {
+                "<div><head>Report</head><p>The treaty.</p><p>Done.</p></div>",
+                "<p>The <persName>Secretary</persName> left. <hi>Then</hi> he returned.</p>",
+                "<p>a section (enclosed)<anchor n=\"2\"/> which I feel <pb n=\"219\"/> may matter.</p>",
+                "<div>\n  <head>Memo</head>\n  <p>Text.</p>\n</div>",
+                "<div><head>Title</head><list><item>One.</item><item>Two.</item></list><p>After.</p></div>",
+                "<p>Before <list><item>One.</item><item>Two.</item></list> after.</p>"}) {
+            final Document doc = parse(xml);
+            final Blocks.Tracker tracker = new Blocks.Tracker();
+            events(doc.getDocumentElement(), tracker, new int[] {0});
+            assertEquals(java.util.Arrays.toString(Blocks.starts(doc.getDocumentElement())),
+                    java.util.Arrays.toString(tracker.starts()), xml);
+        }
+    }
+
+    private static void events(final org.w3c.dom.Node node, final Blocks.Tracker tracker, final int[] offset) {
+        tracker.startElement(offset[0]);
+        for (org.w3c.dom.Node child = node.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
+                events(child, tracker, offset);
+            } else if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE) {
+                tracker.text(child.getNodeValue().isBlank());
+                offset[0] += child.getNodeValue().length();
+            }
+        }
+        tracker.endElement(offset[0]);
     }
 
     @Test

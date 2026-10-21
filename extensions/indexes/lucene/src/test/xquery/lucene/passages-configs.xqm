@@ -36,7 +36,7 @@ import module namespace ft = "http://exist-db.org/xquery/lucene";
 declare variable $pc:COLLECTION := "/db/test-passages-configs";
 
 declare variable $pc:COMPACT :=
-    <div><head>Report</head><p>The treaty was signed in <hi>Par</hi>is. It was <note>a note on the treaty</note>ratified.</p><p>Nothing else.</p></div>;
+    <div><head>Report</head><p>The treaty was signed in <hi>Par</hi>is.<anchor n="1"/> It was <note>a note on the treaty</note>ratified.<pb n="2"/></p><p>Nothing else.</p></div>;
 
 declare variable $pc:PRETTY := '<div>
     <head>Memo</head>
@@ -177,15 +177,15 @@ function pc:element-form-from-index-text() {
 declare
     %test:assertEquals("Report The treaty was signed in Paris.", "ReportThe treaty was signed in Paris.")
 function pc:blocks-off() {
-    ft:passages(pc:hit("compact.xml", "paris"), (), map { "blocks": false() })?text ! normalize-space(),
-    ft:passages(pc:hit("compact.xml", "dot:paris"), "dot", map { "blocks": false() })?text
+    ft:passages(pc:hit("compact.xml", "paris"), (), map { "as": "map", "blocks": false() })?text ! normalize-space(),
+    ft:passages(pc:hit("compact.xml", "dot:paris"), "dot", map { "as": "map", "blocks": false() })?text
 };
 
 (: an element with text of its own has inline elements: a sentence runs across them :)
 declare
     %test:assertEquals("The treaty was signed in Paris.")
 function pc:mixed-content-is-inline() {
-    ft:passages(pc:hit("compact.xml", "dot:signed"), "dot")?text
+    ft:passages(pc:hit("compact.xml", "dot:signed"), "dot", map { "as": "map" })?text
 };
 
 declare

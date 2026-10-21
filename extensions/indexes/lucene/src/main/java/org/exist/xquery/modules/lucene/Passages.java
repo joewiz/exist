@@ -36,7 +36,6 @@ import org.exist.dom.QName;
 import org.exist.dom.memtree.DocumentBuilderReceiver;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
-import org.exist.dom.persistent.IStoredNode;
 import org.exist.indexing.lucene.AbstractFieldConfig;
 import org.exist.indexing.lucene.Blocks;
 import org.exist.indexing.lucene.LuceneConfig;
@@ -48,7 +47,6 @@ import org.exist.indexing.lucene.LuceneMatch;
 import org.exist.indexing.lucene.LuceneMatchListener;
 import org.exist.indexing.lucene.LuceneUtil;
 import org.exist.indexing.lucene.NodeText;
-import org.exist.numbering.NodeId;
 import org.exist.storage.NodePath;
 import org.exist.util.SentenceBreaker;
 import org.exist.xquery.AnalyzeContextInfo;
@@ -87,10 +85,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 import java.util.function.Supplier;
-import java.util.stream.IntStream;
 
 import static com.evolvedbinary.j8fu.tuple.Tuple.Tuple;
 
@@ -330,17 +325,9 @@ public class Passages extends BasicFunction {
     /** The text of the hit as it was indexed, with the starts of its blocks in it. */
     private Source nodeText(final NodeProxy hit, final LuceneConfig config, final LuceneIndexConfig indexConfig,
             final String field, final Analyzer analyzer) throws IOException {
-        // a TreeMap: NodeId has equals but no hashCode
-        final Map<NodeId, Integer> offsets = new TreeMap<>();
-        final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, offsets::put);
-        final IntStream.Builder starts = IntStream.builder();
-        Blocks.walk(hit.getNode(), (textNode, stringOffset) -> {
-            final Integer offset = offsets.get(((IStoredNode<?>) textNode).getNodeId());
-            if (offset != null && offset > 0) {
-                starts.add(offset);
-            }
-        });
-        return new Source(field, analyzer, List.of(text), List.of(starts.build().toArray()));
+        final Blocks.Tracker blocks = new Blocks.Tracker();
+        final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, (nodeId, offset) -> { }, blocks);
+        return new Source(field, analyzer, List.of(text), List.of(blocks.starts()));
     }
 
     private static boolean hasFieldWithoutExpression(final LuceneIndexConfig indexConfig, final String field) {
