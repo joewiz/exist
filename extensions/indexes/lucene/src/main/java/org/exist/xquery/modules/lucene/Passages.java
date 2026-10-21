@@ -36,7 +36,9 @@ import org.exist.dom.QName;
 import org.exist.dom.memtree.DocumentBuilderReceiver;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
+import org.exist.dom.persistent.IStoredNode;
 import org.exist.indexing.lucene.AbstractFieldConfig;
+import org.exist.indexing.lucene.Blocks;
 import org.exist.indexing.lucene.LuceneConfig;
 import org.exist.indexing.lucene.LuceneFieldConfig;
 import org.exist.indexing.lucene.LuceneIndex;
@@ -46,6 +48,7 @@ import org.exist.indexing.lucene.LuceneMatch;
 import org.exist.indexing.lucene.LuceneMatchListener;
 import org.exist.indexing.lucene.LuceneUtil;
 import org.exist.indexing.lucene.NodeText;
+import org.exist.numbering.NodeId;
 import org.exist.storage.NodePath;
 import org.exist.util.SentenceBreaker;
 import org.exist.xquery.AnalyzeContextInfo;
@@ -84,7 +87,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 import static com.evolvedbinary.j8fu.tuple.Tuple.Tuple;
 
@@ -123,7 +129,9 @@ public class Passages extends BasicFunction {
                     of whitespace as one character (default: no limit); "align", where the matches are put in a \
                     passage that is cut, or in one of "length", as the share of the passage before the first match, \
                     from 0 to 1 (default 0.33); "max-analyzed", the most characters of the text in which matches are \
-                    looked for (default 1000000); "language" and "abbreviations", as for util:sentences; "as", \
+                    looked for (default 1000000); "language" and "abbreviations", as for util:sentences; "blocks", whether a sentence ends where a \
+                    block of the document ends, such as a heading or a paragraph, a child of an element with \
+                    elements and no text of its own (default true); "as", \
                     "element" (the default) or "map"; and, for elements, "mark", the name of the element each match is \
                     in instead of exist:match, such as "mark", or "highlight", a function called with the text of \
                     each match, whose result replaces it. An element is an exist:passage with "start", "end" and \
@@ -156,9 +164,14 @@ public class Passages extends BasicFunction {
     private static final StringValue LANGUAGE = new StringValue("language");
     private static final StringValue ABBREVIATIONS = new StringValue("abbreviations");
     private static final StringValue AS = new StringValue("as");
+    private static final StringValue BLOCKS = new StringValue("blocks");
+    private static final int[] NO_BLOCKS = {};
 
-    /** The text to find passages in: the field's values, the field to highlight them as, and its analyzer. */
-    private record Source(String field, Analyzer analyzer, List<String> values) {
+    /**
+     * The text to find passages in: the field's values, the field to highlight them as, its analyzer, and, for each
+     * value, the offsets at which its blocks start.
+     */
+    private record Source(String field, Analyzer analyzer, List<String> values, List<int[]> blocks) {
     }
 
     /** A passage of one of the field's values. */
@@ -243,19 +256,20 @@ public class Passages extends BasicFunction {
         if (align < 0 || align > 1) {
             throw new XPathException(this, ErrorCodes.XPTY0004, "Option 'align' must be from 0 to 1");
         }
-        final Supplier<BreakIterator> breaks = breakIterator(options, sentences, (float) align);
+        final boolean useBlocks = booleanOption(options, BLOCKS, true);
         final org.apache.lucene.search.Query query = highlightable(match.getQuery());
         for (int v = 0; v < source.values().size(); v++) {
             final String content = analyzed(source.values().get(v), maxAnalyzed);
+            final int[] blocks = useBlocks ? source.blocks().get(v) : NO_BLOCKS;
             if (content != null && !content.isEmpty()) {
                 final UnifiedHighlighter highlighter = UnifiedHighlighter.builderWithoutSearcher(source.analyzer())
-                        .withBreakIterator(breaks)
+                        .withBreakIterator(breakIterator(options, sentences, (float) align, blocks))
                         // the text is cut to max-analyzed already: Lucene cuts only values it loads itself
                         .withMaxLength(Integer.MAX_VALUE - 1)
                         .withMaxNoHighlightPassages(0)
                         .withHandleMultiTermQuery(true)
                         .withHighlightPhrasesStrictly(true)
-                        .withFormatter(new Collector(v, sentences, maxLength, align, found))
+                        .withFormatter(new Collector(v, sentences, blocks, maxLength, align, found))
                         .build();
                 try {
                     highlighter.highlightWithoutSearcher(source.field(), query, content, max);
@@ -287,24 +301,46 @@ public class Passages extends BasicFunction {
         if (config == null) {
             return null;
         }
-        if (field != null) {
-            final IndexableField[] stored = index.getFieldByExistDocId(hit.getOwnerDocument().getDocId(), hit.getNodeId(), field);
-            if (stored.length > 0) {
-                return new Source(field, config.getAnalyzer(field),
-                        Arrays.stream(stored).map(IndexableField::stringValue).toList());
-            }
-        }
         final NodePath path = LuceneMatchListener.getPath(hit);
         for (final Iterator<LuceneIndexConfig> i = config.getConfig(path); i.hasNext(); ) {
             final LuceneIndexConfig indexConfig = i.next();
             if (field == null ? indexConfig.doIndex() : hasFieldWithoutExpression(indexConfig, field)) {
-                final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, (nodeId, offset) -> { });
-                return field == null
-                        ? new Source(contentField(indexConfig), config.getAnalyzer(path), List.of(text))
-                        : new Source(field, config.getAnalyzer(field), List.of(text));
+                // the text of the hit as indexed, which is also the stored value of a field without an expression
+                return nodeText(hit, config, indexConfig, field == null ? contentField(indexConfig) : field,
+                        field == null ? config.getAnalyzer(path) : config.getAnalyzer(field));
             }
         }
-        return null;
+        if (field == null) {
+            return null;
+        }
+        final int docId = hit.getOwnerDocument().getDocId();
+        final IndexableField[] stored = index.getFieldByExistDocId(docId, hit.getNodeId(), field);
+        if (stored.length == 0) {
+            return null;
+        }
+        final IndexableField[] storedBlocks = index.getFieldByExistDocId(docId, hit.getNodeId(), Blocks.fieldName(field));
+        final List<int[]> blocks = new ArrayList<>(stored.length);
+        for (int v = 0; v < stored.length; v++) {
+            // fields indexed before block starts were stored have none
+            blocks.add(storedBlocks.length == stored.length ? Blocks.decode(storedBlocks[v].binaryValue()) : NO_BLOCKS);
+        }
+        return new Source(field, config.getAnalyzer(field), Arrays.stream(stored).map(IndexableField::stringValue).toList(), blocks);
+    }
+
+    /** The text of the hit as it was indexed, with the starts of its blocks in it. */
+    private Source nodeText(final NodeProxy hit, final LuceneConfig config, final LuceneIndexConfig indexConfig,
+            final String field, final Analyzer analyzer) throws IOException {
+        // a TreeMap: NodeId has equals but no hashCode
+        final Map<NodeId, Integer> offsets = new TreeMap<>();
+        final String text = NodeText.of(context.getBroker(), config, indexConfig, hit, offsets::put);
+        final IntStream.Builder starts = IntStream.builder();
+        Blocks.walk(hit.getNode(), (textNode, stringOffset) -> {
+            final Integer offset = offsets.get(((IStoredNode<?>) textNode).getNodeId());
+            if (offset != null && offset > 0) {
+                starts.add(offset);
+            }
+        });
+        return new Source(field, analyzer, List.of(text), List.of(starts.build().toArray()));
     }
 
     private static boolean hasFieldWithoutExpression(final LuceneIndexConfig indexConfig, final String field) {
@@ -330,14 +366,16 @@ public class Passages extends BasicFunction {
     private static final class Collector extends PassageFormatter {
         private final int value;
         private final SentenceBreaker sentences;
+        private final int[] blocks;
         private final int maxLength;
         private final double align;
         private final List<Found> found;
 
-        private Collector(final int value, final SentenceBreaker sentences, final int maxLength, final double align,
-                final List<Found> found) {
+        private Collector(final int value, final SentenceBreaker sentences, final int[] blocks, final int maxLength,
+                final double align, final List<Found> found) {
             this.value = value;
             this.sentences = sentences;
+            this.blocks = blocks;
             this.maxLength = maxLength;
             this.align = align;
             this.found = found;
@@ -345,7 +383,7 @@ public class Passages extends BasicFunction {
 
         @Override
         public Object format(final Passage[] passages, final String text) {
-            final BreakIterator boundaries = sentences.toBreakIterator();
+            final BreakIterator boundaries = sentences.toBreakIterator(blocks);
             boundaries.setText(text);
             for (final Passage passage : passages) {
                 int start = passage.getStartOffset();
@@ -484,13 +522,13 @@ public class Passages extends BasicFunction {
     }
 
     private Supplier<BreakIterator> breakIterator(final AbstractMapType options, final SentenceBreaker sentences,
-            final float align) throws XPathException {
+            final float align, final int[] blocks) throws XPathException {
         final String kind = stringOption(options, BREAK, "sentence");
         return switch (kind) {
-            case "sentence" -> sentences::toBreakIterator;
+            case "sentence" -> () -> sentences.toBreakIterator(blocks);
             case "length" -> {
                 final int length = intOption(options, LENGTH, DEFAULT_LENGTH);
-                yield () -> LengthGoalBreakIterator.createClosestToLength(sentences.toBreakIterator(), length, align);
+                yield () -> LengthGoalBreakIterator.createClosestToLength(sentences.toBreakIterator(blocks), length, align);
             }
             case "whole" -> WholeBreakIterator::new;
             default -> throw new XPathException(this, ErrorCodes.XPTY0004,
@@ -676,6 +714,18 @@ public class Passages extends BasicFunction {
         final FunctionReference function = (FunctionReference) value.itemAt(0);
         function.analyze(new AnalyzeContextInfo());
         return function;
+    }
+
+    private boolean booleanOption(final AbstractMapType options, final StringValue key, final boolean defaultValue)
+            throws XPathException {
+        if (options == null || options.get(key).isEmpty()) {
+            return defaultValue;
+        }
+        final Sequence value = options.get(key);
+        if (!value.hasOne() || value.itemAt(0).getType() != Type.BOOLEAN) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option '" + key.getStringValue() + "' must be a boolean");
+        }
+        return value.effectiveBooleanValue();
     }
 
     private static String stringOption(final AbstractMapType options, final StringValue key, final String defaultValue) throws XPathException {

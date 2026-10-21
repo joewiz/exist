@@ -81,6 +81,17 @@ class SentenceBreakerTest {
     }
 
     @Test
+    void sentencesAlsoEndAtTheGivenBreaks() {
+        final String text = "ReportThe treaty was signed. Done.";
+        final SentenceBreaker breaker = new SentenceBreaker(SentenceBreaker.Options.DEFAULT);
+        assertEquals(List.of(new SentenceBreaker.Span(0, 6), new SentenceBreaker.Span(6, 28), new SentenceBreaker.Span(29, 34)),
+                breaker.sentences(text, new int[] {6}));
+        final BreakIterator iterator = breaker.toBreakIterator(new int[] {6});
+        iterator.setText(text);
+        assertTrue(iterator.isBoundary(6));
+    }
+
+    @Test
     void callersAbbreviationsWithSeveralPeriods() {
         final SentenceBreaker breaker = new SentenceBreaker(
                 new SentenceBreaker.Options("en", List.of("U.S."), true, true, true, false));

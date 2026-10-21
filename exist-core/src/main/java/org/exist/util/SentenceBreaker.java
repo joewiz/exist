@@ -28,6 +28,7 @@ import com.ibm.icu.util.ULocale;
 import java.text.CharacterIterator;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /**
@@ -45,6 +46,8 @@ import java.util.regex.Pattern;
 public final class SentenceBreaker {
 
     /** The characters that ICU's sentence rules treat as ending a paragraph, each one char long. */
+    private static final int[] NO_BREAKS = {};
+
     private static final Pattern NEWLINE = Pattern.compile("[\\n\\r\\u000B\\u000C\\u0085\\u2028\\u2029]");
 
     private final Options options;
@@ -94,8 +97,19 @@ public final class SentenceBreaker {
      * @return the sentences in order, none if the text is only whitespace
      */
     public List<Span> sentences(final CharSequence text) {
+        return sentences(text, NO_BREAKS);
+    }
+
+    /**
+     * Splits text into sentences, which also end at the given offsets, such as the ends of a document's blocks.
+     *
+     * @param text the text
+     * @param breaks offsets in the text at which a sentence ends in any case, in ascending order
+     * @return the sentences in order, none if the text is only whitespace
+     */
+    public List<Span> sentences(final CharSequence text, final int[] breaks) {
         final List<Span> sentences = new ArrayList<>();
-        final int[] ends = ends(text.toString());
+        final int[] ends = ends(text.toString(), breaks);
         int start = 0;
         for (final int end : ends) {
             final Span span = trim(text, start, end);
@@ -110,20 +124,22 @@ public final class SentenceBreaker {
     /**
      * The offsets at which the sentences end, the last being the text's length, after the merge rules.
      */
-    int[] ends(final String text) {
+    int[] ends(final String text, final int[] breaks) {
         final BreakIterator iterator = iterator();
         // ICU ends a sentence at a line break: unless that is wanted, ICU sees a space there, which keeps the offsets
         iterator.setText(options.breakAtNewlines() ? text : NEWLINE.matcher(text).replaceAll(" "));
-        final List<Integer> ends = new ArrayList<>();
+        final TreeSet<Integer> ends = new TreeSet<>();
         for (int end = iterator.next(); end != BreakIterator.DONE; end = iterator.next()) {
-            if (end < text.length() && continues(text, end)) {
-                continue;
+            if (end >= text.length() || !continues(text, end)) {
+                ends.add(end);
             }
-            ends.add(end);
         }
-        if (ends.isEmpty() || ends.getLast() != text.length()) {
-            ends.add(text.length());
+        for (final int end : breaks) {
+            if (end > 0 && end < text.length()) {
+                ends.add(end);
+            }
         }
+        ends.add(text.length());
         return ends.stream().mapToInt(Integer::intValue).toArray();
     }
 
@@ -220,7 +236,18 @@ public final class SentenceBreaker {
      * @return a new iterator
      */
     public java.text.BreakIterator toBreakIterator() {
-        return new BoundaryIterator(this);
+        return toBreakIterator(NO_BREAKS);
+    }
+
+    /**
+     * The sentence boundaries as a {@link java.text.BreakIterator}, with sentences that also end at the given offsets.
+     *
+     * @param breaks offsets in the text the iterator is given at which a sentence ends in any case, relative to the
+     *     text's begin index, in ascending order
+     * @return the iterator
+     */
+    public java.text.BreakIterator toBreakIterator(final int[] breaks) {
+        return new BoundaryIterator(this, breaks);
     }
 
     /**
@@ -229,11 +256,13 @@ public final class SentenceBreaker {
     private static final class BoundaryIterator extends java.text.BreakIterator {
         private final SentenceBreaker breaker;
         private CharacterIterator text = new java.text.StringCharacterIterator("");
+        private final int[] breaks;
         private int[] boundaries = {0};
         private int current = 0;
 
-        private BoundaryIterator(final SentenceBreaker breaker) {
+        private BoundaryIterator(final SentenceBreaker breaker, final int[] breaks) {
             this.breaker = breaker;
+            this.breaks = breaks;
         }
 
         @Override
@@ -244,7 +273,7 @@ public final class SentenceBreaker {
                 sb.append(c);
             }
             final int base = newText.getBeginIndex();
-            final int[] ends = breaker.ends(sb.toString());
+            final int[] ends = breaker.ends(sb.toString(), breaks);
             boundaries = new int[ends.length + 1];
             boundaries[0] = base;
             for (int i = 0; i < ends.length; i++) {
@@ -333,7 +362,7 @@ public final class SentenceBreaker {
 
         @Override
         public Object clone() {
-            final BoundaryIterator copy = new BoundaryIterator(breaker);
+            final BoundaryIterator copy = new BoundaryIterator(breaker, breaks);
             copy.text = (CharacterIterator) text.clone();
             copy.boundaries = boundaries.clone();
             copy.current = current;

@@ -158,13 +158,29 @@ public class LuceneFieldConfig extends AbstractFieldConfig {
 
     @Override
     protected void processResult(Sequence result, Document luceneDoc) throws XPathException {
+        // the block starts of a stored text field's values are stored beside them, one per value, if any is a node
+        final boolean blocks = !binary && store && hasNode(result);
         for (SequenceIterator i = result.unorderedIterator(); i.hasNext(); ) {
-            final String text = i.nextItem().getStringValue();
+            final Item item = i.nextItem();
+            final String text = item.getStringValue();
             final Field field = binary ? convertToDocValue(text) : convertToField(text);
             if (field != null) {
                 luceneDoc.add(field);
+                if (blocks && field instanceof TextField) {
+                    final int[] starts = item instanceof NodeValue node ? Blocks.starts(node.getNode()) : new int[0];
+                    luceneDoc.add(new StoredField(Blocks.fieldName(fieldName), Blocks.encode(starts)));
+                }
             }
         }
+    }
+
+    private static boolean hasNode(final Sequence result) throws XPathException {
+        for (SequenceIterator i = result.iterate(); i.hasNext(); ) {
+            if (Type.subTypeOf(i.nextItem().getType(), Type.NODE)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

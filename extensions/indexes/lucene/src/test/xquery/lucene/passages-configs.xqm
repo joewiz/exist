@@ -86,10 +86,10 @@ declare function pc:hit($doc as xs:string, $query as xs:string) as element(div)?
     doc($pc:COLLECTION || "/" || $doc)/div[ft:query(., $query)]
 };
 
-(: the index's own text: inline elements join their neighbors, ignored elements are left out, and a heading without
- : a final period runs into the sentence after it :)
+(: the index's own text: inline elements join their neighbors, ignored elements are left out, and the heading is a
+ : block of its own, which the sentence after it doesn't run into :)
 declare
-    %test:assertEquals("Report The treaty was signed in Paris.", "It was ratified.")
+    %test:assertEquals("The treaty was signed in Paris.", "It was ratified.")
 function pc:index-text() {
     ft:passages(pc:hit("compact.xml", "treaty OR ratified"), (), map { "as": "map" })?text ! normalize-space()
 };
@@ -104,14 +104,14 @@ function pc:index-text-matches() {
 
 (: a field without an expression stores the index's own text :)
 declare
-    %test:assertEquals("Report The treaty was signed in Paris.")
+    %test:assertEquals("The treaty was signed in Paris.")
 function pc:field-without-expression() {
     ft:passages(pc:hit("compact.xml", "no-expr:paris"), "no-expr", map { "as": "map" })?text ! normalize-space()
 };
 
 (: a field without an expression that is not stored: its text is the node's, as indexed :)
 declare
-    %test:assertEquals("Report The treaty was signed in Paris.")
+    %test:assertEquals("The treaty was signed in Paris.")
 function pc:unstored-field-without-expression() {
     ft:passages(pc:hit("compact.xml", "no-expr-unstored:paris"), "no-expr-unstored", map { "as": "map" })?text ! normalize-space()
 };
@@ -123,10 +123,10 @@ function pc:unstored-field-with-expression() {
     ft:passages(pc:hit("compact.xml", "unstored:paris"), "unstored")
 };
 
-(: expression="." is the string value: nothing separates the elements, so "Report" and "The" are one word, as is
- : "treaty" and the "ratified" after the note, which the field does not ignore :)
+(: expression="." is the string value: nothing separates the elements, so "Report" and "The" are one word to the
+ : index; the block starts stored beside the value still end the heading's sentence there :)
 declare
-    %test:assertEquals("ReportThe treaty was signed in Paris.", "0")
+    %test:assertEquals("The treaty was signed in Paris.", "0")
 function pc:string-value-field() {
     ft:passages(pc:hit("compact.xml", "dot:paris"), "dot", map { "as": "map" })?text,
     string(count(pc:hit("compact.xml", "dot:report")))
@@ -159,7 +159,7 @@ function pc:named-index() {
 
 (: a pretty-printed document: the line breaks and indentation are kept in the text, but don't end sentences :)
 declare
-    %test:assertEquals("Memo The embassy reported on Kashmir.", "true")
+    %test:assertEquals("The embassy reported on Kashmir.", "true")
 function pc:pretty-printed() {
     let $p := ft:passages(pc:hit("pretty.xml", "kashmir"), (), map { "as": "map" })
     return (normalize-space($p?text), string(contains($p?text, "&#10;")))
@@ -171,4 +171,25 @@ declare
 function pc:element-form-from-index-text() {
     let $p := ft:passages(pc:hit("compact.xml", "ratified"), (), map { "as": "element" })
     return $p/exist:match = "ratified" and normalize-space($p) = "It was ratified."
+};
+
+(: without blocks, the heading runs into the sentence after it, in the index's text and in a stored string value :)
+declare
+    %test:assertEquals("Report The treaty was signed in Paris.", "ReportThe treaty was signed in Paris.")
+function pc:blocks-off() {
+    ft:passages(pc:hit("compact.xml", "paris"), (), map { "blocks": false() })?text ! normalize-space(),
+    ft:passages(pc:hit("compact.xml", "dot:paris"), "dot", map { "blocks": false() })?text
+};
+
+(: an element with text of its own has inline elements: a sentence runs across them :)
+declare
+    %test:assertEquals("The treaty was signed in Paris.")
+function pc:mixed-content-is-inline() {
+    ft:passages(pc:hit("compact.xml", "dot:signed"), "dot")?text
+};
+
+declare
+    %test:assertError("XPTY0004")
+function pc:blocks-must-be-boolean() {
+    ft:passages(pc:hit("compact.xml", "paris"), (), map { "blocks": "yes" })
 };
