@@ -59,6 +59,8 @@ public class LuceneModule extends AbstractInternalModule {
         new FunctionDef(QueryField.signatures[0], QueryField.class),
         new FunctionDef(QueryField.signatures[1], QueryField.class),
         new FunctionDef(Score.signature, Score.class),
+        new FunctionDef(Passages.signatures[0], Passages.class),
+        new FunctionDef(Passages.signatures[1], Passages.class),
         new FunctionDef(Optimize.signature, Optimize.class),
         new FunctionDef(Index.signatures[0], Index.class),
         new FunctionDef(Index.signatures[1], Index.class),
