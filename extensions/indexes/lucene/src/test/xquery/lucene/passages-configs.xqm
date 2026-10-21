@@ -91,13 +91,13 @@ declare function pc:hit($doc as xs:string, $query as xs:string) as element(div)?
 declare
     %test:assertEquals("Report The treaty was signed in Paris.", "It was ratified.")
 function pc:index-text() {
-    ft:passages(pc:hit("compact.xml", "treaty OR ratified"), ())?text ! normalize-space()
+    ft:passages(pc:hit("compact.xml", "treaty OR ratified"), (), map { "as": "map" })?text ! normalize-space()
 };
 
 declare
     %test:assertEquals("treaty", "Paris")
 function pc:index-text-matches() {
-    let $p := ft:passages(pc:hit("compact.xml", "treaty paris"), (), map { "max": 1 })
+    let $p := ft:passages(pc:hit("compact.xml", "treaty paris"), (), map { "as": "map", "max": 1 })
     for $m in $p?matches?*
     return substring($p?text, $m?start - $p?start + 1, $m?end - $m?start)
 };
@@ -106,14 +106,14 @@ function pc:index-text-matches() {
 declare
     %test:assertEquals("Report The treaty was signed in Paris.")
 function pc:field-without-expression() {
-    ft:passages(pc:hit("compact.xml", "no-expr:paris"), "no-expr")?text ! normalize-space()
+    ft:passages(pc:hit("compact.xml", "no-expr:paris"), "no-expr", map { "as": "map" })?text ! normalize-space()
 };
 
 (: a field without an expression that is not stored: its text is the node's, as indexed :)
 declare
     %test:assertEquals("Report The treaty was signed in Paris.")
 function pc:unstored-field-without-expression() {
-    ft:passages(pc:hit("compact.xml", "no-expr-unstored:paris"), "no-expr-unstored")?text ! normalize-space()
+    ft:passages(pc:hit("compact.xml", "no-expr-unstored:paris"), "no-expr-unstored", map { "as": "map" })?text ! normalize-space()
 };
 
 (: a field with an expression that is not stored has no text :)
@@ -128,7 +128,7 @@ function pc:unstored-field-with-expression() {
 declare
     %test:assertEquals("ReportThe treaty was signed in Paris.", "0")
 function pc:string-value-field() {
-    ft:passages(pc:hit("compact.xml", "dot:paris"), "dot")?text,
+    ft:passages(pc:hit("compact.xml", "dot:paris"), "dot", map { "as": "map" })?text,
     string(count(pc:hit("compact.xml", "dot:report")))
 };
 
@@ -136,7 +136,7 @@ function pc:string-value-field() {
 declare
     %test:assertEquals("Nothing else.", 2)
 function pc:several-values() {
-    let $p := ft:passages(pc:hit("compact.xml", "paras:nothing"), "paras")
+    let $p := ft:passages(pc:hit("compact.xml", "paras:nothing"), "paras", map { "as": "map" })
     return ($p?text, $p?value)
 };
 
@@ -144,7 +144,7 @@ function pc:several-values() {
 declare
     %test:assertEquals("Paris.")
 function pc:field-analyzer() {
-    let $p := ft:passages(pc:hit("compact.xml", "ws:Paris."), "ws")
+    let $p := ft:passages(pc:hit("compact.xml", "ws:Paris."), "ws", map { "as": "map" })
     for $m in $p?matches?*
     return substring($p?text, $m?start - $p?start + 1, $m?end - $m?start)
 };
@@ -154,14 +154,14 @@ function pc:field-analyzer() {
 declare
     %test:assertEquals("Nothing else.")
 function pc:named-index() {
-    ft:passages(ft:query-field("named", "nothing")[root(.) is doc($pc:COLLECTION || "/compact.xml")], ())?text
+    ft:passages(ft:query-field("named", "nothing")[root(.) is doc($pc:COLLECTION || "/compact.xml")], (), map { "as": "map" })?text
 };
 
 (: a pretty-printed document: the line breaks and indentation are kept in the text, but don't end sentences :)
 declare
     %test:assertEquals("Memo The embassy reported on Kashmir.", "true")
 function pc:pretty-printed() {
-    let $p := ft:passages(pc:hit("pretty.xml", "kashmir"), ())
+    let $p := ft:passages(pc:hit("pretty.xml", "kashmir"), (), map { "as": "map" })
     return (normalize-space($p?text), string(contains($p?text, "&#10;")))
 };
 
