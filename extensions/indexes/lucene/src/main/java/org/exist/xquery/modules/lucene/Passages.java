@@ -33,6 +33,7 @@ import org.apache.lucene.search.uhighlight.UnifiedHighlighter;
 import org.apache.lucene.search.uhighlight.WholeBreakIterator;
 import org.exist.Namespaces;
 import org.exist.dom.QName;
+import org.exist.dom.memtree.DocumentBuilderReceiver;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
 import org.exist.indexing.lucene.AbstractFieldConfig;
@@ -48,6 +49,7 @@ import org.exist.indexing.lucene.LuceneUtil;
 import org.exist.indexing.lucene.NodeText;
 import org.exist.storage.NodePath;
 import org.exist.util.SentenceBreaker;
+import org.exist.xquery.AnalyzeContextInfo;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
 import org.exist.xquery.ErrorCodes;
@@ -60,6 +62,9 @@ import org.exist.xquery.functions.map.MapType;
 import org.exist.xquery.value.AtomicValue;
 import org.exist.xquery.value.DoubleValue;
 import org.exist.xquery.value.FunctionParameterSequenceType;
+import org.exist.xquery.value.FunctionReference;
+import org.exist.xquery.value.Item;
+import org.exist.xquery.value.NumericValue;
 import org.exist.xquery.value.FunctionReturnSequenceType;
 import org.exist.xquery.value.IntegerValue;
 import org.exist.xquery.value.NodeValue;
@@ -69,6 +74,7 @@ import org.exist.xquery.value.SequenceType;
 import org.exist.xquery.value.StringValue;
 import org.exist.xquery.value.Type;
 import org.exist.xquery.value.ValueSequence;
+import org.xml.sax.SAXException;
 import org.xml.sax.helpers.AttributesImpl;
 
 import javax.annotation.Nullable;
@@ -108,20 +114,25 @@ public class Passages extends BasicFunction {
 
     public static final FunctionSignature[] signatures = {
             new FunctionSignature(NAME, DESCRIPTION, new SequenceType[] {HIT, FIELD},
-                    new FunctionReturnSequenceType(Type.MAP_ITEM, Cardinality.ZERO_OR_MORE, "the passages")),
+                    new FunctionReturnSequenceType(Type.ELEMENT, Cardinality.ZERO_OR_MORE, "the passages")),
             new FunctionSignature(NAME, DESCRIPTION + """
-                     Each passage is a map with the keys "text", "start" and "end" (the positions of its first \
-                    character and after its last in the field's value, or in the indexed text of $hit, from 1, so that substring($value, $start, \
-                    $end - $start) is the passage), "score", "matches" (an array of maps with "start" and "end" in \
-                    the same way) and "value" (the position of the field's value the passage is in, if the field has several values). $options is a \
-                    map with the keys: "max", the number of passages (default 3); "break", "sentence" (the default), \
-                    "length" (sentences joined or split to come closest to "length" characters, default 200) or \
-                    "whole" (the whole value); "max-length", the most characters of a passage, which a longer passage \
-                    is cut to around its matches, at word boundaries, counting each run of whitespace as one character \
-                    (default: no limit); "language" and \
-                    "abbreviations", as for util:sentences; and "as", \
-                    "map" (the default) or "element", for exist:passage elements with start, end and score \
-                    attributes and the matches in exist:match elements.""",
+                     $options is a map with the keys: "max", the number of passages (default 3); "order", "document" \
+                    (the default), for the passages in their order in the text, or "score", best first; "break", \
+                    "sentence" (the default), "length" (sentences joined or split to come closest to "length" \
+                    characters, default 200) or "whole" (the whole value); "max-length", the most characters of a \
+                    passage, which a longer passage is cut to around its matches, at word boundaries, counting each run \
+                    of whitespace as one character (default: no limit); "align", where the matches are put in a \
+                    passage that is cut, or in one of "length", as the share of the passage before the first match, \
+                    from 0 to 1 (default 0.33); "max-analyzed", the most characters of the text in which matches are \
+                    looked for (default 1000000); "language" and "abbreviations", as for util:sentences; "as", \
+                    "element" (the default) or "map"; and, for elements, "mark", the name of the element each match is \
+                    in instead of exist:match, such as "mark", or "highlight", a function called with the text of \
+                    each match, whose result replaces it. An element is an exist:passage with "start", "end" and \
+                    "score" attributes. A map has the keys "text", "start" and "end" (the positions of its first \
+                    character and after its last in the field's value, or in the indexed text of $hit, from 1, so that \
+                    substring($value, $start, $end - $start) is the passage), "score", "matches" (an array of maps \
+                    with "start" and "end" in the same way) and "value" (the position of the field's value the passage \
+                    is in, if the field has several values).""",
                     new SequenceType[] {HIT, FIELD,
                             new FunctionParameterSequenceType("options", Type.MAP_ITEM, Cardinality.EXACTLY_ONE, "The options")},
                     new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "the passages"))
@@ -129,13 +140,20 @@ public class Passages extends BasicFunction {
 
     private static final int DEFAULT_MAX = 3;
     private static final int DEFAULT_LENGTH = 200;
-    /** The most characters of a field's value that are highlighted, which Lucene requires to be less than Integer.MAX_VALUE. */
-    private static final int MAX_LENGTH = Integer.MAX_VALUE - 1;
+    /** The most characters of a value in which matches are looked for, by default: Elasticsearch's default too. */
+    private static final int DEFAULT_MAX_ANALYZED = 1_000_000;
+    /** The share of a cut passage before its first match, by default: Solr's default too. */
+    private static final double DEFAULT_ALIGN = 0.33;
 
     private static final StringValue MAX = new StringValue("max");
     private static final StringValue BREAK = new StringValue("break");
     private static final StringValue LENGTH = new StringValue("length");
     private static final StringValue MAX_LENGTH_OPTION = new StringValue("max-length");
+    private static final StringValue MAX_ANALYZED = new StringValue("max-analyzed");
+    private static final StringValue ORDER = new StringValue("order");
+    private static final StringValue ALIGN = new StringValue("align");
+    private static final StringValue MARK = new StringValue("mark");
+    private static final StringValue HIGHLIGHT = new StringValue("highlight");
     private static final StringValue LANGUAGE = new StringValue("language");
     private static final StringValue ABBREVIATIONS = new StringValue("abbreviations");
     private static final StringValue AS = new StringValue("as");
@@ -165,53 +183,86 @@ public class Passages extends BasicFunction {
         }
         final String field = args[1].isEmpty() ? null : args[1].getStringValue();
         final AbstractMapType options = args.length > 2 ? (AbstractMapType) args[2].itemAt(0) : null;
+        final Output output = output(options);
         final int max = intOption(options, MAX, DEFAULT_MAX);
-        final boolean asElements = "element".equals(stringOption(options, AS, "map"));
 
-        final Source source;
-        final List<Found> found;
-        try {
-            source = source(hit, field);
-            found = source == null ? List.of() : findPassages(source, match, options, max);
-        } catch (final IOException e) {
-            throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error highlighting " + (field == null ? "the indexed text" : "field " + field) + ": " + e.getMessage(), e);
+        final Source source = source(hit, field);
+        if (source == null) {
+            return Sequence.EMPTY_SEQUENCE;
         }
+        final List<Found> best = best(findPassages(source, match, options, max), max, output.byScore());
+        if (!output.asElements()) {
+            return toMaps(best, source.values().size() > 1);
+        }
+        return toElements(best, output.mark(), output.highlight() == null ? null : highlighted(best, output.highlight()));
+    }
 
-        // the best passages of all the values, in their order in the text
-        final List<Found> best = found.stream()
-                .sorted(Comparator.comparingDouble((Found f) -> f.score()).reversed())
+    /** How the passages are returned. */
+    private record Output(boolean asElements, boolean byScore, @Nullable String mark, @Nullable FunctionReference highlight) {
+    }
+
+    private Output output(@Nullable final AbstractMapType options) throws XPathException {
+        final boolean asElements = choice(options, AS, "element", "map");
+        final boolean byScore = !choice(options, ORDER, "document", "score");
+        final String mark = stringOption(options, MARK, null);
+        final FunctionReference highlight = functionOption(options, HIGHLIGHT);
+        if (!asElements && (mark != null || highlight != null)) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Options 'mark' and 'highlight' are for elements, not maps");
+        }
+        if (mark != null && highlight != null) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Options 'mark' and 'highlight' cannot both be given");
+        }
+        return new Output(asElements, byScore, mark, highlight);
+    }
+
+    /** The best passages of all the values, best first or in their order in the text. */
+    private static List<Found> best(final List<Found> found, final int max, final boolean byScore) {
+        final Comparator<Found> bestFirst = Comparator.comparingDouble((Found f) -> f.score()).reversed();
+        return found.stream()
+                .sorted(bestFirst)
                 .limit(max)
-                .sorted(Comparator.comparingInt(Found::value).thenComparingInt(Found::start))
+                .sorted(byScore ? bestFirst : Comparator.comparingInt(Found::value).thenComparingInt(Found::start))
                 .toList();
-        final boolean severalValues = source != null && source.values().size() > 1;
-        return asElements ? toElements(best) : toMaps(best, severalValues);
     }
 
     /**
      * The best passages of each of the field's values.
      */
     private List<Found> findPassages(final Source source, final LuceneMatch match, final AbstractMapType options,
-            final int max) throws IOException, XPathException {
+            final int max) throws XPathException {
         final List<Found> found = new ArrayList<>();
         final SentenceBreaker sentences = sentenceBreaker(options);
         final int maxLength = intOption(options, MAX_LENGTH_OPTION, 0);
         if (maxLength < 0) {
             throw new XPathException(this, ErrorCodes.XPTY0004, "Option 'max-length' must not be negative");
         }
-        final Supplier<BreakIterator> breaks = breakIterator(options, sentences);
+        final int maxAnalyzed = intOption(options, MAX_ANALYZED, DEFAULT_MAX_ANALYZED);
+        if (maxAnalyzed < 1) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option 'max-analyzed' must be positive");
+        }
+        final double align = doubleOption(options, ALIGN, DEFAULT_ALIGN);
+        if (align < 0 || align > 1) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option 'align' must be from 0 to 1");
+        }
+        final Supplier<BreakIterator> breaks = breakIterator(options, sentences, (float) align);
         final org.apache.lucene.search.Query query = highlightable(match.getQuery());
         for (int v = 0; v < source.values().size(); v++) {
-            final String content = source.values().get(v);
+            final String content = analyzed(source.values().get(v), maxAnalyzed);
             if (content != null && !content.isEmpty()) {
-                UnifiedHighlighter.builderWithoutSearcher(source.analyzer())
+                final UnifiedHighlighter highlighter = UnifiedHighlighter.builderWithoutSearcher(source.analyzer())
                         .withBreakIterator(breaks)
-                        .withMaxLength(MAX_LENGTH)
+                        // the text is cut to max-analyzed already: Lucene cuts only values it loads itself
+                        .withMaxLength(Integer.MAX_VALUE - 1)
                         .withMaxNoHighlightPassages(0)
                         .withHandleMultiTermQuery(true)
                         .withHighlightPhrasesStrictly(true)
-                        .withFormatter(new Collector(v, sentences, maxLength, found))
-                        .build()
-                        .highlightWithoutSearcher(source.field(), query, content, max);
+                        .withFormatter(new Collector(v, sentences, maxLength, align, found))
+                        .build();
+                try {
+                    highlighter.highlightWithoutSearcher(source.field(), query, content, max);
+                } catch (final IOException e) {
+                    throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error highlighting " + source.field() + ": " + e.getMessage(), e);
+                }
             }
         }
         return found;
@@ -222,7 +273,16 @@ public class Passages extends BasicFunction {
      * given, the text of the hit as it was indexed. Null if there is no text.
      */
     @Nullable
-    private Source source(final NodeProxy hit, @Nullable final String field) throws IOException {
+    private Source source(final NodeProxy hit, @Nullable final String field) throws XPathException {
+        try {
+            return readSource(hit, field);
+        } catch (final IOException e) {
+            throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error reading " + (field == null ? "the indexed text" : "field " + field) + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Nullable
+    private Source readSource(final NodeProxy hit, @Nullable final String field) throws IOException {
         final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
         final LuceneConfig config = LuceneConfigs.configured(context.getBroker(), hit.getOwnerDocument().getCollection());
         if (config == null) {
@@ -272,12 +332,15 @@ public class Passages extends BasicFunction {
         private final int value;
         private final SentenceBreaker sentences;
         private final int maxLength;
+        private final double align;
         private final List<Found> found;
 
-        private Collector(final int value, final SentenceBreaker sentences, final int maxLength, final List<Found> found) {
+        private Collector(final int value, final SentenceBreaker sentences, final int maxLength, final double align,
+                final List<Found> found) {
             this.value = value;
             this.sentences = sentences;
             this.maxLength = maxLength;
+            this.align = align;
             this.found = found;
         }
 
@@ -304,7 +367,7 @@ public class Passages extends BasicFunction {
                 final int[] matchStarts = Arrays.copyOf(passage.getMatchStarts(), passage.getNumMatches());
                 final int[] matchEnds = Arrays.copyOf(passage.getMatchEnds(), passage.getNumMatches());
                 if (maxLength > 0 && end - start > maxLength && matchStarts.length > 0) {
-                    final int[] window = cut(text, start, end, matchStarts, matchEnds, maxLength);
+                    final int[] window = cut(text, start, end, matchStarts, matchEnds, maxLength, align);
                     start = window[0];
                     end = window[1];
                 }
@@ -315,11 +378,11 @@ public class Passages extends BasicFunction {
 
         /**
          * A window of at most maxLength characters of the passage from start to end, as it is shown, with each run of
-         * whitespace as one character: centered on as many of its matches, from the first, as fit whole, and moved in
-         * to word boundaries.
+         * whitespace as one character: around as many of its matches, from the first, as fit whole, with the share
+         * align of the rest before them, and moved in to word boundaries.
          */
         private static int[] cut(final String text, final int start, final int end, final int[] matchStarts,
-                final int[] matchEnds, final int maxLength) {
+                final int[] matchEnds, final int maxLength, final double align) {
             final int[] shown = shownLengths(text, start, end);
             final int first = shown[matchStarts[0] - start];
             int last = Math.min(shown[matchEnds[0] - start], first + maxLength);
@@ -328,7 +391,8 @@ public class Passages extends BasicFunction {
                     last = Math.max(last, shown[matchEnd - start]);
                 }
             }
-            final int to = Math.min(shown[end - start], Math.max(0, first - (maxLength - (last - first)) / 2) + maxLength);
+            final int before = (int) Math.round((maxLength - (last - first)) * align);
+            final int to = Math.min(shown[end - start], Math.max(0, first - before) + maxLength);
             final int from = Math.max(0, to - maxLength);
             final int matchesStart = matchStarts[0];
             final int matchesEnd = start + offsetOf(shown, last);
@@ -420,14 +484,14 @@ public class Passages extends BasicFunction {
         return new SentenceBreaker(new SentenceBreaker.Options(language, abbreviations, true, true, 1, true, false, false, null));
     }
 
-    private Supplier<BreakIterator> breakIterator(final AbstractMapType options, final SentenceBreaker sentences)
-            throws XPathException {
+    private Supplier<BreakIterator> breakIterator(final AbstractMapType options, final SentenceBreaker sentences,
+            final float align) throws XPathException {
         final String kind = stringOption(options, BREAK, "sentence");
         return switch (kind) {
             case "sentence" -> sentences::toBreakIterator;
             case "length" -> {
                 final int length = intOption(options, LENGTH, DEFAULT_LENGTH);
-                yield () -> LengthGoalBreakIterator.createClosestToLength(sentences.toBreakIterator(), length, 0.5f);
+                yield () -> LengthGoalBreakIterator.createClosestToLength(sentences.toBreakIterator(), length, align);
             }
             case "whole" -> WholeBreakIterator::new;
             default -> throw new XPathException(this, ErrorCodes.XPTY0004,
@@ -461,13 +525,35 @@ public class Passages extends BasicFunction {
         return result;
     }
 
-    private Sequence toElements(final List<Found> passages) {
+    /**
+     * The result of the highlight function for each match in each passage, computed before the passages' document is
+     * built, as the function may build nodes of its own.
+     */
+    private List<List<Sequence>> highlighted(final List<Found> passages, final FunctionReference highlight)
+            throws XPathException {
+        final List<List<Sequence>> results = new ArrayList<>(passages.size());
+        for (final Found passage : passages) {
+            final List<Sequence> matches = new ArrayList<>(passage.matchStarts().length);
+            for (int m = 0; m < passage.matchStarts().length; m++) {
+                final int matchStart = Math.max(passage.start(), passage.matchStarts()[m]);
+                final int matchEnd = Math.min(passage.end(), passage.matchEnds()[m]);
+                matches.add(matchStart >= matchEnd ? Sequence.EMPTY_SEQUENCE : highlight.evalFunction(null, null,
+                        new Sequence[] {new StringValue(this, passage.content().substring(matchStart, matchEnd))}));
+            }
+            results.add(matches);
+        }
+        return results;
+    }
+
+    private Sequence toElements(final List<Found> passages, @Nullable final String mark,
+            @Nullable final List<List<Sequence>> highlighted) throws XPathException {
         context.pushDocumentContext();
         try {
             final MemTreeBuilder builder = context.getDocumentBuilder();
             builder.startDocument();
             final List<Integer> nodes = new ArrayList<>(passages.size());
-            for (final Found passage : passages) {
+            for (int p = 0; p < passages.size(); p++) {
+                final Found passage = passages.get(p);
                 final AttributesImpl attributes = new AttributesImpl();
                 attributes.addAttribute("", "start", "start", "CDATA", Integer.toString(position(passage.content(), passage.start())));
                 attributes.addAttribute("", "end", "end", "CDATA", Integer.toString(position(passage.content(), passage.end())));
@@ -483,9 +569,18 @@ public class Passages extends BasicFunction {
                     if (at < matchStart) {
                         builder.characters(passage.content().substring(at, matchStart));
                     }
-                    builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
-                    builder.characters(passage.content().substring(matchStart, matchEnd));
-                    builder.endElement();
+                    final String matchText = passage.content().substring(matchStart, matchEnd);
+                    if (highlighted != null) {
+                        copy(highlighted.get(p).get(m), builder);
+                    } else {
+                        if (mark != null) {
+                            builder.startElement("", mark, mark, null);
+                        } else {
+                            builder.startElement(Namespaces.EXIST_NS, "match", "exist:match", null);
+                        }
+                        builder.characters(matchText);
+                        builder.endElement();
+                    }
                     at = matchEnd;
                 }
                 if (at < passage.end()) {
@@ -504,6 +599,33 @@ public class Passages extends BasicFunction {
         }
     }
 
+    /** The start of a value in which matches are looked for: at most maxAnalyzed characters, without splitting a pair. */
+    @Nullable
+    private static String analyzed(@Nullable final String value, final int maxAnalyzed) {
+        if (value == null || value.length() <= maxAnalyzed) {
+            return value;
+        }
+        final int end = Character.isLowSurrogate(value.charAt(maxAnalyzed)) ? maxAnalyzed - 1 : maxAnalyzed;
+        return value.substring(0, end);
+    }
+
+    /** Copies a highlight function's result into the passage: nodes as they are, atomic values as text. */
+    private void copy(final Sequence items, final MemTreeBuilder builder) throws XPathException {
+        final DocumentBuilderReceiver receiver = new DocumentBuilderReceiver(this, builder);
+        for (final SequenceIterator i = items.iterate(); i.hasNext(); ) {
+            final Item item = i.nextItem();
+            if (Type.subTypeOf(item.getType(), Type.NODE)) {
+                try {
+                    item.copyTo(context.getBroker(), receiver);
+                } catch (final SAXException e) {
+                    throw new XPathException(this, ErrorCodes.XPTY0004, "Cannot copy the highlight function's result: " + e.getMessage(), e);
+                }
+            } else {
+                builder.characters(item.getStringValue());
+            }
+        }
+    }
+
     /** The position, from 1, of the character at a UTF-16 offset, as substring counts characters. */
     private static int position(final String text, final int offset) {
         return text.codePointCount(0, offset) + 1;
@@ -518,6 +640,43 @@ public class Passages extends BasicFunction {
             throw new XPathException(this, ErrorCodes.XPTY0004, "Option '" + key.getStringValue() + "' must be an integer");
         }
         return value.itemAt(0).toJavaObject(Integer.class);
+    }
+
+    /** Whether a string option is its default rather than its alternative; any other value is an error. */
+    private boolean choice(final AbstractMapType options, final StringValue key, final String defaultValue,
+            final String alternative) throws XPathException {
+        final String value = stringOption(options, key, defaultValue);
+        if (!value.equals(defaultValue) && !value.equals(alternative)) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option '" + key.getStringValue() + "' must be '"
+                    + defaultValue + "' or '" + alternative + "', got '" + value + "'");
+        }
+        return value.equals(defaultValue);
+    }
+
+    private double doubleOption(final AbstractMapType options, final StringValue key, final double defaultValue)
+            throws XPathException {
+        if (options == null || options.get(key).isEmpty()) {
+            return defaultValue;
+        }
+        final Sequence value = options.get(key);
+        if (!value.hasOne() || !Type.subTypeOf(value.itemAt(0).getType(), Type.NUMERIC)) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option '" + key.getStringValue() + "' must be a number");
+        }
+        return ((NumericValue) value.itemAt(0)).getDouble();
+    }
+
+    @Nullable
+    private FunctionReference functionOption(final AbstractMapType options, final StringValue key) throws XPathException {
+        if (options == null || options.get(key).isEmpty()) {
+            return null;
+        }
+        final Sequence value = options.get(key);
+        if (!value.hasOne() || !Type.subTypeOf(value.itemAt(0).getType(), Type.FUNCTION)) {
+            throw new XPathException(this, ErrorCodes.XPTY0004, "Option '" + key.getStringValue() + "' must be a function");
+        }
+        final FunctionReference function = (FunctionReference) value.itemAt(0);
+        function.analyze(new AnalyzeContextInfo());
+        return function;
     }
 
     private static String stringOption(final AbstractMapType options, final StringValue key, final String defaultValue) throws XPathException {
