@@ -48,6 +48,7 @@ function pas:setup() {
             <index>
                 <lucene>
                     <text qname="div">
+                        <facet dimension="passages-kind" expression="'report'"/>
                         <field name="text" expression="p"/>
                         <field name="title" expression="head"/>
                         <field name="unstored" expression="p" store="no"/>
@@ -116,6 +117,28 @@ declare
     %test:assertEmpty
 function pas:no-match-in-the-field() {
     ft:passages(pas:hit("title:report"), "text")
+};
+
+(: a hit found with facets, whose query eXist wraps in a drill-down query, has the same passages :)
+declare
+    %test:args('{ "passages-kind": "report" }')
+    %test:assertTrue
+    %test:args('{}')
+    %test:assertTrue
+function pas:facets($facets as xs:string) {
+    let $hit := collection($pas:COLLECTION)//div[ft:query(., "text:treaty", map { "facets": parse-json($facets) })]
+    let $passages := ft:passages($hit, "text") ! string()
+    return exists($passages) and deep-equal($passages, ft:passages(pas:hit("text:treaty"), "text") ! string())
+};
+
+(: a hit found with facets keeps that query's match when it is queried again, as an app may do: the passages are
+ : still found :)
+declare
+    %test:assertTrue
+function pas:facets-then-queried-again() {
+    let $searched := collection($pas:COLLECTION)//div[ft:query(., "text:treaty", map { "facets": map { "passages-kind": "report" } })]
+    let $passages := $searched[ft:query(., "text:treaty")] ! ft:passages(., "text") ! string()
+    return exists($passages) and deep-equal($passages, ft:passages(pas:hit("text:treaty"), "text") ! string())
 };
 
 (: a field that isn't stored has the passages of the same field stored, computed from the node :)

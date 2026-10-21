@@ -23,6 +23,7 @@ package org.exist.xquery.modules.lucene;
 
 import com.evolvedbinary.j8fu.tuple.Tuple2;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.facet.DrillDownQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.uhighlight.LengthGoalBreakIterator;
@@ -439,9 +440,13 @@ public class Passages extends BasicFunction {
     /**
      * The query to highlight with. Without a searcher, the highlighter runs the query against the field's text alone,
      * so a clause that must match another field, such as the filter on the index's type eXist adds, would never
-     * match: such clauses are dropped, and the clauses that must match become clauses that may.
+     * match: such clauses are dropped, and the clauses that must match become clauses that may. The drill-down query
+     * eXist wraps the query in for facets is unwrapped: its dimensions are fields of their own.
      */
     static org.apache.lucene.search.Query highlightable(final org.apache.lucene.search.Query query) {
+        if (query instanceof DrillDownQuery drillDown) {
+            return highlightable(drillDown.getBaseQuery());
+        }
         if (!(query instanceof BooleanQuery booleanQuery)) {
             return query;
         }
