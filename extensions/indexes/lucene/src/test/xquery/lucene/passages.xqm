@@ -118,10 +118,13 @@ function pas:no-match-in-the-field() {
     ft:passages(pas:hit("title:report"), "text")
 };
 
+(: a field that isn't stored has the passages of the same field stored, computed from the node :)
 declare
-    %test:assertEmpty
+    %test:assertTrue
 function pas:unstored-field() {
-    ft:passages(pas:hit("unstored:treaty"), "unstored")
+    let $unstored := ft:passages(pas:hit("unstored:treaty"), "unstored") ! string()
+    let $stored := ft:passages(pas:hit("text:treaty"), "text") ! string()
+    return exists($unstored) and deep-equal($unstored, $stored)
 };
 
 declare
