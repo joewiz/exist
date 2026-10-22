@@ -46,6 +46,10 @@ public final class SentenceBreaker {
 
     /** The characters that ICU's sentence rules treat as ending a paragraph, each one char long. */
     private static final Pattern NEWLINE = Pattern.compile("[\\n\\r\\u000B\\u000C\\u0085\\u2028\\u2029]");
+    /** An em or en dash directly before a letter. */
+    private static final Pattern DASH_BEFORE_LETTER = Pattern.compile("[\\u2014\\u2013](?=\\p{L})");
+    /** The most initials, each a capital letter and a period, that the initials rule takes as one name's. */
+    private static final int MAX_INITIALS = 3;
 
     private final Options options;
     private final ULocale locale;
@@ -56,7 +60,8 @@ public final class SentenceBreaker {
      * @param language a BCP 47 language tag, which selects ICU's rules and CLDR's abbreviations
      * @param abbreviations strings that never end a sentence, e.g. "Amb." or "No."
      * @param cldrAbbreviations whether CLDR's abbreviations for the language never end a sentence either
-     * @param mergeInitials whether a single capital letter and a period followed by a capital doesn't end a sentence
+     * @param mergeInitials whether initials, up to three capital letters each with a period ("J. F.", "R.N."), followed
+     *     by a capital don't end a sentence
      * @param mergeQuotedContinuation whether a question or exclamation mark, closing quotes or brackets and then a
      *     lowercase word don't end a sentence
      * @param breakAtNewlines whether a line break ends a sentence, as in ICU's rules; otherwise it is whitespace, as
@@ -113,7 +118,10 @@ public final class SentenceBreaker {
     int[] ends(final String text) {
         final BreakIterator iterator = iterator();
         // ICU ends a sentence at a line break: unless that is wanted, ICU sees a space there, which keeps the offsets
-        iterator.setText(options.breakAtNewlines() ? text : NEWLINE.matcher(text).replaceAll(" "));
+        final String lines = options.breakAtNewlines() ? text : NEWLINE.matcher(text).replaceAll(" ");
+        // a dash joined to the next word, as in "Negotiations—Mr. Bell", is a space to ICU, so that its abbreviations
+        // apply to the word after it; one character for one, which keeps the offsets
+        iterator.setText(DASH_BEFORE_LETTER.matcher(lines).replaceAll(" "));
         final List<Integer> ends = new ArrayList<>();
         for (int end = iterator.next(); end != BreakIterator.DONE; end = iterator.next()) {
             if (end < text.length() && continues(text, end)) {
@@ -158,20 +166,33 @@ public final class SentenceBreaker {
         for (final String abbreviation : options.abbreviations()) {
             final int start = last + 1 - abbreviation.length();
             if (start >= 0 && text.startsWith(abbreviation, start)
-                    && (start == 0 || Character.isWhitespace(text.charAt(start - 1)) || isOpening(text.charAt(start - 1)))) {
+                    && (start == 0 || Character.isWhitespace(text.charAt(start - 1)) || isOpening(text.charAt(start - 1))
+                            || isDash(text.charAt(start - 1)))) {
                 return true;
             }
         }
         return false;
     }
 
-    /** Whether the text ends at {@code last} with a single capital letter and a period, as an initial does. */
+    /**
+     * Whether the text ends at {@code last} with initials: up to {@value #MAX_INITIALS} capital letters each followed
+     * by a period, as in "J. F.", "R.N." or "U.S.", after whitespace, an opening bracket or quote, or a dash.
+     */
     private static boolean isInitial(final String text, final int last) {
-        if (text.charAt(last) != '.' || last < 1 || !Character.isUpperCase(text.charAt(last - 1))) {
+        int i = last;
+        int initials = 0;
+        while (initials < MAX_INITIALS && i >= 1 && text.charAt(i) == '.' && Character.isUpperCase(text.charAt(i - 1))) {
+            initials++;
+            i -= 2;
+        }
+        if (initials == 0) {
             return false;
         }
-        final int before = last - 2;
-        return before < 0 || Character.isWhitespace(text.charAt(before)) || isOpening(text.charAt(before));
+        return i < 0 || Character.isWhitespace(text.charAt(i)) || isOpening(text.charAt(i)) || isDash(text.charAt(i));
+    }
+
+    private static boolean isDash(final char c) {
+        return c == '—' || c == '–';
     }
 
     /** Whether the text ends at {@code last} with "?" or "!", possibly followed by closing quotes or brackets. */

@@ -87,4 +87,43 @@ class SentenceBreakerTest {
         assertEquals(List.of(new SentenceBreaker.Span(0, 38), new SentenceBreaker.Span(39, 52)),
                 breaker.sentences("He said the U.S. Government would act. Then he left."));
     }
+
+    /*
+     * From a list of participants in the Foreign Relations of the United States, 1969–1976, vol. XXII, document 49:
+     * a title, an em dash and a name, with no sentence ending anywhere in it.
+     */
+
+    @Test
+    void abbreviationAfterADash() {
+        assertOneSentence("Deputy U.S. Negotiator, Panama Canal Treaty Negotiations—Mr. S. Morey Bell Prospective "
+                + "Deputy Chief of Mission, U.S. Embassy Panama—Mr. Ray");
+    }
+
+    @Test
+    void initialsOfSeveralLetters() {
+        assertOneSentence("Director, Joint Staff—Major General R.N. Ginsburgh, USA JCS Representative, Panama Canal "
+                + "Negotiations Working Group—Colonel C.D. Corbett, USA OJCS (J–5) Coordination Representative");
+    }
+
+    @Test
+    void juniorBeforeAComma() {
+        assertOneSentence("Military Assistant to the Secretary of Defense—Major General John A. Wickham, Jr., USA "
+                + "Director, Inter-American Region (ISA)—Major General G.M. Wallace, USA");
+    }
+
+    @Test
+    void sentencesStillEndAfterTheseRules() {
+        final String text = "The talks were held in Panama—Mr. Bunker led them. Mr. Bell left. Colonel C.D. Corbett "
+                + "stayed.";
+        assertEquals(List.of(
+                        new SentenceBreaker.Span(0, text.indexOf("Mr. Bell") - 1),
+                        new SentenceBreaker.Span(text.indexOf("Mr. Bell"), text.indexOf("Colonel") - 1),
+                        new SentenceBreaker.Span(text.indexOf("Colonel"), text.length())),
+                new SentenceBreaker(SentenceBreaker.Options.DEFAULT).sentences(text));
+    }
+
+    private static void assertOneSentence(final String text) {
+        assertEquals(List.of(new SentenceBreaker.Span(0, text.length())),
+                new SentenceBreaker(SentenceBreaker.Options.DEFAULT).sentences(text));
+    }
 }
