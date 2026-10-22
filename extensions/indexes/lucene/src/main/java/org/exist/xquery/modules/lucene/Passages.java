@@ -38,6 +38,7 @@ import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.persistent.NodeProxy;
 import org.exist.indexing.lucene.FieldText;
 import org.exist.indexing.lucene.LuceneConfig;
+import org.exist.indexing.lucene.LuceneConfigs;
 import org.exist.indexing.lucene.LuceneIndex;
 import org.exist.indexing.lucene.LuceneIndexConfig;
 import org.exist.indexing.lucene.LuceneIndexWorker;
@@ -288,7 +289,7 @@ public class Passages extends BasicFunction {
     private Source readSource(final NodeProxy hit, @Nullable final String field)
             throws IOException, XPathException, PermissionDeniedException {
         final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
-        final LuceneConfig config = index.getLuceneConfig(context.getBroker(), hit.getDocumentSet());
+        final LuceneConfig config = LuceneConfigs.configured(context.getBroker(), hit.getOwnerDocument().getCollection());
         if (config == null) {
             return null;
         }
