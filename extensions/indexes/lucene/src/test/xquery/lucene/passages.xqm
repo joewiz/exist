@@ -217,6 +217,53 @@ function pas:max-length-longer-than-the-passage() {
     ft:passages(pas:hit("text:ratification"), "text", map { "as": "map", "max-length": 200 })?text
 };
 
+(: whether max-length cut a passage at its start or its end, as "trimmed-start" and "trimmed-end" :)
+declare %private function pas:trimmed($query as xs:string, $options as map(*)) as xs:string {
+    let $p := ft:passages(pas:hit($query), "text", map:merge(($options, map { "as": "map", "max": 1 })))
+    return string-join(($p?text, string($p?trimmed-start), string($p?trimmed-end)), " | ")
+};
+
+declare
+    %test:assertEquals("Treaty ratification followed. | false | false")
+function pas:trimmed-none() {
+    pas:trimmed("text:ratification", map { "max-length": 200 })
+};
+
+declare
+    %test:assertEquals("older than this | true | true")
+function pas:trimmed-both() {
+    pas:trimmed("text:older", map { "max-length": 15, "align": 0 })
+};
+
+declare
+    %test:assertEquals("the treaty annex were final. | true | false")
+function pas:trimmed-start-only() {
+    pas:trimmed("text:annex", map { "max-length": 30 })
+};
+
+(: a passage at the start of the value, cut only at its end :)
+declare
+    %test:assertEquals("The treaty was discussed at | false | true", "1")
+function pas:trimmed-end-only-at-the-start-of-the-value() {
+    pas:trimmed("text:discussed", map { "max-length": 30, "align": 0.8 }),
+    string(ft:passages(pas:hit("text:discussed"), "text", map { "as": "map", "max": 1, "max-length": 30, "align": 0.8 })?start)
+};
+
+(: the element's attributes say the same as the map's keys :)
+declare
+    %test:args("text:older", 15, 0)
+    %test:assertTrue
+    %test:args("text:annex", 30, 0.33)
+    %test:assertTrue
+    %test:args("text:ratification", 200, 0.33)
+    %test:assertTrue
+function pas:trimmed-element-as-map($query as xs:string, $max-length as xs:integer, $align as xs:double) {
+    let $options := map { "max": 1, "max-length": $max-length, "align": $align }
+    let $element := ft:passages(pas:hit($query), "text", $options)
+    let $map := ft:passages(pas:hit($query), "text", map:merge(($options, map { "as": "map" })))
+    return $element/@trimmed-start = string($map?trimmed-start) and $element/@trimmed-end = string($map?trimmed-end)
+};
+
 declare
     %test:assertError("XPTY0004")
 function pas:max-length-must-not-be-negative() {
