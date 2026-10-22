@@ -25,8 +25,16 @@ import com.evolvedbinary.j8fu.tuple.Tuple2;
 import org.exist.dom.QName;
 import org.exist.dom.persistent.Match;
 import org.exist.dom.persistent.NodeProxy;
+import org.exist.indexing.lucene.AbstractFieldConfig;
+import org.exist.indexing.lucene.LuceneConfig;
+import org.exist.indexing.lucene.LuceneConfigs;
 import org.exist.indexing.lucene.LuceneIndex;
+import org.exist.indexing.lucene.LuceneIndexConfig;
 import org.exist.indexing.lucene.LuceneMatch;
+import org.exist.indexing.lucene.LuceneMatchListener;
+import org.exist.indexing.lucene.LuceneVectorFieldConfig;
+import org.exist.security.PermissionDeniedException;
+import org.exist.storage.NodePath;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
 import org.exist.xquery.FunctionSignature;
@@ -46,7 +54,10 @@ import org.exist.xquery.value.Type;
 import org.exist.xquery.value.ValueSequence;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import static com.evolvedbinary.j8fu.tuple.Tuple.Tuple;
 
@@ -93,10 +104,11 @@ public class VectorChunks extends BasicFunction {
         }
         matches.sort((a, b) -> Float.compare(b.getScore(), a.getScore()));
 
-        final String value = proxy.getStringValue();
         final ValueSequence result = new ValueSequence(matches.size());
+        final Map<String, String> chunkedTexts = new HashMap<>();
         for (final LuceneMatch match : matches) {
             final LuceneMatch.Chunk chunk = match.getChunk();
+            final String value = chunkedTexts.computeIfAbsent(chunk.field(), field -> chunkedText(proxy, field));
             final boolean inValue = chunk.end() <= value.length() && chunk.start() <= chunk.end();
             final List<Tuple2<AtomicValue, Sequence>> entries = new ArrayList<>(6);
             entries.add(Tuple(new StringValue(this, "field"), new StringValue(this, chunk.field())));
@@ -113,5 +125,32 @@ public class VectorChunks extends BasicFunction {
             result.add(new MapType(this, context, null, entries));
         }
         return result;
+    }
+
+    /**
+     * The text the node's chunks of a field were cut from: the field's chunk-units, which may differ from the node's
+     * string value, as when they select part of it; the node's string value if the field's configuration isn't found.
+     */
+    private String chunkedText(final NodeProxy node, final String field) {
+        try {
+            final LuceneConfig config = LuceneConfigs.configured(context.getBroker(), node.getOwnerDocument().getCollection());
+            if (config == null) {
+                return node.getStringValue();
+            }
+            final NodePath path = LuceneMatchListener.getPath(node);
+            for (final Iterator<LuceneIndexConfig> i = config.getConfig(path); i != null && i.hasNext(); ) {
+                for (final AbstractFieldConfig fieldConfig : i.next().getFacetsAndFields()) {
+                    if (fieldConfig instanceof LuceneVectorFieldConfig vectorField && field.equals(vectorField.getName())) {
+                        final String text = vectorField.chunkedText(context.getBroker(), node);
+                        if (text != null) {
+                            return text;
+                        }
+                    }
+                }
+            }
+        } catch (final XPathException | PermissionDeniedException e) {
+            LOG.warn("Could not compute the chunked text of field '{}': {}", field, e.getMessage());
+        }
+        return node.getStringValue();
     }
 }

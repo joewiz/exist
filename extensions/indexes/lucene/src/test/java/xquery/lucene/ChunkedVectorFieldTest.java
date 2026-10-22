@@ -60,8 +60,11 @@ class ChunkedVectorFieldTest {
     private static final String XCONF = """
         <collection xmlns="http://exist-db.org/collection-config/1.0"><index><lucene><text qname="div">\
         <field name="title" expression="head"/><vector-field name="passages" dimension="384" similarity="cosine" embedding="local" model="all-MiniLM-L6-v2" \
-        model-path="%s" chunk="tokens" chunk-overlap="8" chunk-context="head"/></text></lucene></index></collection>"""
-            .formatted(MODEL);
+        model-path="%s" chunk="tokens" chunk-overlap="8" chunk-context="head"/></text>\
+        <text qname="record"><vector-field name="record-passages" dimension="384" similarity="cosine" embedding="local" \
+        model="all-MiniLM-L6-v2" model-path="%s" chunk="tokens" chunk-overlap="8" chunk-units="body/node()"/></text>\
+        </lucene></index></collection>"""
+            .formatted(MODEL, MODEL);
 
     /** Trade talk long past the model's 128 tokens, then a paragraph about a damaged submarine cable. */
     private static final String FILLER = ("The delegations discussed tariff schedules for agricultural exports, quotas on "
@@ -75,7 +78,11 @@ class ChunkedVectorFieldTest {
             <div xml:id="wheat"><head>Telegram to the embassy</head>
                 <p>Wheat and corn harvests were larger than expected, and grain prices fell sharply in the autumn.</p>
             </div>
-        </docs>""".formatted(FILLER);
+            <record xml:id="record"><header>Metadata that the chunks leave out: file number, date, classification.</header>
+                <body><p>%s</p>
+                <p>The submarine telegraph cable between Havana and Key West was cut by a ship's anchor, and repairs will take weeks.</p></body>
+            </record>
+        </docs>""".formatted(FILLER, FILLER);
 
     private static final String PROLOG = """
         xquery version "3.1";
@@ -123,6 +130,25 @@ class ChunkedVectorFieldTest {
         assertTrue(result.itemAt(3).getStringValue().contains("submarine telegraph cable"), result.itemAt(3).getStringValue());
         assertEquals("true", result.itemAt(4).getStringValue(), "the offsets select the chunk's text");
         assertEquals("true", result.itemAt(5).getStringValue());
+    }
+
+    /**
+     * With chunk-units that select part of the node, a chunk's offsets refer to the units' text, here the body's, not
+     * to the node's string value, and its text is cut from the units' text.
+     */
+    @Test
+    void chunkTextIsCutFromTheChunkUnits() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//record[ft:query-vector(., $v, 1)]
+            let $chunk := ft:vector-chunks($hit)
+            let $units := string($hit/body)
+            return (contains($chunk?text, "submarine telegraph cable"),
+                substring($units, $chunk?start + 1, $chunk?end - $chunk?start) = $chunk?text,
+                substring(string($hit), $chunk?start + 1, $chunk?end - $chunk?start) = $chunk?text)
+            """.formatted(COLLECTION));
+        assertEquals("true", result.itemAt(0).getStringValue(), "the chunk is the cable paragraph");
+        assertEquals("true", result.itemAt(1).getStringValue(), "the offsets select the chunk in the units' text");
+        assertEquals("false", result.itemAt(2).getStringValue(), "the node's string value has the header before the body");
     }
 
     /** A chunk carries its node's identity, but a lookup of the node's own fields must not find it. */
