@@ -58,6 +58,7 @@ import org.exist.xquery.functions.array.ArrayType;
 import org.exist.xquery.functions.map.AbstractMapType;
 import org.exist.xquery.functions.map.MapType;
 import org.exist.xquery.value.AtomicValue;
+import org.exist.xquery.value.BooleanValue;
 import org.exist.xquery.value.DoubleValue;
 import org.exist.xquery.value.FunctionParameterSequenceType;
 import org.exist.xquery.value.FunctionReference;
@@ -125,12 +126,14 @@ public class Passages extends BasicFunction {
                     looked for (default 1000000); "language" and "abbreviations", as for util:sentences; "as", \
                     "element" (the default) or "map"; and, for elements, "mark", the name of the element each match is \
                     in instead of exist:match, such as "mark", or "highlight", a function called with the text of \
-                    each match, whose result replaces it. An element is an exist:passage with "start", "end" and \
-                    "score" attributes. A map has the keys "text", "start" and "end" (the positions of its first \
+                    each match, whose result replaces it. An element is an exist:passage with "start", "end", \
+                    "score", "trimmed-start" and "trimmed-end" attributes. A map has the keys "text", "start" and "end" (the positions of its first \
                     character and after its last in the field's value, or in the indexed text of $hit, from 1, so that \
                     substring($value, $start, $end - $start) is the passage), "score", "matches" (an array of maps \
-                    with "start" and "end" in the same way) and "value" (the position of the field's value the passage \
-                    is in, if the field has several values).""",
+                    with "start" and "end" in the same way), "trimmed-start" and "trimmed-end" (true if "max-length" cut the \
+                    passage short at its start or its end, not merely removed whitespace: it starts after, or ends before, its sentence, or the unit of \
+                    "length" or "whole"; false at a sentence's boundary and at the start or end of the text) and \
+                    "value" (the position of the field's value the passage is in, if the field has several values).""",
                     new SequenceType[] {HIT, FIELD,
                             new FunctionParameterSequenceType("options", Type.MAP_ITEM, Cardinality.EXACTLY_ONE, "The options")},
                     new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "the passages"))
@@ -161,7 +164,8 @@ public class Passages extends BasicFunction {
     }
 
     /** A passage of one of the field's values. */
-    private record Found(int value, String content, int start, int end, float score, int[] matchStarts, int[] matchEnds) {
+    private record Found(int value, String content, int start, int end, float score, int[] matchStarts, int[] matchEnds,
+            boolean trimmedStart, boolean trimmedEnd) {
     }
 
     public Passages(final XQueryContext context, final FunctionSignature signature) {
@@ -352,12 +356,16 @@ public class Passages extends BasicFunction {
                 }
                 final int[] matchStarts = Arrays.copyOf(passage.getMatchStarts(), passage.getNumMatches());
                 final int[] matchEnds = Arrays.copyOf(passage.getMatchEnds(), passage.getNumMatches());
+                // the sentence, or the unit of "length" or "whole", before max-length cuts it
+                final int unitStart = start;
+                final int unitEnd = end;
                 if (maxLength > 0 && end - start > maxLength && matchStarts.length > 0) {
                     final int[] window = cut(text, start, end, matchStarts, matchEnds, maxLength, align);
                     start = window[0];
                     end = window[1];
                 }
-                found.add(new Found(value, text, start, end, passage.getScore(), matchStarts, matchEnds));
+                found.add(new Found(value, text, start, end, passage.getScore(), matchStarts, matchEnds,
+                        start > unitStart, end < unitEnd));
             }
             return null;
         }
@@ -506,6 +514,8 @@ public class Passages extends BasicFunction {
                     Tuple(new StringValue(this, "start"), new IntegerValue(this, position(passage.content(), passage.start()))),
                     Tuple(new StringValue(this, "end"), new IntegerValue(this, position(passage.content(), passage.end()))),
                     Tuple(new StringValue(this, "score"), new DoubleValue(this, passage.score())),
+                    Tuple(new StringValue(this, "trimmed-start"), BooleanValue.valueOf(passage.trimmedStart())),
+                    Tuple(new StringValue(this, "trimmed-end"), BooleanValue.valueOf(passage.trimmedEnd())),
                     Tuple(new StringValue(this, "matches"), new ArrayType(this, context, matches))));
             if (severalValues) {
                 entries.add(Tuple(new StringValue(this, "value"), new IntegerValue(this, passage.value() + 1)));
@@ -548,6 +558,8 @@ public class Passages extends BasicFunction {
                 attributes.addAttribute("", "start", "start", "CDATA", Integer.toString(position(passage.content(), passage.start())));
                 attributes.addAttribute("", "end", "end", "CDATA", Integer.toString(position(passage.content(), passage.end())));
                 attributes.addAttribute("", "score", "score", "CDATA", Float.toString(passage.score()));
+                attributes.addAttribute("", "trimmed-start", "trimmed-start", "CDATA", Boolean.toString(passage.trimmedStart()));
+                attributes.addAttribute("", "trimmed-end", "trimmed-end", "CDATA", Boolean.toString(passage.trimmedEnd()));
                 nodes.add(builder.startElement(Namespaces.EXIST_NS, "passage", "exist:passage", attributes));
                 int at = passage.start();
                 for (int m = 0; m < passage.matchStarts().length; m++) {
