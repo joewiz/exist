@@ -61,6 +61,8 @@ import org.exist.storage.txn.Txn;
 import org.exist.util.*;
 import org.exist.util.pool.NodePool;
 import org.exist.xmldb.XmldbURI;
+import org.exist.xquery.ErrorCodes;
+import org.exist.xquery.Expression;
 import org.exist.xquery.QueryRewriter;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
@@ -1811,6 +1813,111 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             .add(new TermQuery(nodeTerm), BooleanClause.Occur.MUST)
             .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_CHUNK)), BooleanClause.Occur.MUST_NOT)
             .build();
+    }
+
+    /**
+     * A chunk of a node's text in a chunked vector field, scored against a vector.
+     *
+     * @param number the chunk's position among the node's chunks, from 0
+     * @param start the offset of its first character in the node's chunked text
+     * @param end the offset after its last character
+     * @param score its vector's score against the vector, as a search of the field scores it
+     */
+    public record ScoredChunk(int number, int start, int end, float score) {
+    }
+
+    /**
+     * Scores the chunks a chunked vector field indexed for a node against a vector, with the field's similarity, as a
+     * search for the vector scores them, so that a node found otherwise, such as by a keyword search, can show the
+     * chunk that best matches the vector. No vector is computed: the chunks' are read from the index.
+     *
+     * @param node the node the field indexed
+     * @param field the chunked vector field
+     * @param vector the vector to score the chunks against
+     * @return the node's chunks, the best first; none if the field indexed none for the node
+     * @throws XPathException if the vector's dimension isn't the field's
+     */
+    public List<ScoredChunk> scoreChunks(final NodeProxy node, final String field, final float[] vector)
+            throws IOException, XPathException {
+        final Query query = new BooleanQuery.Builder()
+                .add(IntField.newExactQuery(FIELD_DOC_ID, node.getOwnerDocument().getDocId()), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(nodeIdTerm(node.getNodeId())), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_CHUNK)), BooleanClause.Occur.FILTER)
+                .add(new FieldExistsQuery(field), BooleanClause.Occur.FILTER)
+                .build();
+        return index.withSearcher(searcher -> {
+            final IndexSearcher indexSearcher = searcher.searcher();
+            final int count = indexSearcher.count(query);
+            final List<ScoredChunk> chunks = new ArrayList<>(count);
+            if (count == 0) {
+                return chunks;
+            }
+            final List<LeafReaderContext> leaves = indexSearcher.getIndexReader().leaves();
+            for (final ScoreDoc hit : indexSearcher.search(query, count).scoreDocs) {
+                final LeafReaderContext leaf = leaves.get(ReaderUtil.subIndex(hit.doc, leaves));
+                final ScoredChunk chunk = scoreChunk(leaf, hit.doc - leaf.docBase, field, vector);
+                if (chunk != null) {
+                    chunks.add(chunk);
+                }
+            }
+            chunks.sort(Comparator.comparingDouble(ScoredChunk::score).reversed()
+                    .thenComparingInt(ScoredChunk::number));
+            return chunks;
+        });
+    }
+
+    @Nullable
+    private ScoredChunk scoreChunk(final LeafReaderContext leaf, final int doc, final String field, final float[] vector)
+            throws IOException, XPathException {
+        final LeafReader reader = leaf.reader();
+        final FloatVectorValues vectors = reader.getFloatVectorValues(field);
+        final FieldInfo info = reader.getFieldInfos().fieldInfo(field);
+        if (vectors == null || info == null) {
+            return null;
+        }
+        if (vectors.dimension() != vector.length) {
+            throw new XPathException((Expression) null, ErrorCodes.EXXQDY0008, "The vector has " + vector.length
+                    + " dimensions, but field '" + field + "' has " + vectors.dimension());
+        }
+        final KnnVectorValues.DocIndexIterator iterator = vectors.iterator();
+        if (iterator.advance(doc) != doc) {
+            return null;
+        }
+        final float score = info.getVectorSimilarityFunction().compare(vector, vectors.vectorValue(iterator.index()));
+        final NumericDocValues numbers = DocValues.getNumeric(reader, FIELD_CHUNK_NUMBER);
+        final NumericDocValues starts = DocValues.getNumeric(reader, FIELD_CHUNK_START);
+        final NumericDocValues ends = DocValues.getNumeric(reader, FIELD_CHUNK_END);
+        if (!numbers.advanceExact(doc) || !starts.advanceExact(doc) || !ends.advanceExact(doc)) {
+            return null;
+        }
+        return new ScoredChunk((int) numbers.longValue(), (int) starts.longValue(), (int) ends.longValue(), score);
+    }
+
+    private static Term nodeIdTerm(final NodeId nodeId) {
+        final byte[] data = new byte[nodeId.size() + 2];
+        ByteConversion.shortToByteH((short) nodeId.units(), data, 0);
+        nodeId.serialize(data, 2);
+        return new Term(LuceneUtil.FIELD_NODE_ID, new BytesRef(data));
+    }
+
+    /**
+     * Parses a query string on a field as {@code ft:query-field} does, with the field's query analyzer and the
+     * configuration's query parser: to find where the query matches a text, without searching.
+     *
+     * @param config the configuration the field is defined in
+     * @param field the field
+     * @param queryString the query
+     * @param options the query's options, such as its default operator
+     * @return the query
+     * @throws XPathException if the query can't be parsed
+     */
+    public Query parseFieldQuery(final LuceneConfig config, final String field, final String queryString,
+            final QueryOptions options) throws XPathException {
+        final Analyzer analyzer = getQueryAnalyzer(config, field, null, options);
+        final QueryParserWrapper configured = config.getQueryParser(field, analyzer);
+        final QueryParserWrapper parser = configured != null ? configured : new ClassicQueryParserWrapper(field, analyzer);
+        options.configureParser(parser.getConfiguration());
+        return options.applyPhraseAsNear(parser.parse(queryString));
     }
 
     public boolean hasIndex(int docId) throws IOException {
