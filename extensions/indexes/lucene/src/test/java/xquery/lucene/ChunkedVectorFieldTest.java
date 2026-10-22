@@ -58,8 +58,9 @@ class ChunkedVectorFieldTest {
     private static final String MODEL = "target/onnx-models/all-MiniLM-L6-v2";
 
     private static final String XCONF = """
-        <collection xmlns="http://exist-db.org/collection-config/1.0"><index><lucene><text qname="div">\
-        <field name="title" expression="head"/><vector-field name="passages" dimension="384" similarity="cosine" embedding="local" model="all-MiniLM-L6-v2" \
+        <collection xmlns="http://exist-db.org/collection-config/1.0"><index><lucene>\
+        <analyzer id="stemmed" class="org.apache.lucene.analysis.en.EnglishAnalyzer"/><text qname="div">\
+        <field name="title" expression="head"/><field name="div-text"/><field name="div-stemmed" analyzer="stemmed"/><vector-field name="passages" dimension="384" similarity="cosine" embedding="local" model="all-MiniLM-L6-v2" \
         model-path="%s" chunk="tokens" chunk-overlap="8" chunk-context="head"/></text>\
         <text qname="record"><vector-field name="record-passages" dimension="384" similarity="cosine" embedding="local" \
         model="all-MiniLM-L6-v2" model-path="%s" chunk="tokens" chunk-overlap="8" chunk-units="body/node()"/></text>\
@@ -88,6 +89,7 @@ class ChunkedVectorFieldTest {
         xquery version "3.1";
         import module namespace ft="http://exist-db.org/xquery/lucene";
         import module namespace vector="http://exist-db.org/xquery/vector";
+        declare namespace exist="http://exist.sourceforge.net/NS/exist";
         declare variable $v := vector:embed("undersea telegraph line damaged", "all-MiniLM-L6-v2", "%s");
         """.formatted(MODEL);
 
@@ -162,6 +164,106 @@ class ChunkedVectorFieldTest {
         assertEquals(2, result.getItemCount());
         assertEquals("Memorandum of conversation", result.itemAt(0).getStringValue());
         assertEquals("Telegram to the embassy", result.itemAt(1).getStringValue());
+    }
+
+    /**
+     * A node found by a keyword search has no vector match: with a vector, its chunks are scored against it, all of
+     * them, the best first, from the vectors in the index.
+     */
+    @Test
+    void vectorRanksTheChunksOfANodeFoundByKeyword() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-field("div-text", "telegraph")]
+            let $plain := ft:vector-chunks($hit)
+            let $chunks := ft:vector-chunks($hit, map { "field": "passages", "vector": $v })
+            return (count($plain), count($chunks) > 1, contains($chunks[1]?text, "submarine telegraph cable"),
+                every $i in 2 to count($chunks) satisfies $chunks[$i - 1]?score >= $chunks[$i]?score,
+                $chunks[1]?field)
+            """.formatted(COLLECTION));
+        assertEquals("0", result.itemAt(0).getStringValue(), "a keyword hit has no vector match");
+        assertEquals("true", result.itemAt(1).getStringValue(), "all of the node's chunks");
+        assertEquals("true", result.itemAt(2).getStringValue(), "the cable paragraph's chunk is the best");
+        assertEquals("true", result.itemAt(3).getStringValue(), "the best first");
+        assertEquals("passages", result.itemAt(4).getStringValue());
+    }
+
+    /** Scored against the query's vector, a node's best chunk has the score the vector search gives the node. */
+    @Test
+    void vectorScoresAsTheSearchDoes() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-vector(., $v, 2)][@xml:id = "cable"]
+            let $scored := ft:vector-chunks($hit, map { "field": "passages", "vector": $v })[1]
+            return (abs($scored?score - ft:score($hit)) < 0.0001, $scored?chunk = ft:vector-chunks($hit)?chunk)
+            """.formatted(COLLECTION));
+        assertEquals("true", result.itemAt(0).getStringValue(), result.itemAt(0).getStringValue());
+        assertEquals("true", result.itemAt(1).getStringValue());
+    }
+
+    /**
+     * The keyword query's matches are marked in each chunk's text, every term that occurs, even where the query as a
+     * whole doesn't match, as here, where "zebra" occurs nowhere and the default operator is "and".
+     */
+    @Test
+    void highlightMarksTheTermsThatOccur() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-vector(., $v, 2)][@xml:id = "cable"]
+            let $chunk := ft:vector-chunks($hit, map {
+                "highlight": map { "field": "div-text", "query": "cable zebra", "options": map { "default-operator": "and" } }
+            })[1]
+            return ($chunk?marked//exist:match ! string(), string($chunk?marked) = $chunk?text, $chunk?marked/local-name())
+            """.formatted(COLLECTION));
+        assertEquals("cable", result.itemAt(0).getStringValue());
+        assertEquals("true", result.itemAt(1).getStringValue(), "the marked text is the chunk's text");
+        assertEquals("chunk", result.itemAt(2).getStringValue());
+    }
+
+    /** The text is analyzed with the field's analyzer: a stemmed field marks the forms of a word it stems alike. */
+    @Test
+    void highlightAnalyzesWithTheFieldsAnalyzer() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-vector(., $v, 2)][@xml:id = "cable"]
+            let $marks := function($field) {
+                ft:vector-chunks($hit, map { "highlight": map { "field": $field, "query": "repair cables" } })[1]
+                    ?marked//exist:match ! string()
+            }
+            return (string-join($marks("div-text"), "|"), string-join($marks("div-stemmed"), "|"))
+            """.formatted(COLLECTION));
+        assertEquals("", result.itemAt(0).getStringValue(), "the plain field has neither 'repair' nor 'cables'");
+        assertEquals("cable|repairs", result.itemAt(1).getStringValue());
+    }
+
+    /** A phrase is marked only where it occurs, as one match, and a wildcard where its terms do. */
+    @Test
+    void highlightPhrasesAndWildcards() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[ft:query-vector(., $v, 2)][@xml:id = "cable"]
+            let $marks := function($query) {
+                string-join(ft:vector-chunks($hit, map { "highlight": map { "field": "div-text", "query": $query } })[1]
+                    ?marked//exist:match ! string(), "|")
+            }
+            return ($marks('"telegraph cable"'), $marks('"cable telegraph"'), $marks('tele*'))
+            """.formatted(COLLECTION));
+        assertEquals("telegraph cable", result.itemAt(0).getStringValue());
+        assertEquals("", result.itemAt(1).getStringValue());
+        assertEquals("telegraph", result.itemAt(2).getStringValue());
+    }
+
+    @Test
+    void vectorNeedsAField() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[@xml:id = "cable"]
+            return try { ft:vector-chunks($hit, map { "vector": $v }) } catch * { $err:code }
+            """.formatted(COLLECTION));
+        assertEquals("exerr:EXXQDY0008", result.itemAt(0).getStringValue());
+    }
+
+    @Test
+    void vectorOfAnotherDimension() throws EXistException, PermissionDeniedException, XPathException {
+        final Sequence result = execute(PROLOG + """
+            let $hit := collection("%s")//div[@xml:id = "cable"]
+            return try { ft:vector-chunks($hit, map { "field": "passages", "vector": [1, 2, 3] }) } catch * { $err:code }
+            """.formatted(COLLECTION));
+        assertEquals("exerr:EXXQDY0008", result.itemAt(0).getStringValue());
     }
 
     private static Sequence execute(final String query) throws EXistException, PermissionDeniedException, XPathException {
