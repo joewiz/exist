@@ -99,11 +99,11 @@ public class Passages extends BasicFunction {
     private static final String DESCRIPTION = """
             Returns the passages of the field $field of $hit, a node found by ft:query, that best match the query it \
             was found by, in their order in the field's text, each with the query's matches in it: by default the 3 \
-            best sentences. The field's text is its stored value; a field that is not stored but has no expression has \
-            the text of $hit, as it was indexed. If $field is empty, the passages are those of the text of $hit, as it \
-            was indexed, for a query on the index rather than on a field. Returns the empty sequence if the query has \
-            no matches in the text, or if there is no text: a field that is neither stored nor without an \
-            expression.""";
+            best sentences. The field's text is its stored values, or, for a field that is not stored, its values \
+            computed from $hit as indexing computes them (its condition, and its expression or the text of $hit as it \
+            was indexed). If $field is empty, the passages are those of the text of $hit, as it was indexed, for a \
+            query on the index rather than on a field. Returns the empty sequence if the query has no matches in the \
+            text.""";
 
     private static final FunctionParameterSequenceType HIT = new FunctionParameterSequenceType("hit", Type.NODE,
             Cardinality.EXACTLY_ONE, "a node found by ft:query");
