@@ -2019,7 +2019,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return getQueryAnalyzer(config, field, qname, opts);
     }
 
-    @Nullable protected Analyzer getQueryAnalyzer(LuceneConfig config, String field, QName qname, QueryOptions opts) {
+    @Nullable public Analyzer getQueryAnalyzer(LuceneConfig config, String field, QName qname, QueryOptions opts) {
         if (config != null) {
             final Analyzer analyzer;
             if (opts.getQueryAnalyzerId() != null) {
