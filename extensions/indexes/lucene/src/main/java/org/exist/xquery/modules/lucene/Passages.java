@@ -58,6 +58,7 @@ import org.exist.xquery.XQueryContext;
 import org.exist.xquery.functions.array.ArrayType;
 import org.exist.xquery.functions.map.AbstractMapType;
 import org.exist.xquery.functions.map.MapType;
+import org.exist.xquery.functions.util.Sentences;
 import org.exist.xquery.value.AtomicValue;
 import org.exist.xquery.value.BooleanValue;
 import org.exist.xquery.value.DoubleValue;
@@ -124,7 +125,9 @@ public class Passages extends BasicFunction {
                     of whitespace as one character (default: no limit); "align", where the matches are put in a \
                     passage that is cut, or in one of "length", as the share of the passage before the first match, \
                     from 0 to 1 (default 0.33); "max-analyzed", the most characters of the text in which matches are \
-                    looked for (default 1000000); "language" and "abbreviations", as for util:sentences; "as", \
+                    looked for (default 1000000); the options of util:sentences for the sentences: "language", "abbreviations", "cldr-abbreviations", \
+                    "merge-initials", "max-initials", "merge-quoted-continuation", "dash-as-space", "break-at-newlines" \
+                    and "rules"; "as", \
                     "element" (the default) or "map"; and, for elements, "mark", the name of the element each match is \
                     in instead of exist:match, such as "mark", or "highlight", a function called with the text of \
                     each match, whose result replaces it. An element is an exist:passage with "start", "end", \
@@ -156,8 +159,6 @@ public class Passages extends BasicFunction {
     private static final StringValue ALIGN = new StringValue("align");
     private static final StringValue MARK = new StringValue("mark");
     private static final StringValue HIGHLIGHT = new StringValue("highlight");
-    private static final StringValue LANGUAGE = new StringValue("language");
-    private static final StringValue ABBREVIATIONS = new StringValue("abbreviations");
     private static final StringValue AS = new StringValue("as");
 
     /** The text to find passages in: the field's values, the field to highlight them as, and its analyzer. */
@@ -234,7 +235,7 @@ public class Passages extends BasicFunction {
     private List<Found> findPassages(final Source source, final LuceneMatch match, final AbstractMapType options,
             final int max) throws XPathException {
         final List<Found> found = new ArrayList<>();
-        final SentenceBreaker sentences = sentenceBreaker(options);
+        final SentenceBreaker sentences = Sentences.sentenceBreaker(this, options);
         final int maxLength = intOption(options, MAX_LENGTH_OPTION, 0);
         if (maxLength < 0) {
             throw new XPathException(this, ErrorCodes.XPTY0004, "Option 'max-length' must not be negative");
@@ -470,17 +471,6 @@ public class Passages extends BasicFunction {
             }
         }
         return clauses == 1 ? only : builder.build();
-    }
-
-    private static SentenceBreaker sentenceBreaker(final AbstractMapType options) throws XPathException {
-        final String language = stringOption(options, LANGUAGE, SentenceBreaker.Options.DEFAULT.language());
-        final List<String> abbreviations = new ArrayList<>();
-        if (options != null) {
-            for (final SequenceIterator i = options.get(ABBREVIATIONS).iterate(); i.hasNext(); ) {
-                abbreviations.add(i.nextItem().getStringValue());
-            }
-        }
-        return new SentenceBreaker(new SentenceBreaker.Options(language, abbreviations, true, true, 1, true, false, false, null));
     }
 
     private Supplier<BreakIterator> breakIterator(final AbstractMapType options, final SentenceBreaker sentences,
