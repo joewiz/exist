@@ -265,6 +265,30 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         }
     }
 
+    /**
+     * The text a node's chunks were cut from, to which their offsets refer: the string values of the node's
+     * {@code chunk-units}, joined without separators. Evaluated with a compiled query of its own, outside indexing.
+     *
+     * @param broker the broker to evaluate with, as its user
+     * @param node the node the field indexed
+     * @return the text, or null if the field isn't chunked
+     * @throws XPathException if the units can't be evaluated
+     * @throws PermissionDeniedException if the user may not evaluate them
+     */
+    public @Nullable String chunkedText(final DBBroker broker, final NodeProxy node)
+            throws XPathException, PermissionDeniedException {
+        if (chunking == null) {
+            return null;
+        }
+        return evaluate(broker, chunking.unitsCode(), node, result -> {
+            final StringBuilder text = new StringBuilder();
+            for (final SequenceIterator i = result.iterate(); i.hasNext(); ) {
+                text.append(i.nextItem().getStringValue());
+            }
+            return text.toString();
+        });
+    }
+
     /** Compiles the chunk expressions once. */
     private boolean compileChunkQueries(final DBBroker broker) {
         if (chunkUnitsQuery == null) {
