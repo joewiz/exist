@@ -26,6 +26,7 @@ import org.apache.logging.log4j.Logger;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Map;
@@ -160,7 +161,7 @@ public final class VectorEmbeddingService {
         final VectorEmbeddingProvider p = OnnxVectorProvider.create(modelPath, dimension);
         if (p != null) {
           LOG.info("Loaded ONNX embedding model: {} from {}", modelId, modelPath);
-          return p;
+          return withCache(p, modelId, modelPath);
         }
       } catch (final Exception e) {
         if (failed.add(key)) {
@@ -171,6 +172,29 @@ public final class VectorEmbeddingService {
       failed.add(key);
       return null;
     });
+  }
+
+  /**
+   * The provider, reading and adding vectors to an {@link EmbeddingCache} if one is configured. The cache is the
+   * model's, by a fingerprint of its files.
+   */
+  private static VectorEmbeddingProvider withCache(final VectorEmbeddingProvider provider, final String modelId,
+      final Path modelPath) {
+    if (!EmbeddingCache.isConfigured()) {
+      return provider;
+    }
+    try {
+      final String fingerprint = EmbeddingCache.fingerprint(modelPath.resolve("model.onnx"), modelPath.resolve("tokenizer.json"));
+      final EmbeddingCache cache = EmbeddingCache.forModel(fingerprint, provider.getDimension());
+      if (cache == null) {
+        return provider;
+      }
+      LOG.info("Embedding cache for model {}: {}", modelId, fingerprint);
+      return new CachingEmbeddingProvider(provider, cache);
+    } catch (final IOException e) {
+      LOG.warn("No embedding cache for model {}, as its files can't be read: {}", modelId, e.getMessage());
+      return provider;
+    }
   }
 
   @Nonnull
