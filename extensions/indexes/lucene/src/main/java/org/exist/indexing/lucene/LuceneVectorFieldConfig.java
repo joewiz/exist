@@ -226,6 +226,21 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
     }
 
     /**
+     * @return whether this field's vectors are kept in vector.dbx ({@code vector-store="db"})
+     */
+    boolean keepsVectors() {
+        return VECTOR_STORE_DB.equals(luceneConfig.getVectorStore());
+    }
+
+    /**
+     * @return the fingerprint of the field's model, as vector.dbx keeps it, or 0 if it isn't known
+     */
+    long modelFingerprint() {
+        final VectorEmbeddingProvider provider = getEmbeddingProvider();
+        return provider == null ? 0 : VectorStores.model(provider.getFingerprint());
+    }
+
+    /**
      * The chunks of a node's text, as {@link VectorChunker} cuts them, with the text to embed for each: the chunk's
      * text after the node's context header, if the field has one.
      *

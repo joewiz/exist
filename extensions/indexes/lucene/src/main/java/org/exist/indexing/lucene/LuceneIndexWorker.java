@@ -55,6 +55,7 @@ import org.exist.security.PermissionDeniedException;
 import org.exist.storage.*;
 import org.exist.storage.btree.DBException;
 import org.exist.storage.vector.VectorStore;
+import org.exist.storage.vector.VectorStores;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.txn.Txn;
 import org.exist.util.*;
@@ -2603,17 +2604,32 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     private record PendingChunks(PendingDoc pending, LuceneVectorFieldConfig.ChunkedText chunked) {
     }
 
+    /** A chunk to index: its number, its offsets in the node's chunked text, and its vector. */
+    private record ChunkVector(int number, int start, int end, float[] vector) {
+    }
+
     /**
-     * Builds the chunk documents of the pending nodes' chunked vector fields. The chunks of all the nodes are embedded
-     * together, in batches, which is much faster than one at a time.
+     * Builds the chunk documents of the pending nodes' chunked vector fields.
+     *
+     * <p>With vector.dbx ({@code vector-store="db"}), a "fulltext" reindex restores a node's chunks as kept there,
+     * without cutting or embedding its text; otherwise the text is cut into chunks, and a chunk whose text and model
+     * are those of the one kept for its node and number is reused, except in a "vector" reindex. The others are
+     * embedded together, in batches, which is much faster than one at a time, and kept.</p>
      *
      * @return the chunk documents of each pending node that has any
      */
     private Map<PendingDoc, List<Document>> buildChunkDocuments() {
+        final ReindexScope scope = broker.getIndexController().getReindexScope();
+        final VectorStore store = broker.getBrokerPool().getVectorStore();
+        final Map<PendingDoc, List<Document>> chunkDocuments = new IdentityHashMap<>();
         final Map<LuceneVectorFieldConfig, List<PendingChunks>> byField = new IdentityHashMap<>();
         for (final PendingDoc pending : nodesToWrite) {
             for (final AbstractFieldConfig config : pending.idxConf.getFacetsAndFields()) {
                 if (config instanceof LuceneVectorFieldConfig vectorField && vectorField.isChunked()) {
+                    if (store != null && vectorField.keepsVectors() && scope == ReindexScope.FULLTEXT
+                            && restoreChunks(store, vectorField, pending, chunkDocuments)) {
+                        continue;
+                    }
                     final short nodeType = pending.qname.getNameType() == ElementValue.ATTRIBUTE
                             ? Node.ATTRIBUTE_NODE : Node.ELEMENT_NODE;
                     final LuceneVectorFieldConfig.ChunkedText chunked =
@@ -2624,37 +2640,155 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 }
             }
         }
-        if (byField.isEmpty()) {
-            return Map.of();
-        }
-
-        final Map<PendingDoc, List<Document>> chunkDocuments = new IdentityHashMap<>();
-        byField.forEach((vectorField, pendingChunks) -> {
-            final List<String> texts = new ArrayList<>();
-            pendingChunks.forEach(p -> texts.addAll(p.chunked().embedTexts()));
-            final List<float[]> vectors = vectorField.embedAll(texts);
-            int v = 0;
-            for (final PendingChunks p : pendingChunks) {
-                final String indexType = indexTypeOf(p.pending());
-                final List<VectorChunker.Chunk> chunks = p.chunked().chunks();
-                for (int c = 0; c < chunks.size(); c++, v++) {
-                    final float[] vector = vectors.get(v);
-                    if (vector == null || vector.length != vectorField.getDimension()) {
-                        continue;
-                    }
-                    final Document chunkDoc = new Document();
-                    chunkDoc.add(new KnnFloatVectorField(vectorField.getName(), vector, vectorField.getSimilarity()));
-                    chunkDoc.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_CHUNK, Field.Store.NO));
-                    chunkDoc.add(new StringField(LuceneUtil.FIELD_INDEX_TYPE, indexType, Field.Store.NO));
-                    addNodeIdentity(chunkDoc, p.pending().nodeId);
-                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_NUMBER, c));
-                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_START, chunks.get(c).start()));
-                    chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_END, chunks.get(c).end()));
-                    chunkDocuments.computeIfAbsent(p.pending(), k -> new ArrayList<>()).add(chunkDoc);
-                }
-            }
-        });
+        byField.forEach((vectorField, pendingChunks) -> embedChunks(vectorField, pendingChunks, scope,
+                store != null && vectorField.keepsVectors() ? store : null, chunkDocuments));
         return chunkDocuments;
+    }
+
+    /** Restores a node's chunks as vector.dbx keeps them; false if it keeps none. */
+    private boolean restoreChunks(final VectorStore store, final LuceneVectorFieldConfig vectorField,
+            final PendingDoc pending, final Map<PendingDoc, List<Document>> chunkDocuments) {
+        final List<VectorStore.Entry> stored;
+        try {
+            stored = store.getChunks(currentDoc.getDocId(), pending.nodeId, vectorField.getName());
+        } catch (final IOException e) {
+            LOG.debug("Could not read chunks from vector.dbx: {}", e.getMessage());
+            return false;
+        }
+        if (stored.isEmpty()) {
+            return false;
+        }
+        final List<ChunkVector> chunks = new ArrayList<>(stored.size());
+        for (int c = 0; c < stored.size(); c++) {
+            final VectorStore.Entry entry = stored.get(c);
+            chunks.add(new ChunkVector(c, entry.start(), entry.end(), entry.vector()));
+        }
+        addChunkDocuments(vectorField, pending, chunks, chunkDocuments);
+        return true;
+    }
+
+    /**
+     * Embeds the chunks of a field's pending nodes, reusing those vector.dbx keeps for the same text and model, and
+     * keeps the vectors computed, and the chunks' offsets where they moved.
+     */
+    private void embedChunks(final LuceneVectorFieldConfig vectorField, final List<PendingChunks> pendingChunks,
+            final ReindexScope scope, @Nullable final VectorStore store, final Map<PendingDoc, List<Document>> chunkDocuments) {
+        final long model = store == null ? 0 : vectorField.modelFingerprint();
+        final boolean reuse = model != 0 && scope != ReindexScope.VECTOR;
+        final List<VectorStore.Entry[]> kept = new ArrayList<>(pendingChunks.size());
+        final List<String> missing = new ArrayList<>();
+        for (final PendingChunks p : pendingChunks) {
+            kept.add(keptChunks(reuse ? store : null, vectorField, p, model, missing));
+        }
+        final Iterator<float[]> computed = (missing.isEmpty() ? List.<float[]>of() : vectorField.embedAll(missing)).iterator();
+        for (int i = 0; i < pendingChunks.size(); i++) {
+            final PendingChunks p = pendingChunks.get(i);
+            final List<ChunkVector> vectors = chunkVectors(store, vectorField, p, kept.get(i), computed, model);
+            if (store != null) {
+                removeChunksFrom(store, vectorField, p.pending(), p.chunked().chunks().size());
+            }
+            addChunkDocuments(vectorField, p.pending(), vectors, chunkDocuments);
+        }
+    }
+
+    /**
+     * The chunks vector.dbx keeps for a node that can be reused, by number, null where none can; the texts of the
+     * others are added to those to embed.
+     */
+    private VectorStore.Entry[] keptChunks(@Nullable final VectorStore store, final LuceneVectorFieldConfig vectorField,
+            final PendingChunks p, final long model, final List<String> missing) {
+        final List<String> texts = p.chunked().embedTexts();
+        final VectorStore.Entry[] entries = new VectorStore.Entry[texts.size()];
+        for (int c = 0; c < texts.size(); c++) {
+            entries[c] = store == null ? null : keptChunk(store, vectorField, p.pending(), c, texts.get(c), model);
+            if (entries[c] == null) {
+                missing.add(texts.get(c));
+            }
+        }
+        return entries;
+    }
+
+    /**
+     * A node's chunks with their vectors, reused or computed, keeping in vector.dbx those computed, and those whose
+     * offsets moved.
+     */
+    private List<ChunkVector> chunkVectors(@Nullable final VectorStore store, final LuceneVectorFieldConfig vectorField,
+            final PendingChunks p, final VectorStore.Entry[] entries, final Iterator<float[]> computed, final long model) {
+        final List<VectorChunker.Chunk> chunks = p.chunked().chunks();
+        final List<ChunkVector> vectors = new ArrayList<>(chunks.size());
+        for (int c = 0; c < chunks.size(); c++) {
+            final VectorChunker.Chunk chunk = chunks.get(c);
+            final VectorStore.Entry entry = entries[c];
+            final float[] vector = entry != null ? entry.vector() : computed.next();
+            if (vector == null || vector.length != vectorField.getDimension()) {
+                continue;
+            }
+            vectors.add(new ChunkVector(c, chunk.start(), chunk.end(), vector));
+            final boolean changed = entry == null || entry.start() != chunk.start() || entry.end() != chunk.end();
+            if (store != null && changed) {
+                keepChunk(store, vectorField, p.pending(), c, new VectorStore.Entry(chunk.start(), chunk.end(),
+                        VectorStores.inputHash(List.of(p.chunked().embedTexts().get(c))), model, vector));
+            }
+        }
+        return vectors;
+    }
+
+    /** The chunk vector.dbx keeps for the node and number, if it was computed from the same text by the same model. */
+    @Nullable
+    private VectorStore.Entry keptChunk(final VectorStore store, final LuceneVectorFieldConfig vectorField,
+            final PendingDoc pending, final int chunk, final String text, final long model) {
+        try {
+            final VectorStore.Entry entry = store.get(currentDoc.getDocId(), pending.nodeId, vectorField.getName(), chunk);
+            if (entry != null && entry.model() == model && entry.inputHash() == VectorStores.inputHash(List.of(text))
+                    && entry.vector().length == vectorField.getDimension()) {
+                return entry;
+            }
+        } catch (final IOException e) {
+            LOG.debug("Could not read a chunk from vector.dbx: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private void keepChunk(final VectorStore store, final LuceneVectorFieldConfig vectorField, final PendingDoc pending,
+            final int chunk, final VectorStore.Entry entry) {
+        final Txn txn = broker.getCurrentTransaction();
+        if (txn == null) {
+            return;
+        }
+        try {
+            store.put(txn, currentDoc.getDocId(), pending.nodeId, vectorField.getName(), chunk, entry);
+        } catch (final IOException e) {
+            LOG.debug("Could not keep a chunk in vector.dbx: {}", e.getMessage());
+        }
+    }
+
+    private void removeChunksFrom(final VectorStore store, final LuceneVectorFieldConfig vectorField,
+            final PendingDoc pending, final int fromChunk) {
+        final Txn txn = broker.getCurrentTransaction();
+        if (txn == null) {
+            return;
+        }
+        try {
+            store.removeChunksFrom(txn, currentDoc.getDocId(), pending.nodeId, vectorField.getName(), fromChunk);
+        } catch (final IOException e) {
+            LOG.debug("Could not remove chunks from vector.dbx: {}", e.getMessage());
+        }
+    }
+
+    private void addChunkDocuments(final LuceneVectorFieldConfig vectorField, final PendingDoc pending,
+            final List<ChunkVector> chunks, final Map<PendingDoc, List<Document>> chunkDocuments) {
+        final String indexType = indexTypeOf(pending);
+        for (final ChunkVector chunk : chunks) {
+            final Document chunkDoc = new Document();
+            chunkDoc.add(new KnnFloatVectorField(vectorField.getName(), chunk.vector(), vectorField.getSimilarity()));
+            chunkDoc.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_CHUNK, Field.Store.NO));
+            chunkDoc.add(new StringField(LuceneUtil.FIELD_INDEX_TYPE, indexType, Field.Store.NO));
+            addNodeIdentity(chunkDoc, pending.nodeId);
+            chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_NUMBER, chunk.number()));
+            chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_START, chunk.start()));
+            chunkDoc.add(new NumericDocValuesField(FIELD_CHUNK_END, chunk.end()));
+            chunkDocuments.computeIfAbsent(pending, k -> new ArrayList<>()).add(chunkDoc);
+        }
     }
 
     private void write() {
