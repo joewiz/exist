@@ -34,6 +34,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import ai.onnxruntime.OnnxValue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -78,10 +79,14 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
   // `closed` and returns null instead of touching a freed session/tokenizer.
   private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
   private volatile boolean closed = false;
+  /** The model's files, for its fingerprint. */
+  private final Path[] modelFiles;
+  @Nullable private volatile String fingerprint;
 
   private OnnxVectorProvider(final OrtEnvironment env, final OrtSession session,
       final HuggingFaceTokenizer tokenizer, @Nullable final HuggingFaceTokenizer spanTokenizer, final int dimension, final String outputName,
-      final String tokenTypeIdsInputName) {
+      final String tokenTypeIdsInputName, final Path... modelFiles) {
+    this.modelFiles = modelFiles;
     this.env = env;
     this.session = session;
     this.tokenizer = tokenizer;
@@ -94,6 +99,26 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
   @Override
   public int getDimension() {
     return dimension;
+  }
+
+  /**
+   * A hash of the model's files, computed once: the model is the same, whatever its name or path, only if its files
+   * are.
+   */
+  @Nullable
+  @Override
+  public String getFingerprint() {
+    String computed = fingerprint;
+    if (computed == null) {
+      try {
+        computed = ModelFingerprint.of(modelFiles);
+        fingerprint = computed;
+      } catch (final IOException e) {
+        LOG.warn("Could not compute the fingerprint of the model's files: {}", e.getMessage());
+        return null;
+      }
+    }
+    return computed;
   }
 
   /**
@@ -411,7 +436,8 @@ public final class OnnxVectorProvider implements VectorEmbeddingProvider {
       final String tokenTypeIdsInputName = resolveTokenTypeIdsInput(session);
       final String outputName = resolveOutputName(session);
 
-      return new OnnxVectorProvider(env, session, tokenizer, spanTokenizer, dimension, outputName, tokenTypeIdsInputName);
+      return new OnnxVectorProvider(env, session, tokenizer, spanTokenizer, dimension, outputName, tokenTypeIdsInputName,
+          modelFile, tokenizerFile);
     } catch (final Exception e) {
       LOG.warn("Failed to create OnnxVectorProvider: {}", e.getMessage());
       closeQuietly(session, tokenizer);

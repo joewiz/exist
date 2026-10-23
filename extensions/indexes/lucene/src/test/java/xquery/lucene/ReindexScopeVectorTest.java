@@ -27,6 +27,7 @@ import org.exist.security.PermissionDeniedException;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.DBBroker;
 import org.exist.storage.txn.Txn;
+import org.exist.storage.vector.VectorStore;
 import org.exist.storage.vector.VectorStoreImpl;
 import org.exist.test.ExistEmbeddedServer;
 import org.exist.util.ConfigurationHelper;
@@ -35,8 +36,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -108,10 +107,11 @@ class ReindexScopeVectorTest {
         try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
             node = (NodeProxy) pool.getXQueryService().execute(broker, "collection('/db/scope-restored')//p", null).itemAt(0);
         }
-        final ByteBuffer planted = ByteBuffer.allocate(384 * Float.BYTES).order(ByteOrder.LITTLE_ENDIAN);
-        planted.putFloat(0, 1);
+        final float[] planted = new float[384];
+        planted[0] = 1;
         try (final Txn txn = pool.getTransactionManager().beginTransaction()) {
-            pool.getVectorStore().put(txn, node.getOwnerDocument().getURI().toString(), node.getNodeId(), planted.array());
+            pool.getVectorStore().put(txn, node.getOwnerDocument().getDocId(), node.getNodeId(), "v", 0,
+                    new VectorStore.Entry(0, 0, 0, 0, planted));
             pool.getTransactionManager().commit(txn);
         }
         execute("xmldb:reindex('/db/scope-restored', 'fulltext')");

@@ -398,7 +398,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
     protected void removeDocument(int docId) {
         if (!broker.getIndexController().isReindexing()) {
             // a reindex rewrites the same nodes, whose stored vectors a "fulltext" reindex restores
-            removeVectorStoreForDocument(currentDoc.getURI().toString());
+            removeVectorStoreForDocument(currentDoc.getDocId());
         }
     	IndexWriter writer = null;
         try {
@@ -419,7 +419,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         }
     }
 
-    private void removeVectorStoreForDocument(String docPath) {
+    private void removeVectorStoreForDocument(final int docId) {
         final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
         if (vectorStore == null) {
             return;
@@ -429,13 +429,13 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             return;
         }
         try {
-            vectorStore.removeByDocument(txn, docPath);
+            vectorStore.removeByDocument(txn, docId);
         } catch (IOException e) {
-            LOG.debug("Failed to remove vectors for document {}: {}", docPath, e.getMessage());
+            LOG.debug("Failed to remove vectors for document {}: {}", docId, e.getMessage());
         }
     }
 
-    private void removeVectorStoreForNodes(String docPath, Set<NodeId> nodeIds) {
+    private void removeVectorStoreForNodes(final int docId, final Set<NodeId> nodeIds) {
         final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
         if (vectorStore == null || nodeIds == null || nodeIds.isEmpty()) {
             return;
@@ -446,7 +446,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         }
         try {
             for (NodeId nodeId : nodeIds) {
-                vectorStore.remove(txn, docPath, nodeId);
+                vectorStore.removeNode(txn, docId, nodeId);
             }
         } catch (IOException e) {
             LOG.debug("Failed to remove vectors for nodes: {}", e.getMessage());
@@ -485,7 +485,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             try {
                 for (Iterator<DocumentImpl> i = collection.iterator(broker); i.hasNext(); ) {
                     DocumentImpl doc = i.next();
-                    vectorStore.removeByDocument(txn, doc.getURI().toString());
+                    vectorStore.removeByDocument(txn, doc.getDocId());
                 }
             } catch (IOException | PermissionDeniedException | LockException e) {
                 LOG.debug("Failed to remove vectors for collection: {}", e.getMessage());
@@ -604,7 +604,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
             return;
         if (!broker.getIndexController().isReindexing()) {
             // a reindex rewrites the same nodes, whose stored vectors a "fulltext" reindex restores
-            removeVectorStoreForNodes(currentDoc.getURI().toString(), nodesToRemove);
+            removeVectorStoreForNodes(currentDoc.getDocId(), nodesToRemove);
         }
         IndexWriter writer = null;
         try {

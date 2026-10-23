@@ -33,6 +33,7 @@ import org.exist.numbering.NodeId;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.DBBroker;
 import org.exist.storage.vector.VectorStore;
+import org.exist.storage.vector.VectorStores;
 import org.exist.xquery.CompiledXQuery;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.value.Sequence;
@@ -478,24 +479,16 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         if (provider == null) {
             return;
         }
-        final List<float[]> vectors = new ArrayList<>();
+        final List<String> texts = new ArrayList<>();
         for (SequenceIterator i = result.unorderedIterator(); i.hasNext(); ) {
             final String content = i.nextItem().getStringValue().trim();
-            if (content.isEmpty()) {
-                continue;
-            }
-            final float[] vec = provider.embed(content);
-            if (vec != null) {
-                vectors.add(vec);
+            if (!content.isEmpty()) {
+                texts.add(content);
             }
         }
-        if (vectors.isEmpty()) {
-            return;
-        }
-        final float[] combined = vectors.size() == 1 ? vectors.getFirst() : meanPool(vectors);
-        if (combined != null) {
-            luceneDoc.add(new KnnFloatVectorField(fieldName, combined, similarity));
-            storeVectorIfLocal(combined);
+        final float[] vector = vectorOf(provider, texts);
+        if (vector != null) {
+            luceneDoc.add(new KnnFloatVectorField(fieldName, vector, similarity));
         }
     }
 
@@ -508,10 +501,9 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         if (embeddingLocal) {
             final VectorEmbeddingProvider provider = getEmbeddingProvider();
             if (provider != null) {
-                final float[] vec = provider.embed(content);
+                final float[] vec = vectorOf(provider, List.of(content));
                 if (vec != null) {
                     luceneDoc.add(new KnnFloatVectorField(fieldName, vec, similarity));
-                    storeVectorIfLocal(vec);
                 }
             }
             return;
@@ -535,44 +527,83 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         }
     }
 
-    private static final class StoreContext {
-        final DBBroker broker;
-        final String docPath;
-        final NodeId nodeId;
-
-        StoreContext(final DBBroker broker, final DocumentImpl document, final NodeId nodeId) {
-            this.broker = broker;
-            this.docPath = document.getURI().toString();
-            this.nodeId = nodeId;
-        }
+    /** The node a vector is computed for, and the reindex's scope, while it is built. */
+    private record StoreContext(DBBroker broker, int docId, NodeId nodeId, ReindexScope scope) {
     }
 
-    private void storeVectorIfLocal(final float[] vec) {
-        if (!VECTOR_STORE_DB.equals(luceneConfig.getVectorStore())) {
-            return;
+    /**
+     * The vector of a node's texts, embedded one by one and averaged. It is the one vector.dbx keeps for the node, if
+     * it was computed from the same texts by the same model, unless the reindex is one that computes the vectors
+     * again ({@link ReindexScope#VECTOR}); otherwise it is computed, and kept in vector.dbx.
+     *
+     * @param provider the model
+     * @param texts the texts
+     * @return the vector, or null if none could be computed
+     */
+    @Nullable
+    private float[] vectorOf(final VectorEmbeddingProvider provider, final List<String> texts) {
+        if (texts.isEmpty()) {
+            return null;
         }
         final StoreContext ctx = STORE_CONTEXT.get();
-        if (ctx == null) {
+        final VectorStore store = ctx == null ? null : ctx.broker().getBrokerPool().getVectorStore();
+        final long inputHash = VectorStores.inputHash(texts);
+        final long model = VectorStores.model(provider.getFingerprint());
+        if (store != null && model != 0 && ctx.scope() != ReindexScope.VECTOR) {
+            final float[] stored = storedVector(store, ctx, inputHash, model);
+            if (stored != null) {
+                return stored;
+            }
+        }
+        final float[] computed = computeVector(provider, texts);
+        if (computed != null && store != null) {
+            keep(store, ctx, new VectorStore.Entry(0, 0, inputHash, model, computed));
+        }
+        return computed;
+    }
+
+    /** The vector vector.dbx keeps for the node, if it was computed from the same input by the same model. */
+    @Nullable
+    private float[] storedVector(final VectorStore store, final StoreContext ctx, final long inputHash, final long model) {
+        try {
+            final VectorStore.Entry stored = store.get(ctx.docId(), ctx.nodeId(), fieldName, 0);
+            if (stored != null && stored.inputHash() == inputHash && stored.model() == model
+                    && stored.vector().length == dimension && allFinite(stored.vector())) {
+                return stored.vector();
+            }
+        } catch (final IOException e) {
+            LOG.debug("Could not read a vector from vector.dbx: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /** The texts embedded one by one and averaged, or null if none could be. */
+    @Nullable
+    private float[] computeVector(final VectorEmbeddingProvider provider, final List<String> texts) {
+        final List<float[]> vectors = new ArrayList<>(texts.size());
+        for (final String text : texts) {
+            final float[] vector = provider.embed(text);
+            if (vector != null) {
+                vectors.add(vector);
+            }
+        }
+        if (vectors.isEmpty()) {
+            return null;
+        }
+        return vectors.size() == 1 ? vectors.getFirst() : meanPool(vectors);
+    }
+
+    /** Keeps the node's vector in vector.dbx, in the current transaction. */
+    private void keep(final VectorStore store, final StoreContext ctx, final VectorStore.Entry entry) {
+        final Txn txn = ctx.broker().getCurrentTransaction();
+        if (txn == null) {
             return;
         }
         try {
-            final VectorStore vectorStore = ctx.broker.getBrokerPool().getVectorStore();
-            if (vectorStore != null) {
-                final Txn txn = ctx.broker.getCurrentTransaction();
-                if (txn != null) {
-                    final byte[] bytes = floatsToBytes(vec);
-                    vectorStore.put(txn, ctx.docPath, ctx.nodeId, bytes);
-                }
-            }
-        } catch (IOException e) {
-            LOG.debug("Failed to store vector in vector.dbx: {}", e.getMessage());
+            store.put(txn, ctx.docId(), ctx.nodeId(), fieldName, 0, entry);
+        } catch (final IOException e) {
+            LOG.debug("Could not keep a vector in vector.dbx: {}", e.getMessage());
         }
-    }
-
-    private static byte[] floatsToBytes(final float[] vec) {
-        final ByteBuffer buf = ByteBuffer.allocate(vec.length * 4).order(ByteOrder.LITTLE_ENDIAN);
-        buf.asFloatBuffer().put(vec);
-        return buf.array();
     }
 
     @Override
@@ -592,7 +623,7 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
                 return;
             }
             if (embeddingLocal && VECTOR_STORE_DB.equals(luceneConfig.getVectorStore())) {
-                STORE_CONTEXT.set(new StoreContext(broker, document, nodeId));
+                STORE_CONTEXT.set(new StoreContext(broker, document.getDocId(), nodeId, scope));
             }
             try {
                 doBuild(broker, contextNode, luceneDoc, text);
@@ -626,25 +657,16 @@ public class LuceneVectorFieldConfig extends AbstractFieldConfig {
         if (vectorStore == null) {
             return false;
         }
-        final byte[] stored = vectorStore.get(document.getURI().toString(), nodeId);
-        if (stored == null || stored.length != dimension * 4) {
+        final VectorStore.Entry stored = vectorStore.get(document.getDocId(), nodeId, fieldName, 0);
+        if (stored == null || stored.vector().length != dimension) {
             return false;
         }
-        final float[] vec = bytesToFloats(stored);
-        if (vec != null && allFinite(vec)) {
+        final float[] vec = stored.vector();
+        if (allFinite(vec)) {
             luceneDoc.add(new KnnFloatVectorField(fieldName, vec, similarity));
             return true;
         }
         return false;
-    }
-
-    private static float[] bytesToFloats(final byte[] bytes) {
-        if (bytes.length % 4 != 0) {
-            return null;
-        }
-        final float[] vec = new float[bytes.length / 4];
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(vec);
-        return vec;
     }
 
     /**

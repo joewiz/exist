@@ -38,6 +38,18 @@ public interface VectorEmbeddingProvider {
   int getDimension();
 
   /**
+   * A fingerprint of the model: the same for any two providers that compute the same vectors, and different for
+   * any two that don't, such as after the model's files were replaced. Used to tell whether a stored vector was
+   * computed by this model.
+   *
+   * @return the fingerprint, as hexadecimal digits, or null if it isn't known
+   */
+  @Nullable
+  default String getFingerprint() {
+    return null;
+  }
+
+  /**
    * Embeds the given text into a dense float vector.
    *
    * @param text input text (non-null, may be empty)

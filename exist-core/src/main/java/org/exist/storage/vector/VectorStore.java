@@ -22,57 +22,102 @@
 package org.exist.storage.vector;
 
 import org.exist.backup.RawDataBackup;
+import org.exist.numbering.NodeId;
 import org.exist.storage.txn.Txn;
 
 import javax.annotation.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.List;
 
 /**
- * Store for dense float vectors keyed by (collectionPath, docName, nodeId).
- * Used for reindex efficiency: vectors can be read from here instead of parsing XML.
+ * Keeps the vectors a vector field computed, so that a reindex can restore them instead of computing them again.
+ *
+ * <p>A vector is kept by its document's id, its node's id, its field and its chunk: 0 for a field with one vector per
+ * node, and from 0 in order for a field that cuts a node's text into chunks. With it are the hash of the text it was
+ * computed from and the model's fingerprint, so that a vector is only reused for the same text and the same
+ * model, and a chunk's offsets in the node's text.</p>
  */
 public interface VectorStore extends Closeable {
 
     /**
-     * Gets a vector by document path and node id.
+     * A stored vector.
      *
-     * @param docPath document URI (e.g. /db/collection/doc.xml)
-     * @param nodeId  node id within the document
-     * @return float32 bytes, or null if not found
+     * @param start for a chunk, the offset of its first character in the node's chunked text; otherwise 0
+     * @param end for a chunk, the offset after its last character; otherwise 0
+     * @param inputHash a hash of the text the vector was computed from, see {@link VectorStores#inputHash}
+     * @param model the fingerprint of the model that computed it, or 0 if it isn't known
+     * @param vector the vector
+     */
+    record Entry(int start, int end, long inputHash, long model, float[] vector) {
+    }
+
+    /**
+     * Gets a node's vector of a field.
+     *
+     * @param docId the document's id
+     * @param nodeId the node's id
+     * @param field the vector field
+     * @param chunk the chunk, 0 for a field with one vector per node
+     * @return the entry, or null if none is stored
      */
     @Nullable
-    byte[] get(String docPath, org.exist.numbering.NodeId nodeId) throws IOException;
+    Entry get(int docId, NodeId nodeId, String field, int chunk) throws IOException;
 
     /**
-     * Stores a vector.
+     * Gets a node's vectors of a field, in the order of their chunks.
      *
-     * @param transaction the current transaction
-     * @param docPath     document URI
-     * @param nodeId      node id
-     * @param vector      float32 bytes (raw, little-endian)
+     * @param docId the document's id
+     * @param nodeId the node's id
+     * @param field the vector field
+     * @return the entries, none if none is stored
      */
-    void put(Txn transaction, String docPath, org.exist.numbering.NodeId nodeId, byte[] vector) throws IOException;
+    List<Entry> getChunks(int docId, NodeId nodeId, String field) throws IOException;
 
     /**
-     * Removes a vector.
+     * Stores a node's vector of a field, in place of any stored for the same chunk.
      *
      * @param transaction the current transaction
-     * @param docPath     document URI
-     * @param nodeId      node id
+     * @param docId the document's id
+     * @param nodeId the node's id
+     * @param field the vector field
+     * @param chunk the chunk, 0 for a field with one vector per node
+     * @param entry the vector, with its hashes and offsets
      */
-    void remove(Txn transaction, String docPath, org.exist.numbering.NodeId nodeId) throws IOException;
+    void put(Txn transaction, int docId, NodeId nodeId, String field, int chunk, Entry entry) throws IOException;
 
     /**
-     * Removes all vectors for a document.
+     * Removes a node's vectors of a field from a chunk on, as when its text now has fewer chunks.
      *
      * @param transaction the current transaction
-     * @param docPath     document URI
+     * @param docId the document's id
+     * @param nodeId the node's id
+     * @param field the vector field
+     * @param fromChunk the first chunk to remove
      */
-    void removeByDocument(Txn transaction, String docPath) throws IOException;
+    void removeChunksFrom(Txn transaction, int docId, NodeId nodeId, String field, int fromChunk) throws IOException;
+
+    /**
+     * Removes all of a node's vectors, of every field.
+     *
+     * @param transaction the current transaction
+     * @param docId the document's id
+     * @param nodeId the node's id
+     */
+    void removeNode(Txn transaction, int docId, NodeId nodeId) throws IOException;
+
+    /**
+     * Removes all vectors of a document.
+     *
+     * @param transaction the current transaction
+     * @param docId the document's id
+     */
+    void removeByDocument(Txn transaction, int docId) throws IOException;
 
     /**
      * Backs up the store to the given backup.
+     *
+     * @param backup the backup
      */
     void backupToArchive(RawDataBackup backup) throws IOException;
 }

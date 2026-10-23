@@ -30,9 +30,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
-import java.nio.ByteBuffer;
-
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
@@ -44,6 +43,7 @@ public class VectorStoreRecoverTest {
 
     /** 384 dimensions of 4-byte floats, as all-MiniLM-L6-v2 produces: enough entries fill several pages. */
     private static final int VECTOR_BYTES = 384 * Float.BYTES;
+    private static final String FIELD = "embedding";
     private static final int COMMITTED = 300;
     private static final int UNCOMMITTED = 100;
 
@@ -81,7 +81,7 @@ public class VectorStoreRecoverTest {
         final VectorStore store = existEmbeddedServer.getBrokerPool().getVectorStore();
         final NodeIdFactory nodeIds = existEmbeddedServer.getBrokerPool().getNodeFactory();
         for (int i = COMMITTED + 1; i <= COMMITTED + UNCOMMITTED; i++) {
-            assertNull(store.get(docPath(i), nodeIds.createInstance(1)), "uncommitted vector " + i);
+            assertNull(store.get(i, nodeIds.createInstance(1), FIELD, 0), "uncommitted vector " + i);
         }
     }
 
@@ -97,7 +97,7 @@ public class VectorStoreRecoverTest {
 
         final Txn txn = transactionManager.beginTransaction();
         for (int i = from; i <= to; i++) {
-            store.put(txn, docPath(i), nodeIds.createInstance(1), vector(i));
+            store.put(txn, i, nodeIds.createInstance(1), FIELD, 0, new VectorStore.Entry(0, 0, i, 1, vector(i)));
         }
         if (commit) {
             transactionManager.commit(txn);
@@ -110,19 +110,17 @@ public class VectorStoreRecoverTest {
         final VectorStore store = pool.getVectorStore();
         final NodeIdFactory nodeIds = pool.getNodeFactory();
         for (int i = from; i <= to; i++) {
-            assertArrayEquals(vector(i), store.get(docPath(i), nodeIds.createInstance(1)), "vector " + i);
+            final VectorStore.Entry entry = store.get(i, nodeIds.createInstance(1), FIELD, 0);
+            assertNotNull(entry, "vector " + i);
+            assertArrayEquals(vector(i), entry.vector(), "vector " + i);
         }
     }
 
-    private static String docPath(final int i) {
-        return "/db/vector-recovery/doc" + i + ".xml";
-    }
-
-    private static byte[] vector(final int i) {
-        final ByteBuffer buffer = ByteBuffer.allocate(VECTOR_BYTES);
-        for (int d = 0; d < VECTOR_BYTES / Float.BYTES; d++) {
-            buffer.putFloat(i + d / 1000f);
+    private static float[] vector(final int i) {
+        final float[] vector = new float[VECTOR_BYTES / Float.BYTES];
+        for (int d = 0; d < vector.length; d++) {
+            vector[d] = i + d / 1000f;
         }
-        return buffer.array();
+        return vector;
     }
 }
