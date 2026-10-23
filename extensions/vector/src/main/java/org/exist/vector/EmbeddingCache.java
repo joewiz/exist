@@ -38,10 +38,13 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * Vectors a model computed, kept on disk outside the database, so that an instance indexing the same texts with the
@@ -56,6 +59,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>It is a cache: deleting the directory, or any file in it, only means those vectors are computed again. Entries
  * are not forced to disk; a file that ends in part of an entry, after a crash, is read up to the last whole one.</p>
+ *
+ * <p>A process can name a segment, with {@link #setSegment}: until it names another, or none, the vectors it adds go
+ * to a file of that name, {@code <segment>.vec}, so that a unit of data, such as a volume, gets a file of its own, to
+ * be distributed with it. With hits, the vectors it reads from the cache are added to the segment's file too, so that
+ * the file has every vector of the unit.</p>
  */
 public final class EmbeddingCache {
 
@@ -71,6 +79,12 @@ public final class EmbeddingCache {
   private static final int HASH_LENGTH = 32;
 
   private static final Map<Path, EmbeddingCache> CACHES = new ConcurrentHashMap<>();
+  private static final Pattern SEGMENT_NAME = Pattern.compile("[A-Za-z0-9._-]{1,200}");
+
+  /** The segment the vectors added go to, or null for this process's own file. */
+  @Nullable private static volatile String segment;
+  /** Whether the vectors read from the cache go to the segment too. */
+  private static volatile boolean segmentWithHits;
 
   private final Path directory;
   private final int dimension;
@@ -81,8 +95,10 @@ public final class EmbeddingCache {
   private final List<Path> files = new ArrayList<>();
   private final List<Long> readUpTo = new ArrayList<>();
   private final Map<Integer, FileChannel> readers = new HashMap<>();
-  @Nullable private FileChannel writer;
-  private int writerNumber = -1;
+  /** The files this process writes, by segment, "" being its own file, as their numbers. */
+  private final Map<String, Integer> writers = new HashMap<>();
+  /** The keys in each segment's file, so that a hit is added to it once. */
+  private final Map<String, Set<Key>> segmentKeys = new HashMap<>();
   private long lastScan;
 
   private record Key(long high, long low) {
@@ -189,30 +205,55 @@ public final class EmbeddingCache {
     }
     final byte[] hash = hash(text);
     final Key key = key(hash);
+    final String segmentName = segment;
+    synchronized (this) {
+      ensureScanned(false);
+      final boolean known = index.containsKey(key);
+      if (known && !segmentWantsHit(segmentName, key)) {
+        return;
+      }
+      try {
+        add(hash, key, vector, known, segmentName);
+      } catch (final IOException e) {
+        LOG.warn("Could not add a vector to the embedding cache {}: {}", directory, e.getMessage());
+      }
+    }
+  }
+
+  /** Whether a vector already in the cache goes to the segment's file, which doesn't have it yet. */
+  private boolean segmentWantsHit(@Nullable final String segmentName, final Key key) {
+    if (segmentName == null || !segmentWithHits) {
+      return false;
+    }
+    final Set<Key> keys = segmentKeys.get(segmentName);
+    return keys == null || !keys.contains(key);
+  }
+
+  /** Appends a vector to this process's file for the segment, and indexes it if it is new to the cache. */
+  private void add(final byte[] hash, final Key key, final float[] vector, final boolean known,
+      @Nullable final String segmentName) throws IOException {
+    final int number = writer(segmentName);
+    final Set<Key> keys = segmentName == null ? null : segmentKeys.get(segmentName);
+    if (keys != null && keys.contains(key)) {
+      return;
+    }
+    final long location = append(number, entry(hash, vector));
+    if (!known) {
+      index.put(key, location(number, location));
+    }
+    if (keys != null) {
+      keys.add(key);
+    }
+  }
+
+  private ByteBuffer entry(final byte[] hash, final float[] vector) {
     final ByteBuffer entry = ByteBuffer.allocate(entryLength).order(ByteOrder.LITTLE_ENDIAN);
     entry.put(hash);
     for (final float value : vector) {
       entry.putFloat(value);
     }
     entry.flip();
-    synchronized (this) {
-      ensureScanned(false);
-      if (index.containsKey(key)) {
-        return;
-      }
-      try {
-        final FileChannel channel = writer();
-        final long offset = channel.size();
-        while (entry.hasRemaining()) {
-          channel.write(entry, offset + entry.position());
-        }
-        final long end = offset + entryLength;
-        readUpTo.set(writerNumber, end);
-        index.put(key, location(writerNumber, offset + HASH_LENGTH));
-      } catch (final IOException e) {
-        LOG.warn("Could not add a vector to the embedding cache {}: {}", directory, e.getMessage());
-      }
-    }
+    return entry;
   }
 
   /** The number of vectors in the cache, as read so far. */
@@ -221,16 +262,61 @@ public final class EmbeddingCache {
     return index.size();
   }
 
-  private FileChannel writer() throws IOException {
-    if (writer == null) {
-      final Path file = directory.resolve(UUID.randomUUID() + FILE_SUFFIX);
-      writer = FileChannel.open(file, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.READ);
-      writerNumber = files.size();
+  /**
+   * Names the segment the vectors added go to, in every model's cache, until another or none is named.
+   *
+   * @param name the segment's name, letters, digits, '.', '_' and '-', or null for this process's own file
+   * @param withHits whether the vectors read from the cache go to the segment too
+   * @throws IllegalArgumentException if the name has other characters
+   */
+  public static void setSegment(@Nullable final String name, final boolean withHits) {
+    if (name != null && !SEGMENT_NAME.matcher(name).matches()) {
+      throw new IllegalArgumentException("A segment's name has only letters, digits, '.', '_' and '-': " + name);
+    }
+    segment = name;
+    segmentWithHits = withHits;
+  }
+
+  /** The number of the file this process writes the segment's vectors to, opened the first time. */
+  private int writer(@Nullable final String segmentName) throws IOException {
+    final String name = segmentName == null ? "" : segmentName;
+    final Integer open = writers.get(name);
+    if (open != null) {
+      return open;
+    }
+    final Path file = directory.resolve((segmentName == null ? UUID.randomUUID().toString() : segmentName) + FILE_SUFFIX);
+    int number = files.indexOf(file);
+    if (number < 0) {
+      number = files.size();
       files.add(file);
       readUpTo.add(0L);
-      readers.put(writerNumber, writer);
     }
-    return writer;
+    final FileChannel channel = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.READ);
+    final FileChannel previous = readers.put(number, channel);
+    if (previous != null) {
+      previous.close();
+    }
+    writers.put(name, number);
+    if (segmentName != null) {
+      // a segment's file may have been written before: read what it has, and remember its keys
+      final Set<Key> keys = new HashSet<>();
+      segmentKeys.put(segmentName, keys);
+      // from its start, though it may have been read already: its keys weren't kept then
+      readUpTo.set(number, 0L);
+      readFrom(number, keys);
+    }
+    return number;
+  }
+
+  /** Appends an entry to a file this process writes, and returns the offset of its vector. */
+  private long append(final int number, final ByteBuffer entry) throws IOException {
+    final FileChannel channel = readers.get(number);
+    final long offset = channel.size();
+    while (entry.hasRemaining()) {
+      channel.write(entry, offset + entry.position());
+    }
+    readUpTo.set(number, offset + entryLength);
+    return offset + HASH_LENGTH;
   }
 
   /** Reads the entries of files not read before, or added to since, at the first use and then when asked to. */
@@ -243,7 +329,7 @@ public final class EmbeddingCache {
     try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, "*" + FILE_SUFFIX)) {
       for (final Path file : stream) {
         int number = files.indexOf(file);
-        if (number == writerNumber && number >= 0) {
+        if (number >= 0 && writers.containsValue(number)) {
           continue;
         }
         if (number < 0) {
@@ -251,7 +337,7 @@ public final class EmbeddingCache {
           files.add(file);
           readUpTo.add(0L);
         }
-        readFrom(number);
+        readFrom(number, null);
       }
     } catch (final IOException e) {
       LOG.warn("Could not read the embedding cache {}: {}", directory, e.getMessage());
@@ -261,7 +347,7 @@ public final class EmbeddingCache {
     }
   }
 
-  private void readFrom(final int number) throws IOException {
+  private void readFrom(final int number, @Nullable final Set<Key> keys) throws IOException {
     final FileChannel channel = reader(number);
     final long size = channel.size();
     long offset = readUpTo.get(number);
@@ -274,7 +360,11 @@ public final class EmbeddingCache {
           return;
         }
       }
-      index.putIfAbsent(key(hash.array()), location(number, offset + HASH_LENGTH));
+      final Key key = key(hash.array());
+      index.putIfAbsent(key, location(number, offset + HASH_LENGTH));
+      if (keys != null) {
+        keys.add(key);
+      }
       offset += entryLength;
     }
     readUpTo.set(number, offset);
@@ -347,6 +437,7 @@ public final class EmbeddingCache {
   static void reset() {
     CACHES.values().forEach(EmbeddingCache::close);
     CACHES.clear();
+    setSegment(null, false);
   }
 
   private synchronized void close() {
@@ -358,6 +449,7 @@ public final class EmbeddingCache {
       }
     }
     readers.clear();
-    writer = null;
+    writers.clear();
+    segmentKeys.clear();
   }
 }

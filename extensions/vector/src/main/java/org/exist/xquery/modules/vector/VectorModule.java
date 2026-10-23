@@ -63,7 +63,8 @@ public class VectorModule extends AbstractInternalModule {
       new FunctionDef(EmbedBatch.signatures[1], EmbedBatch.class),
       new FunctionDef(EmbedBatch.signatures[2], EmbedBatch.class),
       new FunctionDef(Models.signatures[0], Models.class),
-      new FunctionDef(Diagnostics.signatures[0], Diagnostics.class)
+      new FunctionDef(Diagnostics.signatures[0], Diagnostics.class),
+      new FunctionDef(CacheSegment.signatures[0], CacheSegment.class)
   };
 
   protected static final class VectorErrorCode extends ErrorCodes.ErrorCode {
