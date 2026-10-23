@@ -57,6 +57,8 @@ final class CachingEmbeddingProvider implements VectorEmbeddingProvider {
     final float[] cached = cache.get(text);
     if (cached != null) {
       hits.incrementAndGet();
+      // to a segment that keeps its hits too
+      cache.put(text, cached);
       return cached;
     }
     misses.incrementAndGet();
@@ -87,6 +89,9 @@ final class CachingEmbeddingProvider implements VectorEmbeddingProvider {
       if (cached == null) {
         missing.add(texts.get(i));
         missingAt.add(i);
+      } else {
+        // to a segment that keeps its hits too
+        cache.put(texts.get(i), cached);
       }
     }
     hits.addAndGet(texts.size() - (long) missing.size());

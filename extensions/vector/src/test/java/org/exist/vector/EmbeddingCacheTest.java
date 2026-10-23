@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -163,6 +164,62 @@ class EmbeddingCacheTest {
         Files.writeString(model, "other weights");
         assertNotEquals(fingerprint, EmbeddingCache.fingerprint(model, tokenizer));
         assertTrue(fingerprint.matches("[0-9a-f]{32}"));
+    }
+
+    @Test
+    void aSegmentGetsAFileOfItsOwn() throws IOException {
+        final EmbeddingCache cache = EmbeddingCache.forModel("model", 3);
+        EmbeddingCache.setSegment("vol1", false);
+        cache.put("a", new float[] {1, 1, 1});
+        cache.put("b", new float[] {2, 2, 2});
+        EmbeddingCache.setSegment("vol2", false);
+        cache.put("b", new float[] {2, 2, 2});
+        cache.put("c", new float[] {3, 3, 3});
+        assertEquals(2, entries("vol1"));
+        assertEquals(1, entries("vol2"), "without hits, a vector already in the cache isn't added to the segment");
+        EmbeddingCache.reset();
+        final EmbeddingCache read = EmbeddingCache.forModel("model", 3);
+        assertArrayEquals(new float[] {3, 3, 3}, read.get("c"));
+        assertEquals(3, read.size());
+    }
+
+    @Test
+    void aSegmentWithHitsHasEveryVectorOfItsUnit() throws IOException {
+        final EmbeddingCache cache = EmbeddingCache.forModel("model", 3);
+        cache.put("shared", new float[] {1, 1, 1});
+        EmbeddingCache.setSegment("vol", true);
+        cache.put("shared", new float[] {1, 1, 1});
+        cache.put("shared", new float[] {1, 1, 1});
+        cache.put("own", new float[] {2, 2, 2});
+        assertEquals(2, entries("vol"), "the hit once, and the new vector");
+        EmbeddingCache.reset();
+        // a new process naming the same segment adds to its file, without repeating what it has
+        EmbeddingCache.setSegment("vol", true);
+        final EmbeddingCache again = EmbeddingCache.forModel("model", 3);
+        again.put("shared", new float[] {1, 1, 1});
+        again.put("more", new float[] {3, 3, 3});
+        assertEquals(3, entries("vol"));
+    }
+
+    @Test
+    void theProviderAddsItsHitsToASegment() throws IOException {
+        final CachingEmbeddingProvider provider = new CachingEmbeddingProvider(new CountingProvider(), EmbeddingCache.forModel("model", 3));
+        provider.embed("a");
+        EmbeddingCache.setSegment("vol", true);
+        provider.embed("a");
+        provider.embedAll(List.of("a", "bb"));
+        assertEquals(2, entries("vol"));
+    }
+
+    @Test
+    void aSegmentsNameIsChecked() {
+        assertThrows(IllegalArgumentException.class, () -> EmbeddingCache.setSegment("../x", false));
+        assertThrows(IllegalArgumentException.class, () -> EmbeddingCache.setSegment("", false));
+    }
+
+    /** The number of entries in a segment's file, of 3-dimension vectors. */
+    private long entries(final String segment) throws IOException {
+        return Files.size(directory.resolve("model-3").resolve(segment + ".vec")) / (32 + 3 * Float.BYTES);
     }
 
     /** A model whose vector for a text is its length, in each dimension, and which records what it embedded. */
