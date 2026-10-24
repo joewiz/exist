@@ -1439,6 +1439,40 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         }
     }
 
+    /**
+     * The vector a vector field holds for a node, as stored: Lucene keeps a field's full-precision vectors beside
+     * any quantized copy it searches with. Looked up by eXist document and node id, read from the reader the search
+     * ran on, as for {@link #getBinaryFieldByExistDocId}.
+     *
+     * @return a copy of the vector, or null if the node has none in that field
+     */
+    public @Nullable float[] getVectorByExistDocId(final int existDocId, final NodeId nodeId, final String field) throws IOException {
+        try {
+            return index.withSearcher(searcher -> {
+                final TopDocs topDocs = searcher.searcher().search(docIdAndNodeIdQuery(existDocId, nodeId), 1);
+                if (topDocs.totalHits.value() == 0) {
+                    return null;
+                }
+                final int luceneDocId = topDocs.scoreDocs[0].doc;
+                final List<LeafReaderContext> leaves = searcher.searcher().getIndexReader().leaves();
+                final LeafReaderContext leaf = leaves.get(ReaderUtil.subIndex(luceneDocId, leaves));
+                final FloatVectorValues values = leaf.reader().getFloatVectorValues(field);
+                if (values == null) {
+                    return null;
+                }
+                final int docInLeaf = luceneDocId - leaf.docBase;
+                final KnnVectorValues.DocIndexIterator iterator = values.iterator();
+                if (iterator.advance(docInLeaf) != docInLeaf) {
+                    return null;
+                }
+                // the reader may reuse the array it returns
+                return values.vectorValue(iterator.index()).clone();
+            });
+        } catch (final XPathException e) {
+            throw new IOException("Unexpected XPath error in getVectorByExistDocId", e);
+        }
+    }
+
     private static @Nullable BytesRef getBinaryFieldForLuceneDocId(final IndexReader reader, final int luceneDocId, final String field) throws IOException {
         // the leaf that holds the document: the last one that starts at or before it
         final List<LeafReaderContext> leaves = reader.leaves();
