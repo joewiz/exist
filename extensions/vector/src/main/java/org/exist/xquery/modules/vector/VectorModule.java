@@ -37,7 +37,8 @@ import org.exist.xquery.value.FunctionReturnSequenceType;
 
 /**
  * XQuery module for vector embedding operations.
- * Provides query-time embedding via vector:embed() for use with ft:query-vector.
+ * Provides query-time embedding via vector:embed() for use with ft:query-vector, and operations on vectors
+ * (cosine, dot product, magnitude, normalization, mean, Euclidean distance, dimension).
  */
 public class VectorModule extends AbstractInternalModule {
 
@@ -54,6 +55,14 @@ public class VectorModule extends AbstractInternalModule {
       "Vector embedding implementation is not available.");
   public static final ErrorCodes.ErrorCode EXVECTOR0004 = new VectorErrorCode("EXVECTOR0004",
       "Model parameter must not be empty.");
+  public static final ErrorCodes.ErrorCode EXVECTOR0005 = new VectorErrorCode("EXVECTOR0005",
+      "Vectors have different dimensions.");
+  public static final ErrorCodes.ErrorCode EXVECTOR0006 = new VectorErrorCode("EXVECTOR0006",
+      "Not a vector: expected a non-empty array of numbers.");
+  public static final ErrorCodes.ErrorCode EXVECTOR0007 = new VectorErrorCode("EXVECTOR0007",
+      "The vector has zero length, so it has no direction.");
+  public static final ErrorCodes.ErrorCode EXVECTOR0008 = new VectorErrorCode("EXVECTOR0008",
+      "Invalid weights: one non-negative weight per vector is required, not all 0.");
 
   public static final FunctionDef[] functions = {
       new FunctionDef(Embed.signatures[0], Embed.class),
@@ -63,7 +72,17 @@ public class VectorModule extends AbstractInternalModule {
       new FunctionDef(EmbedBatch.signatures[1], EmbedBatch.class),
       new FunctionDef(EmbedBatch.signatures[2], EmbedBatch.class),
       new FunctionDef(Models.signatures[0], Models.class),
-      new FunctionDef(Diagnostics.signatures[0], Diagnostics.class)
+      new FunctionDef(Diagnostics.signatures[0], Diagnostics.class),
+      // --- Vector operations ---
+      new FunctionDef(VectorOperations.signatures[0], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[1], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[2], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[3], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[4], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[5], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[6], VectorOperations.class),
+      new FunctionDef(VectorOperations.signatures[7], VectorOperations.class)
+      // --- End vector operations ---
   };
 
   protected static final class VectorErrorCode extends ErrorCodes.ErrorCode {
@@ -88,7 +107,7 @@ public class VectorModule extends AbstractInternalModule {
 
   @Override
   public String getDescription() {
-    return "Vector embedding module for query-time embedding (e.g. for ft:query-vector).";
+    return "Vector embedding module for query-time embedding (e.g. for ft:query-vector) and operations on vectors.";
   }
 
   @Override
