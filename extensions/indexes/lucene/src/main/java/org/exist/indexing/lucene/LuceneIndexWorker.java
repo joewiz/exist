@@ -2739,6 +2739,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         IndexWriter writer = null;
         try {
             writer = index.getWriter(true);
+            index.allowMerges();
             writer.forceMerge(1, true);
             writer.commit();
         } catch (IOException e) {

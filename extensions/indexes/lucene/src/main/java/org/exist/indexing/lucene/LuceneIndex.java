@@ -56,6 +56,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
+import javax.annotation.Nullable;
+
 public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
 
     private static final Logger LOG = LogManager.getLogger(LuceneIndexWorker.class);
@@ -72,6 +74,18 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
     protected FieldAnalyzerWrapper fieldAnalyzerWrapper;
 
     protected double bufferSize = IndexWriterConfig.DEFAULT_RAM_BUFFER_SIZE_MB;
+
+    /** The threads that merge a vector field's graph, {@code vector-merge-workers}: 1 merges it on the merge's own thread. */
+    protected int vectorMergeWorkers = 1;
+
+    /**
+     * {@code merges="deferred"}: no segments are merged until {@code ft:optimize()}, which merges them all into one, so
+     * that a bulk load builds each vector graph once instead of once per merge.
+     */
+    protected boolean deferMerges = false;
+
+    @Nullable
+    private java.util.concurrent.ExecutorService vectorMergeExecutor;
 
     protected IndexWriter cachedWriter = null;
     protected DirectoryTaxonomyWriter cachedTaxonomyWriter = null;
@@ -117,6 +131,18 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
             if (LOG.isDebugEnabled())
                 LOG.debug("Using buffer size: {}", bufferSize);
 
+            final String workersParam = config.getAttribute("vector-merge-workers");
+            if (!workersParam.isEmpty()) {
+                try {
+                    vectorMergeWorkers = Math.max(1, Integer.parseInt(workersParam));
+                } catch (final NumberFormatException e) {
+                    LOG.warn("Invalid vector-merge-workers setting for Lucene index: {}", workersParam, e);
+                }
+            }
+            deferMerges = "deferred".equals(config.getAttribute("merges"));
+            LOG.info("Lucene index: buffer {} MB, vector-merge-workers {}, merges {}", bufferSize, vectorMergeWorkers,
+                    deferMerges ? "deferred" : "as usual");
+
             NodeList nl = config.getElementsByTagName("analyzer");
             if (nl.getLength() > 0) {
                 Element node = (Element) nl.item(0);
@@ -158,10 +184,37 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
             fieldAnalyzerWrapper = new FieldAnalyzerWrapper(defaultAnalyzer);
             final IndexWriterConfig idxWriterConfig = new IndexWriterConfig(fieldAnalyzerWrapper);
             idxWriterConfig.setRAMBufferSizeMB(bufferSize);
+            if (deferMerges) {
+                idxWriterConfig.setMergePolicy(org.apache.lucene.index.NoMergePolicy.INSTANCE);
+            }
+            final org.apache.lucene.codecs.KnnVectorsFormat int8Format;
+            final org.apache.lucene.codecs.KnnVectorsFormat floatFormat;
+            if (vectorMergeWorkers > 1) {
+                vectorMergeExecutor = java.util.concurrent.Executors.newFixedThreadPool(vectorMergeWorkers, runnable -> {
+                    final Thread thread = new Thread(runnable, "lucene-vector-merge");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+                int8Format = new org.apache.lucene.codecs.lucene104.Lucene104HnswScalarQuantizedVectorsFormat(
+                        org.apache.lucene.util.quantization.QuantizedByteVectorValues.ScalarEncoding.UNSIGNED_BYTE,
+                        org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
+                        org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH,
+                        vectorMergeWorkers, vectorMergeExecutor);
+                floatFormat = new org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat(
+                        org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
+                        org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH,
+                        vectorMergeWorkers, vectorMergeExecutor);
+            } else {
+                int8Format = INT8_VECTORS_FORMAT;
+                floatFormat = null;
+            }
             idxWriterConfig.setCodec(new org.apache.lucene.codecs.lucene104.Lucene104Codec() {
                 @Override
                 public org.apache.lucene.codecs.KnnVectorsFormat getKnnVectorsFormatForField(final String field) {
-                    return INT8_VECTOR_FIELDS.contains(field) ? INT8_VECTORS_FORMAT : super.getKnnVectorsFormatForField(field);
+                    if (INT8_VECTOR_FIELDS.contains(field)) {
+                        return int8Format;
+                    }
+                    return floatFormat != null ? floatFormat : super.getKnnVectorsFormatForField(field);
                 }
             });
             cachedWriter = new IndexWriter(directory, idxWriterConfig);
@@ -198,6 +251,10 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
 
             taxoDirectory.close();
             directory.close();
+            if (vectorMergeExecutor != null) {
+                vectorMergeExecutor.shutdown();
+                vectorMergeExecutor = null;
+            }
         } catch (IOException e) {
             throw new DBException("Caught exception while closing Lucene indexes: " + e.getMessage());
         }
@@ -283,6 +340,18 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
 
     public TaxonomyWriter getTaxonomyWriter() {
         return cachedTaxonomyWriter;
+    }
+
+    /**
+     * Lets the writer merge segments again, if they were deferred ({@code merges="deferred"}): called by
+     * {@code ft:optimize()}, which then merges them all.
+     */
+    synchronized void allowMerges() {
+        if (deferMerges && cachedWriter != null) {
+            cachedWriter.getConfig().setMergePolicy(new org.apache.lucene.index.TieredMergePolicy());
+            deferMerges = false;
+            LOG.info("Lucene index: merges allowed again");
+        }
     }
 
     public synchronized void releaseWriter(IndexWriter writer) {
