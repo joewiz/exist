@@ -93,7 +93,8 @@ public class LuceneModule extends AbstractInternalModule {
         new FunctionDef(QueryVector.signatures[2], QueryVector.class),
         new FunctionDef(QueryFieldVector.signatures[0], QueryFieldVector.class),
         new FunctionDef(QueryFieldVector.signatures[1], QueryFieldVector.class),
-        new FunctionDef(QueryFieldVector.signatures[2], QueryFieldVector.class)
+        new FunctionDef(QueryFieldVector.signatures[2], QueryFieldVector.class),
+        new FunctionDef(GetVector.SIGNATURE, GetVector.class)
     };
 
     public LuceneModule(Map<String, List<? extends Object>> parameters) {
