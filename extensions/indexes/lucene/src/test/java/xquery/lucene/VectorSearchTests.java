@@ -33,7 +33,8 @@ import org.exist.test.xqsuite.XQSuite;
     "src/test/xquery/lucene/vector-search.xqm",
     "src/test/xquery/lucene/vector-embed.xqm",
     "src/test/xquery/lucene/query-vector-k.xqm",
-    "src/test/xquery/lucene/ft-vector.xqm"
+    "src/test/xquery/lucene/ft-vector.xqm",
+    "src/test/xquery/lucene/vector-tutorial.xqm"
 })
 public class VectorSearchTests {
 }
