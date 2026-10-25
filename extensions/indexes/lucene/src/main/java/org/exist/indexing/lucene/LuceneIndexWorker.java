@@ -814,10 +814,15 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return builder.build();
     }
 
-    /** Whether the nodes are all document nodes: then the documents are what the search looks among anyway. */
+    /**
+     * Whether the nodes are all document nodes or root elements: then the documents are what the search looks among
+     * anyway, since every indexed node of a document is its root element or a descendant of it.
+     * (Review experiment: root elements accepted as well as document nodes.)
+     */
     private static boolean onlyDocuments(final NodeSet nodes) {
         for (final NodeProxy node : nodes) {
-            if (node.getNodeId() != NodeId.DOCUMENT_NODE) {
+            final NodeId nodeId = node.getNodeId();
+            if (nodeId != NodeId.DOCUMENT_NODE && nodeId.getTreeLevel() != 1) {
                 return false;
             }
         }
