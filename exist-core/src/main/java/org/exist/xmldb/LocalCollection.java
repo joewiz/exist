@@ -170,7 +170,8 @@ public class LocalCollection extends AbstractLocal implements EXistCollection {
      */
     @Override
     public void close() throws XMLDBException {
-        if (needsSync) {
+        // experiment: -Dexist.xmldb.close-sync=false leaves syncing to the periodic sync, for bulk loads
+        if (needsSync && !"false".equals(System.getProperty("exist.xmldb.close-sync"))) {
             withDb((broker, transaction) -> {
                 broker.sync(Sync.MAJOR);
                 return null;

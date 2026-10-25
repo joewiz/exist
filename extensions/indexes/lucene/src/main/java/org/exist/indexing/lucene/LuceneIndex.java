@@ -184,6 +184,27 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
             fieldAnalyzerWrapper = new FieldAnalyzerWrapper(defaultAnalyzer);
             final IndexWriterConfig idxWriterConfig = new IndexWriterConfig(fieldAnalyzerWrapper);
             idxWriterConfig.setRAMBufferSizeMB(bufferSize);
+            // experiment: -Dexist.lucene.infostream=<file> logs the writer's flush and commit decisions
+            final String infoStreamFile = System.getProperty("exist.lucene.infostream");
+            if (infoStreamFile != null) {
+                final java.io.PrintStream out = new java.io.PrintStream(Files.newOutputStream(Path.of(infoStreamFile)), true);
+                idxWriterConfig.setInfoStream(new org.apache.lucene.util.InfoStream() {
+                    @Override
+                    public void message(final String component, final String message) {
+                        out.println(java.time.LocalTime.now() + " " + component + " [" + Thread.currentThread().getName() + "]: " + message);
+                    }
+
+                    @Override
+                    public boolean isEnabled(final String component) {
+                        return "IW".equals(component) || "DW".equals(component);
+                    }
+
+                    @Override
+                    public void close() {
+                        out.close();
+                    }
+                });
+            }
             if (deferMerges) {
                 idxWriterConfig.setMergePolicy(org.apache.lucene.index.NoMergePolicy.INSTANCE);
             }
@@ -373,10 +394,24 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
         return modificationCount.get();
     }
 
+    private static final boolean TRACE_CALLERS = System.getProperty("exist.lucene.infostream") != null;
+
+    private static void traceCaller(final String what) {
+        if (TRACE_CALLERS) {
+            final String callers = StackWalker.getInstance().walk(frames -> frames
+                    .filter(f -> !f.getClassName().equals(LuceneIndex.class.getName()))
+                    .limit(4)
+                    .map(f -> f.getClassName().substring(f.getClassName().lastIndexOf('.') + 1) + "." + f.getMethodName() + ":" + f.getLineNumber())
+                    .collect(java.util.stream.Collectors.joining(" < ")));
+            LOG.info("lucene-trace {} [{}] {}", what, Thread.currentThread().getName(), callers);
+        }
+    }
+
     protected void commit() {
     	if (!needsCommit) {
             return;
         }
+        traceCaller("commit");
         // read before the commit starts: a write released from now on is not necessarily part of this commit
         final long committedModificationCount = modificationCount.get();
         try {
@@ -405,6 +440,7 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
         /* Commit any pending writes so readers see up-to-date data for Lucene-backed
            features (full-text, facets, util:index-keys, etc.). See #4805. */
         commit();
+        traceCaller("refresh");
         readerManager.maybeRefreshBlocking();
         final DirectoryReader reader = readerManager.acquire();
         try {
@@ -418,6 +454,7 @@ public class LuceneIndex extends AbstractIndex implements RawBackupSupport {
         /* Commit any pending writes so searchers see up-to-date data for Lucene-backed
            features (full-text, facets, util:index-keys, etc.). See #4805. */
         commit();
+        traceCaller("refresh");
         searcherManager.maybeRefreshBlocking();
         final SearcherTaxonomyManager.SearcherAndTaxonomy searcher = searcherManager.acquire();
         try {
