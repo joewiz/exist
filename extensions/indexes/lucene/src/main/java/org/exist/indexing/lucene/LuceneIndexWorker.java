@@ -1900,6 +1900,45 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         });
     }
 
+    /**
+     * The stored vectors of a node's chunks in a chunked vector field, by chunk number (from 0).
+     *
+     * @param node the node
+     * @param field the chunked vector field
+     * @return each chunk's vector, a copy, by its number; empty if the field indexed none for the node
+     */
+    public Map<Integer, float[]> chunkVectors(final NodeProxy node, final String field) throws IOException, XPathException {
+        final Query query = new BooleanQuery.Builder()
+                .add(IntField.newExactQuery(FIELD_DOC_ID, node.getOwnerDocument().getDocId()), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(nodeIdTerm(node.getNodeId())), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(FIELD_BLOCK_ROLE, BLOCK_CHUNK)), BooleanClause.Occur.FILTER)
+                .add(new FieldExistsQuery(field), BooleanClause.Occur.FILTER)
+                .build();
+        return index.withSearcher(searcher -> {
+            final IndexSearcher indexSearcher = searcher.searcher();
+            final int count = indexSearcher.count(query);
+            final Map<Integer, float[]> vectors = new HashMap<>(count * 2);
+            if (count == 0) {
+                return vectors;
+            }
+            final List<LeafReaderContext> leaves = indexSearcher.getIndexReader().leaves();
+            for (final ScoreDoc hit : indexSearcher.search(query, count).scoreDocs) {
+                final LeafReaderContext leaf = leaves.get(ReaderUtil.subIndex(hit.doc, leaves));
+                final int doc = hit.doc - leaf.docBase;
+                final FloatVectorValues values = leaf.reader().getFloatVectorValues(field);
+                final NumericDocValues numbers = DocValues.getNumeric(leaf.reader(), FIELD_CHUNK_NUMBER);
+                if (values == null || !numbers.advanceExact(doc)) {
+                    continue;
+                }
+                final KnnVectorValues.DocIndexIterator iterator = values.iterator();
+                if (iterator.advance(doc) == doc) {
+                    vectors.put((int) numbers.longValue(), values.vectorValue(iterator.index()).clone());
+                }
+            }
+            return vectors;
+        });
+    }
+
     @Nullable
     private ScoredChunk scoreChunk(final LeafReaderContext leaf, final int doc, final String field, final float[] vector)
             throws IOException, XPathException {

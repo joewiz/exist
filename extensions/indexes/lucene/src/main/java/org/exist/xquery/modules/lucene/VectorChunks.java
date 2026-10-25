@@ -118,6 +118,7 @@ public class VectorChunks extends BasicFunction {
     private static final StringValue HIGHLIGHT = new StringValue("highlight");
     private static final StringValue QUERY = new StringValue("query");
     private static final StringValue OPTIONS = new StringValue("options");
+    private static final StringValue VECTORS = new StringValue("vectors");
 
     /** A chunk to return: its field, its position from 0, its offsets in the chunked text, and its score. */
     private record Chunk(String field, int number, int start, int end, float score) {
@@ -147,12 +148,15 @@ public class VectorChunks extends BasicFunction {
             return Sequence.EMPTY_SEQUENCE;
         }
         final Highlight highlight = highlight(proxy, options);
-
+        // experiment: "vectors": true() adds each chunk's stored vector, as "vector", read from the index
+        final Map<Integer, float[]> vectors = wantsVectors(options) && field != null ? chunkVectors(proxy, field) : null;
         final ValueSequence result = new ValueSequence(chunks.size());
         final Map<String, String> chunkedTexts = new HashMap<>();
         for (final Chunk chunk : chunks) {
             final String value = chunkedTexts.computeIfAbsent(chunk.field(), f -> chunkedText(proxy, f));
-            result.add(chunkMap(chunk, value, highlight));
+            final MapType map = chunkMap(chunk, value, highlight);
+            final float[] chunkVector = vectors != null ? vectors.get(chunk.number()) : null;
+            result.add(chunkVector == null ? map : (MapType) map.put(new StringValue(this, "vector"), toArray(chunkVector)));
         }
         return result;
     }
@@ -178,6 +182,28 @@ public class VectorChunks extends BasicFunction {
         }
         entries.add(Tuple(new StringValue(this, "score"), new FloatValue(this, chunk.score())));
         return new MapType(this, context, null, entries);
+    }
+
+    private static boolean wantsVectors(@Nullable final AbstractMapType options) throws XPathException {
+        final Sequence value = options != null ? options.get(VECTORS) : Sequence.EMPTY_SEQUENCE;
+        return !value.isEmpty() && value.effectiveBooleanValue();
+    }
+
+    private Map<Integer, float[]> chunkVectors(final NodeProxy proxy, final String field) throws XPathException {
+        final LuceneIndexWorker index = (LuceneIndexWorker) context.getBroker().getIndexController().getWorkerByIndexId(LuceneIndex.ID);
+        try {
+            return index.chunkVectors(proxy, field);
+        } catch (final IOException e) {
+            throw new XPathException(this, LuceneModule.EXXQDYFT0002, "Error reading chunk vectors: " + e.getMessage());
+        }
+    }
+
+    private org.exist.xquery.functions.array.ArrayType toArray(final float[] vector) throws XPathException {
+        final List<Sequence> members = new ArrayList<>(vector.length);
+        for (final float v : vector) {
+            members.add(new org.exist.xquery.value.DoubleValue(this, v));
+        }
+        return new org.exist.xquery.functions.array.ArrayType(this, context, members);
     }
 
     @Nullable
