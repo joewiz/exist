@@ -47,7 +47,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * Scratch benchmark for the review of eXist-db/exist#6914: one vector per document, with the index configured on the
  * root element (as a configuration on {@code tei:TEI} does, with one FRUS document per file), compared with the
- * same search over the document nodes. Not part of any PR.
+ * same search over the document nodes, with ft:query-vector in a predicate on a child step and on a descendant step,
+ * as applications call it, and with the root elements given as its argument. In a predicate, the optimizer runs the
+ * search over the step's input, the document nodes, so only the argument form runs the context filter. Not part of
+ * any PR.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -80,9 +83,11 @@ public class RootElementContextBenchmark {
     private ExistEmbeddedServer server;
     private BrokerPool pool;
     private CompiledXQuery documentNodes;
-    private CompiledXQuery rootElements;
-    private CompiledXQuery narrowRootElements;
-    private CompiledXQuery selectRootElements;
+    private CompiledXQuery rootElementsChild;
+    private CompiledXQuery rootElementsDescendant;
+    private CompiledXQuery rootElementsArgument;
+    private CompiledXQuery selectRootElementsChild;
+    private CompiledXQuery selectRootElementsDescendant;
 
     @Setup(Level.Trial)
     public void setUp() throws Exception {
@@ -96,10 +101,14 @@ public class RootElementContextBenchmark {
         try (final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
             final XQuery xquery = pool.getXQueryService();
             documentNodes = compile(xquery, "count(ft:query-vector(" + COLL + ", " + vector + ", " + K + "))");
-            rootElements = compile(xquery, "count(ft:query-vector(" + COLL + "//doc, " + vector + ", " + K + "))");
-            narrowRootElements = compile(xquery,
-                    "count(ft:query-vector(" + COLL + "//doc[@lang = 'en'], " + vector + ", " + K + "))");
-            selectRootElements = compile(xquery, "count(" + COLL + "//doc)");
+            rootElementsChild = compile(xquery,
+                    "count(" + COLL + "/doc[ft:query-vector(., " + vector + ", " + K + ")])");
+            rootElementsDescendant = compile(xquery,
+                    "count(" + COLL + "//doc[ft:query-vector(., " + vector + ", " + K + ")])");
+            rootElementsArgument = compile(xquery,
+                    "count(ft:query-vector(" + COLL + "/doc, " + vector + ", " + K + "))");
+            selectRootElementsChild = compile(xquery, "count(" + COLL + "/doc)");
+            selectRootElementsDescendant = compile(xquery, "count(" + COLL + "//doc)");
         }
     }
 
@@ -120,22 +129,34 @@ public class RootElementContextBenchmark {
         return execute(documentNodes, K);
     }
 
-    /** The same search over the root elements, one per document: the context filter runs. */
+    /** The same search over the root elements, one per document, in a predicate on a child step: the search is over the documents. */
     @Benchmark
-    public long rootElements() throws Exception {
-        return execute(rootElements, K);
+    public long rootElementsChild() throws Exception {
+        return execute(rootElementsChild, K);
     }
 
-    /** A seventh of the root elements. */
+    /** The same search in a predicate on a descendant step. */
     @Benchmark
-    public long narrowRootElements() throws Exception {
-        return execute(narrowRootElements, K);
+    public long rootElementsDescendant() throws Exception {
+        return execute(rootElementsDescendant, K);
     }
 
-    /** Selecting the root elements alone, for comparison. */
+    /** The same search with the root elements given as the argument: the context filter runs, unless level-1 nodes count as documents. */
     @Benchmark
-    public long selectRootElements() throws Exception {
-        return execute(selectRootElements, documents);
+    public long rootElementsArgument() throws Exception {
+        return execute(rootElementsArgument, K);
+    }
+
+    /** Selecting the root elements alone with a child step, for comparison. */
+    @Benchmark
+    public long selectRootElementsChild() throws Exception {
+        return execute(selectRootElementsChild, documents);
+    }
+
+    /** Selecting the root elements alone with a descendant step, for comparison. */
+    @Benchmark
+    public long selectRootElementsDescendant() throws Exception {
+        return execute(selectRootElementsDescendant, documents);
     }
 
     private long execute(final CompiledXQuery compiledQuery, final long expected) throws Exception {
