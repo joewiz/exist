@@ -475,22 +475,28 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         }
     }
 
+    private void removeVectorStoreForCollection(final Collection collection, final DBBroker broker) {
+        final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
+        final Txn txn = broker.getCurrentTransaction();
+        if (vectorStore == null || txn == null) {
+            return;
+        }
+        try {
+            for (final Iterator<DocumentImpl> i = collection.iterator(broker); i.hasNext(); ) {
+                vectorStore.removeByDocument(txn, i.next().getDocId());
+            }
+        } catch (final IOException | PermissionDeniedException | LockException e) {
+            LOG.debug("Failed to remove vectors for collection: {}", e.getMessage());
+        }
+    }
+
     @Override
     public void removeCollection(Collection collection, DBBroker broker, boolean reindex) {
         if (LOG.isDebugEnabled())
             LOG.debug("Removing collection {}", collection.getURI());
-        final VectorStore vectorStore = broker.getBrokerPool().getVectorStore();
-        final Txn txn = broker.getCurrentTransaction();
-        // a reindex rewrites the same documents' nodes, whose stored vectors a "fulltext" reindex restores
-        if (vectorStore != null && txn != null && !reindex) {
-            try {
-                for (Iterator<DocumentImpl> i = collection.iterator(broker); i.hasNext(); ) {
-                    DocumentImpl doc = i.next();
-                    vectorStore.removeByDocument(txn, doc.getDocId());
-                }
-            } catch (IOException | PermissionDeniedException | LockException e) {
-                LOG.debug("Failed to remove vectors for collection: {}", e.getMessage());
-            }
+        if (!reindex) {
+            // a reindex rewrites the same documents' nodes, whose stored vectors a "fulltext" reindex restores
+            removeVectorStoreForCollection(collection, broker);
         }
         IndexWriter writer = null;
         try {
