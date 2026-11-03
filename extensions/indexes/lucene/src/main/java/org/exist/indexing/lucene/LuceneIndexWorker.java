@@ -1732,9 +1732,6 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return null;
     }
 
-    /**
-     * Whether a query selects the chunk documents of a chunked vector field, which all other queries must not see.
-     */
     /** The vector field of a chunked vector field's query. */
     private static String chunkField(final Query query) {
         if (query instanceof org.apache.lucene.search.join.DiversifyingChildrenFloatKnnVectorQuery vectorQuery) {
@@ -1750,6 +1747,9 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return "";
     }
 
+    /**
+     * Whether a query selects the chunk documents of a chunked vector field, which all other queries must not see.
+     */
     private static boolean selectsChunks(final Query query) {
         if (query instanceof org.apache.lucene.search.join.DiversifyingChildrenFloatKnnVectorQuery) {
             return true;
@@ -1775,10 +1775,6 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                 .build();
     }
 
-    /**
-     * The query of a chunked vector field: the nearest chunks, at most one per node, each node scored by its best
-     * chunk. The options' filters are on the nodes' own documents; the documents filter also matches the chunks.
-     */
     /**
      * A vector query of a chunked field: the best chunk of each node, for the {@code k} best nodes. The filter applies
      * to the nodes' own documents, which have the node's fields and facets, and through them to their chunks; the
@@ -2691,6 +2687,23 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         return chunkDocuments;
     }
 
+    /**
+     * Adds a node's Lucene document, with its chunks if it has any: one block, the chunks first and the node's
+     * document last, which deletes and merges keep together.
+     */
+    private void addNodeDocument(final IndexWriter writer, final Document built, @Nullable final List<Document> chunks,
+            final Map<String, Analyzer> documentAnalyzers) throws IOException {
+        if (chunks == null) {
+            index.addDocument(writer, built, documentAnalyzers);
+            return;
+        }
+        built.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_PARENT, Field.Store.NO));
+        final List<Document> block = new ArrayList<>(chunks.size() + 1);
+        block.addAll(chunks);
+        block.add(built);
+        index.addDocuments(writer, block, documentAnalyzers);
+    }
+
     private void write() {
         if (nodesToWrite == null || nodesToWrite.isEmpty() || !canFlush) {
             return;
@@ -2777,17 +2790,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     documentAnalyzers.put(contentField, customAnalyzer);
                 }
                 final Document built = pending.idxConf.getParent().facetsConfig.build(index.getTaxonomyWriter(), doc);
-                final List<Document> chunks = chunkDocuments.get(pending);
-                if (chunks == null) {
-                    index.addDocument(writer, built, documentAnalyzers);
-                } else {
-                    // one block, the chunks first and the node's document last, which deletes and merges keep together
-                    built.add(new StringField(FIELD_BLOCK_ROLE, BLOCK_PARENT, Field.Store.NO));
-                    final List<Document> block = new ArrayList<>(chunks.size() + 1);
-                    block.addAll(chunks);
-                    block.add(built);
-                    index.addDocuments(writer, block, documentAnalyzers);
-                }
+                addNodeDocument(writer, built, chunkDocuments.get(pending), documentAnalyzers);
 	        }
         } catch (final IOException e) {
             LOG.warn("An exception was caught while indexing document: {}", e.getMessage(), e);
