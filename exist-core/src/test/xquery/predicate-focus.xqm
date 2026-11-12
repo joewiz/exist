@@ -23,7 +23,7 @@ xquery version "3.1";
 
 (:~
  : A predicate is evaluated once per item of its context, with that item as the focus
- : (XPath 3.1 §3.3.3). A for or let clause in it keeps that focus, and a predicate value that
+ : (XPath 3.1 §3.2.1). A for or let clause in it keeps that focus, and a predicate value that
  : is a single number selects the item only if it equals the item's own position.
  : See https://github.com/eXist-db/exist/issues/6832.
  :)
@@ -88,6 +88,19 @@ declare
     %test:assertEquals(1)
 function pf:numeric-value-selects-only-its-own-position() {
     count((2, 2, 2)[.])
+};
+
+(: the value is compared to the position with eq, so the decimal is not rounded to 2 :)
+declare
+    %test:assertEquals(1, 3)
+function pf:numeric-value-is-compared-exactly() {
+    (1, 2.0000000000000001, 3)[.]
+};
+
+declare
+    %test:assertEquals(1, 2)
+function pf:numeric-value-nan-selects-nothing() {
+    (1, 2, xs:double("NaN"))[.]
 };
 
 declare
